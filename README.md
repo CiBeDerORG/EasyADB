@@ -20,51 +20,29 @@ docker compose up -d --build
 
 注意：配对端口和连接端口不是同一个。ADB 授权密钥持久化于 `./data/adb`，请勿提交或分享。手机系统无线调试关闭、端口改变后，应使用实际新端口重新连接。
 
-## 通过现有 Mihomo 加速构建（FNOS / Linux）
+## 通过现有 Mihomo 加速构建（非 Host 模式）
 
-EasyADB 运行时加入已经存在的 Docker 外部网络 `proxy-net`，**不会**新建 Mihomo 容器，也不要求映射 7890 端口到公网。构建阶段的 apt、curl 和 pip 可使用 Mihomo 代理；镜像 `FROM python:3.12-slim-bookworm` 由 Docker Daemon/BuildKit 拉取，不受 Compose `build.args` 控制，需要单独配置。
+运行中的 EasyADB 连接现有外部 Docker 网络 `proxy-net`。构建使用独立的 `easyadb-proxy` Buildx `docker-container` 构建器，构建器本身也接入 `proxy-net`；不使用 Host 网络、不新建 Mihomo、不映射其 7890 端口。仅 Dockerfile 中的 apt/curl/pip 等下载及构建器自身访问镜像源使用代理；ADB 到手机仍按现有网络路由连接。
 
-1. 确认 `mihomo` 已加入 `proxy-net` 且其 mixed-port 为 7890。原配置若为 `allow-lan: false`，来自其他容器及宿主机 IP 的代理请求可能被拒绝；请在现有 Mihomo 配置中检查并按需改为 `allow-lan: true`，`bind-address: '*'`，然后重载。请勿把 7890 映射或开放到公网。
-2. 在 FNOS 主机查询代理容器在 `proxy-net` 中的 IP：
+**为什么 Compose 中没有 `build.network: proxy-net`？** 该字段表示 Dockerfile `RUN` 的网络模式，BuildKit 只支持 `default`、`host`、`none` 等模式，直接指定用户自定义网络名可能报 `network mode "proxy-net" not supported by buildkit`。因此由 `scripts/build-with-mihomo.sh` 创建一个连接 `proxy-net` 的专属构建器，不更改其他项目的默认构建器。
 
-```sh
-MIHOMO_IP="$(sudo docker inspect -f '{{with index .NetworkSettings.Networks "proxy-net"}}{{.IPAddress}}{{end}}' mihomo)"
-printf 'Mihomo proxy: http://%s:7890\n' "$MIHOMO_IP"
-curl -fsS --connect-timeout 5 --max-time 20 -x "http://$MIHOMO_IP:7890" -o /dev/null https://pypi.org/simple/
-```
-
-如果最后一条失败，先修复 Mihomo 的监听、LAN 权限或节点规则。容器 IP 在重建后可能变化，不能将 `mihomo` 当作宿主机 Docker Daemon 可解析的域名。构建时 `build.network: host` 只作用于 Dockerfile 的 `RUN` 阶段，让宿主机能够访问 Mihomo 在 Docker 桥接网络上的 IP。
-
-3. **先处理 Python 基础镜像拉取**。若 `docker info` 的 `Registry Mirrors` 仍有返回 502 的 `https://docker.ketches.cn`，在 FNOS 的 Docker 配置中移除该故障镜像源；不能单靠增加 `build.args` 修复。配置 Docker Daemon 使用下面的 HTTP/HTTPS 代理（把 IP 替换成上一步的实际值，保留 daemon.json 中其他已有设置）：
-
-```json
-{
-  "proxies": {
-    "http-proxy": "http://<MIHOMO_IP>:7890",
-    "https-proxy": "http://<MIHOMO_IP>:7890",
-    "no-proxy": "localhost,127.0.0.1"
-  }
-}
-```
-
-上面是示意配置，不可原样复制其中的 `<MIHOMO_IP>`。Docker Engine 23+ 通常可以通过 daemon.json 配置；FNOS 的 Docker 管理方式可能不同，以实际 Daemon 配置位置为准。**重启 Docker 服务可能影响 NAS 上所有容器**，先检查当前配置、备份并安排合适时机操作。使用独立 buildx docker-container 构建器时，还需另行设置对应 BuildKit 的代理。验证：
-
-```sh
-sudo docker info
-sudo docker pull python:3.12-slim-bookworm
-```
-
-4. 基础镜像可正常拉取后，在仓库目录用自动识别脚本构建并启动（如果账户可直接使用 Docker，可省略 `sudo`）：
+1. 确认 `mihomo` 容器已在 `proxy-net` 中，`mixed-port: 7890`，且允许该桥接网络内的代理请求（如 `allow-lan: true` 和 `bind-address: '*'`）。不要向公网开放 7890。
+2. 首次创建 `.env`，设置至少 12 位的随机 `EASYADB_TOKEN` 和 Web 访问 IP。推荐让 `EASYADB_BUILD_PROXY` 留空；脚本会在每次启动时自动发现 Mihomo 在 `proxy-net` 的实际 IP，避免 BuildKit 构建步骤中自定义网络 DNS 的兼容问题。
+3. 在 EasyADB 项目目录运行：
 
 ```sh
 cp .env.example .env
-# 在 .env 中设置随机 EASYADB_TOKEN 和所需 EASYADB_BIND_IP
+# 编辑 .env 后执行
 sudo sh scripts/build-with-mihomo.sh
 ```
 
-脚本通过 `docker inspect` 动态查询 `mihomo` 在 `proxy-net` 上的 IP，先用 Mihomo 测试下载站点，再将 `EASYADB_BUILD_PROXY` 作为临时构建参数传给 Compose，执行 `docker compose up -d --build`。也可以不使用脚本，直接在 `.env` 的 `EASYADB_BUILD_PROXY` 设置实际代理 URL 再运行 Compose。**代理构建参数不会作为 EasyADB 运行时环境变量持久化**；ADB 到手机的通信仍按现有路由直接进行。
+脚本执行以下动作：检查外部网络和 Mihomo；创建或复用位于 `proxy-net` 的 `easyadb-proxy` Buildx 构建器；对构建器自身设置 HTTP/HTTPS 代理；将同一代理传入 apt/curl/pip 的构建参数；执行 `docker buildx build --load -t easyadb:local`，最后用 `docker compose up -d --no-build` 启动。
 
-如果 FNOS 使用的 buildx 构建器不允许 `build.network: host`，请使用支持 host 构建网络的 Docker/BuildKit 配置，或者让宿主机提供受限、可从默认构建网络访问的 Mihomo 代理地址；不要误把 `build.network` 写成 `proxy-net`（它并不是运行期 Compose 网络）。
+已有 `easyadb-proxy` 构建器若记住了旧的 Mihomo IP，脚本会报告配置不匹配而停止。检查该构建器没有其他用途后，可以执行 `sudo docker buildx rm easyadb-proxy`，再运行脚本重建；不会自动清理其他项目的 Buildx 配置。
+
+**基础镜像和 BuildKit 镜像下载要分开看：** 构建器运行后拉取 `python:3.12-slim-bookworm` 可以使用构建器的代理环境；但首次创建构建器时，`moby/buildkit` 镜像由 Docker Daemon 自行拉取，仍受 Docker Daemon 镜像加速源影响。如果 FNOS 的 Docker 继续访问 `docker.ketches.cn` 并返回 502，须先移除失效的镜像加速源，并根据 FNOS 实际情况为 Docker Daemon 配置单独的代理。不要将 `http://mihomo:7890` 直接写入 Daemon 代理：Daemon 不在 `proxy-net` 中，无法保证解析此容器名称。修改 Docker Daemon 前先备份，重启可能影响其他容器。
+
+注意：普通 `docker compose up -d --build` 不会自动选中专属构建器。需要代理构建时，请使用 `sudo sh scripts/build-with-mihomo.sh`；如只启动已经构建的镜像，可用 `sudo docker compose up -d --no-build`。
 
 ---
 
