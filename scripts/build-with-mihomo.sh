@@ -28,31 +28,23 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
-# Bootstrapping requires the Docker daemon to pull moby/buildkit FIRST.
-# Docker daemon is not a container on proxy-net; the name "mihomo" cannot
-# resolve there. Avoid misleading timeouts when the one-time image is missing.
-if ! docker container inspect "$BUILDER_CONTAINER" >/dev/null 2>&1 &&
-   ! docker image inspect "$BUILDKIT_IMAGE" >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-ERROR: one-time BuildKit bootstrap image is not available locally:
-  moby/buildkit:buildx-stable-1
-Docker daemon must pull or load this image BEFORE the proxy-net builder
-can run. Docker daemon cannot resolve the container hostname "mihomo".
-After fixing the daemon's registry access, run:
-  sudo docker pull moby/buildkit:buildx-stable-1
-Alternatively, import the image from another Docker machine:
-  sudo docker load -i moby-buildkit.tar
-Then rerun this script. Do not expose Mihomo's 7890 to the Internet.
-EOF
-  exit 1
+# Bootstrap from proxy-net without restarting/modifying FNOS Docker daemon.
+# The one-time helper uses an HTTP client on the host to download via the
+# Mihomo bridge IP and docker load; this main build continues to use DNS name.
+if ! docker image inspect "$BUILDKIT_IMAGE" >/dev/null 2>&1; then
+  echo "BuildKit image missing; bootstrapping through Mihomo..."
+  sh scripts/bootstrap-buildkit-via-mihomo.sh
 fi
 
 if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   if ! docker container inspect "$BUILDER_CONTAINER" >/dev/null 2>&1; then
-    echo "ERROR: $BUILDER exists without its container (previous bootstrap may have failed)." >&2
-    echo "Inspect it, then remove only that dedicated builder and retry:" >&2
-    echo "  sudo docker buildx rm $BUILDER" >&2
-    exit 1
+    echo "Removing incomplete project-only builder $BUILDER from the previous failed bootstrap..."
+    docker buildx rm "$BUILDER"
+    docker buildx create --name "$BUILDER" --driver docker-container \
+      --driver-opt "image=$BUILDKIT_IMAGE" \
+      --driver-opt "network=$NETWORK" \
+      --driver-opt "env.HTTP_PROXY=$PROXY" \
+      --driver-opt "env.HTTPS_PROXY=$PROXY" >/dev/null
   fi
   if [ "$(docker inspect -f '{{if index .NetworkSettings.Networks "proxy-net"}}yes{{end}}' "$BUILDER_CONTAINER")" != yes ]; then
     echo "ERROR: existing $BUILDER is not attached to proxy-net. Review and recreate it." >&2
