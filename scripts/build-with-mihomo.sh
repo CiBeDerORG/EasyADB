@@ -32,11 +32,18 @@ if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
 else
   echo 'Creating a dedicated docker-container builder on proxy-net...'
   docker buildx create --name "$BUILDER" --driver docker-container \
-    --driver-opt network=proxy-net --bootstrap >/dev/null
+    --driver-opt network=proxy-net \
+    --driver-opt "env.HTTP_PROXY=$PROXY" \
+    --driver-opt "env.HTTPS_PROXY=$PROXY" --bootstrap >/dev/null
 fi
 BUILDER_IP="$(docker inspect -f '{{with index .NetworkSettings.Networks "proxy-net"}}{{.IPAddress}}{{end}}' "buildx_buildkit_${BUILDER}0")"
 if [ -z "$BUILDER_IP" ]; then
   echo "ERROR: ${BUILDER} is not attached to proxy-net. Remove/recreate that dedicated builder after reviewing its configuration." >&2
+  exit 1
+fi
+
+if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "buildx_buildkit_${BUILDER}0" | grep -Fx "HTTPS_PROXY=$PROXY" >/dev/null; then
+  echo "ERROR: Existing $BUILDER has an outdated proxy address. Review it, then run: docker buildx rm $BUILDER" >&2
   exit 1
 fi
 
