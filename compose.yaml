@@ -1,10 +1,11 @@
 services:
   easyadb:
+    image: easyadb:local
     build:
       context: .
-      # RUN (apt/curl/pip) shares the Linux host network so the host can reach
-      # Mihomo's proxy-net bridge IP. FROM is fetched separately by Docker/BuildKit.
-      network: host
+      # Do not specify build.network: proxy-net; BuildKit does not support
+      # custom names in RUN network mode. The helper script creates a dedicated
+      # docker-container Buildx builder attached to proxy-net instead.
       args:
         HTTP_PROXY: ${EASYADB_BUILD_PROXY:-}
         HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-}
