@@ -1,6 +1,17 @@
 services:
   easyadb:
-    build: .
+    build:
+      context: .
+      # RUN (apt/curl/pip) shares the Linux host network so the host can reach
+      # Mihomo's proxy-net bridge IP. FROM is fetched separately by Docker/BuildKit.
+      network: host
+      args:
+        HTTP_PROXY: ${EASYADB_BUILD_PROXY:-}
+        HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-}
+        http_proxy: ${EASYADB_BUILD_PROXY:-}
+        https_proxy: ${EASYADB_BUILD_PROXY:-}
+        NO_PROXY: localhost,127.0.0.1
+        no_proxy: localhost,127.0.0.1
     restart: unless-stopped
     environment:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
@@ -8,3 +19,11 @@ services:
       - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
     volumes:
       - ./data/adb:/root/.android
+    networks:
+      - default
+      - proxy-net
+
+networks:
+  proxy-net:
+    external: true
+    name: proxy-net
