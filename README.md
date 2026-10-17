@@ -6,9 +6,9 @@
 
 ```sh
 cp .env.example .env
-# 编辑 .env：将 EASYADB_TOKEN 改为至少 12 位的随机字符串。
-# 默认仅监听本机。若需在 EasyTier / LAN 可信网络访问，把 EASYADB_BIND_IP 改为 NAS 相应接口 IP。
-docker compose up -d --build
+# 编辑 .env：设置随机 EASYADB_TOKEN 和 Web 监听 IP。
+# 使用现有 proxy-net / Mihomo 构建，不使用 Host 网络：
+sudo sh scripts/build-with-mihomo.sh
 ```
 
 浏览器访问 `http://<NAS-IP>:8765`。如果保留 `EASYADB_BIND_IP=127.0.0.1`，需在 NAS 本机打开 `http://127.0.0.1:8765` 或使用 SSH 隧道。页面的「访问密钥」填写 `.env` 中的 `EASYADB_TOKEN`。**不要将管理端口直接暴露到公网。**
