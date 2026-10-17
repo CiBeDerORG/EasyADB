@@ -36,16 +36,15 @@ if ! docker image inspect "$BUILDKIT_IMAGE" >/dev/null 2>&1; then
   sh scripts/bootstrap-buildkit-via-mihomo.sh
 fi
 
+# A previous failed bootstrap may leave a registered builder without its container.
+# Remove only this dedicated EasyADB builder, never another project's builder.
+if docker buildx inspect "$BUILDER" >/dev/null 2>&1 &&
+   ! docker container inspect "$BUILDER_CONTAINER" >/dev/null 2>&1; then
+  echo "Removing incomplete EasyADB-only builder $BUILDER..."
+  docker buildx rm "$BUILDER"
+fi
+
 if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-  if ! docker container inspect "$BUILDER_CONTAINER" >/dev/null 2>&1; then
-    echo "Removing incomplete project-only builder $BUILDER from the previous failed bootstrap..."
-    docker buildx rm "$BUILDER"
-    docker buildx create --name "$BUILDER" --driver docker-container \
-      --driver-opt "image=$BUILDKIT_IMAGE" \
-      --driver-opt "network=$NETWORK" \
-      --driver-opt "env.HTTP_PROXY=$PROXY" \
-      --driver-opt "env.HTTPS_PROXY=$PROXY" >/dev/null
-  fi
   if [ "$(docker inspect -f '{{if index .NetworkSettings.Networks "proxy-net"}}yes{{end}}' "$BUILDER_CONTAINER")" != yes ]; then
     echo "ERROR: existing $BUILDER is not attached to proxy-net. Review and recreate it." >&2
     exit 1
