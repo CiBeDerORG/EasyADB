@@ -1,0 +1,10 @@
+services:
+  easyadb:
+    build: .
+    restart: unless-stopped
+    environment:
+      EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
+    ports:
+      - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+    volumes:
+      - ./data/adb:/root/.android
