@@ -20,51 +20,36 @@ sudo sh scripts/build-with-mihomo.sh
 
 注意：配对端口和连接端口不是同一个。ADB 授权密钥持久化于 `./data/adb`，请勿提交或分享。手机系统无线调试关闭、端口改变后，应使用实际新端口重新连接。
 
-## 通过现有 Mihomo 加速构建（proxy-net，不使用 Host）
+## 通过现有 Mihomo 加速构建（proxy-net，含首次 BuildKit 引导）
 
-运行中的 EasyADB 与专属 Buildx 构建器均连接外部网络 `proxy-net`。**代理统一使用 Docker 容器名 `http://mihomo:7890`，不读取或写入 Mihomo 的容器 IP**。确保 `mihomo` 在 `proxy-net` 下可由该名称解析，且 Mihomo 的 `mixed-port: 7890` 允许同网络内连接（如 `allow-lan: true`）。不要将 7890 映射到公网。
+**只需运行一个命令：**
 
-直接在 `.env` 填：
+```sh
+sudo sh scripts/build-with-mihomo.sh
+```
+
+脚本检查现有 `proxy-net` 与 `mihomo`，并在首次缺少 `moby/buildkit:buildx-stable-1` 时自动调用 `scripts/bootstrap-buildkit-via-mihomo.sh`。后者使用官方 `crane` 从 Docker Registry 经 Mihomo 下载镜像 tar 包，再用 `docker load` 本地导入；**不会修改 FNOS 的 daemon.json、重启 Docker，也不依赖已失效的 docker.ketches.cn 镜像加速源**。官方 crane 发布包会与同一发行版的 `checksums.txt` 核对 SHA-256 后使用（默认 v0.22.1）。<https://github.com/google/go-containerregistry/tree/main/cmd/crane>
+
+**两个代理地址的区别：** FNOS 宿主机不在 `proxy-net` 的 Docker DNS 中，所以只在一次性 bootstrap helper 中临时读取 Mihomo 的 *桥接 IP*，供宿主机 curl/crane 直接代理下载。EasyADB 与 BuildKit 构建器真正运行后，都加入 `proxy-net`，**始终使用 `http://mihomo:7890` 这个容器名**，不会把临时 IP 保存到配置。
+
+`.env` 建议填写：
 
 ```ini
 EASYADB_BUILD_PROXY=http://mihomo:7890
 ```
 
-### 首次启动前：Docker Daemon 需要能获取 BuildKit 镜像
+检查 Mihomo 已加入 `proxy-net` 且允许同网络访问 `mixed-port: 7890`（如 `allow-lan: true`、`bind-address: '*'`）；不要把代理端口开放到公网。首次下载需 FNOS 自带 `curl`、`tar`、`sha256sum` 和可用的系统 CA 证书；目前 helper 支持 Linux amd64 / arm64。下载临时文件放在仓库 `.cache/`，操作完成后自动清理；磁盘紧张可通过 `EASYADB_BOOTSTRAP_CACHE` 指定别的目录。
 
-`scripts/build-with-mihomo.sh` 使用独立的 `docker-container` Buildx 构建器。**它在接入 proxy-net 之前必须由 Docker Daemon 获取 `moby/buildkit:buildx-stable-1` 镜像。** Daemon 本身不在 `proxy-net` 中，不能通过 `http://mihomo:7890` 这个容器 DNS 名称完成首次拉取。这个一次性引导与之后 BuildKit 中的依赖下载是两件不同的事。
-
-如果 `sudo docker pull moby/buildkit:buildx-stable-1` 连接 Docker Hub 超时，先修复 Daemon 的镜像拉取途径（例如移除已失效的 `docker.ketches.cn` 镜像源，配置 Daemon 能访问的代理），或者在另一台同架构的 Docker 设备上执行：
+还可以只验证一次性镜像引导，不启动 EasyADB：
 
 ```sh
-docker pull moby/buildkit:buildx-stable-1
-docker save -o moby-buildkit.tar moby/buildkit:buildx-stable-1
+sudo sh scripts/bootstrap-buildkit-via-mihomo.sh
+sudo docker image inspect moby/buildkit:buildx-stable-1
 ```
 
-将文件传给 FNOS 后执行：
+随后主脚本使用专属 `docker-container` Buildx 构建器 `easyadb-proxy`，以 `--driver-opt network=proxy-net` 加入既有网络；构建器自身的 HTTP/HTTPS 代理及 Dockerfile 中的 apt/curl/pip 下载代理均为 `http://mihomo:7890`。构建时使用 `--load`，最后通过 `docker compose up -d --no-build` 启动服务；不更改其他项目默认构建器。如果之前失败留下一个没有容器的同名 EasyADB 构建器，主脚本会仅清理这个项目专用的残留构建器。
 
-```sh
-sudo docker load -i moby-buildkit.tar
-```
-
-该方式不用为 Mihomo 开放公网端口。请勿将 `mihomo` 这个容器 DNS 名称直接写进宿主机 Docker Daemon 代理配置。修改 FNOS 全局 Docker 配置前应先备份；重启 Docker 可能影响其他容器。
-
-### 构建并启动
-
-```sh
-# 首次部署时创建 .env，然后填写访问密钥与 Web 监听地址
-cp .env.example .env
-
-# 若之前脚本尝试启动 Buildx 失败、留下旧构建器，先清理项目专用实例：
-sudo docker buildx rm easyadb-proxy
-
-# 建议使用该脚本，不要普通 docker compose up --build：
-sudo sh scripts/build-with-mihomo.sh
-```
-
-如果 `easyadb-proxy` 不存在，清理命令提示不存在可忽略。脚本先检查 BuildKit 基础镜像是否已在本地，缺失时快速给出原因；使用 `--driver-opt network=proxy-net` 创建独立构建器，为 BuildKit 和 Dockerfile 下载传入 `http://mihomo:7890`，然后 `--load` 构建镜像并运行 `docker compose up -d --no-build`。默认不会改变其他项目的构建器，也不使用 `network: host`。
-
-Docker BuildKit 不支持在普通 `build.network` 直接指定 `proxy-net`：该字段控制 Dockerfile `RUN` 的网络模式，并非构建器容器所连接的 Docker 网络。因此这里使用专属构建器的 `--driver-opt network=proxy-net`。
+**注意：** `build.network: proxy-net` 不能代替这套做法；它控制 Dockerfile 中 RUN 的网络模式，不等同于构建器容器所在的自定义 Docker 网络。正常启动请使用主脚本，而不是裸跑 `docker compose up --build`。
 
 ---
 
