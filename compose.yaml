@@ -7,10 +7,10 @@ services:
       # custom names in RUN network mode. The helper script creates a dedicated
       # docker-container Buildx builder attached to proxy-net instead.
       args:
-        HTTP_PROXY: ${EASYADB_BUILD_PROXY:-}
-        HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-}
-        http_proxy: ${EASYADB_BUILD_PROXY:-}
-        https_proxy: ${EASYADB_BUILD_PROXY:-}
+        HTTP_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        http_proxy: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        https_proxy: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
         NO_PROXY: localhost,127.0.0.1
         no_proxy: localhost,127.0.0.1
     restart: unless-stopped
