@@ -173,7 +173,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
-        assert "勾选任意 1～4 台" in html
+        assert "左侧「选择」同时用于批量管理与批量投屏" in html
         multi_js=client.get("/m2-multi.js").text
         assert "liveState(id)" in multi_js
         assert "startFor(id)" in multi_js and "stopFor(id)" in multi_js
@@ -183,14 +183,16 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "开启此设备画面" in multi_js and "关闭此设备画面" in multi_js
         assert ".multi-live-status.playing" in html
         assert "getManagementBusy:()=>loading" in html
-        # Batch-management selection is independent of the at-most-four
-        # live-session picker, and destructive actions require confirmation.
+        # The existing batch-management checkboxes now also drive at-most-four
+        # video launches. Destructive actions still require confirmation.
         for marker in ('id="bulkSelectAll"', 'id="bulkConnect"',
                        'id="bulkDelete"', 'id="bulkCount"'):
             assert marker in html
         assert "const managementSelected=new Set()" in html
         assert "managementCheck.checked=managementSelected.has(d.id)" in html
-        assert "multiView.selected" not in html
+        assert "getBatchSelection:()=>managementSelected" in html
+        assert "getBatchSelection" in multi_js
+        assert "参与本轮投屏" not in multi_js
         assert "const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)))" in html
         assert "if(!confirm('将从列表永久删除以下 " in html
         assert "managementSelected.clear();render();" in html
@@ -207,7 +209,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         # Header indicator uses actual active_serial for successful ADB,
         # selected_serial only to explain an explicit failed attempt.
-        assert "top.append(managementLabel,info,adbStatusBadge(d))" in html
+        assert "top.append(managementLabel,info);primary.append(top,...addressRows)" in html
+        assert "row.prepend(adbStatusBadge(d))" in html
+        assert "addressRows.push(row)" in html
+        assert ".device-quality .adb-badge{justify-self:start;margin-left:0}" in html
         assert "const connected=d.status==='connected'&&Boolean(d.active_serial)" in html
         assert "d.connect_failed===true||d.status==='error'" in html
         assert "const serial=connected?d.active_serial:(failed?d.selected_serial:null)" in html
