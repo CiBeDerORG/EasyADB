@@ -96,7 +96,7 @@ class MultiView{
    item.setAttribute('data-device-id',d.id);
    // Batch selection comes from the existing left-hand device checkbox.
    // The device management page prepends its ADB status badge here.
-   if(!connected)item.classList.add('multi-unavailable');
+   // Preserve full-color ADB status even when streaming controls are disabled.
    const value=this.getChoice(d.id);
    // Three independent per-device settings, replacing the preset dropdown.
    // Server still validates their complete numeric tuple as custom quality.
