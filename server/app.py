@@ -70,6 +70,28 @@ class DeviceInput(Target):
     auto_reconnect: bool = True
 
 
+class GroupInput(BaseModel):
+    name: str
+    ip_prefix: str | None = None
+
+
+def clean_group(payload):
+    name = payload.name.strip()
+    if not 1 <= len(name) <= 64 or name == "未分组":
+        raise HTTPException(400, "分组名称须为 1–64 字符，且不能使用保留名称「未分组」")
+    prefix = (payload.ip_prefix or "").strip() or None
+    if prefix:
+        match = re.fullmatch(r"([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.\*", prefix)
+        if not match:
+            raise HTTPException(400, "IP 前缀格式应为 192.168.10.*")
+        try:
+            canonical = ipaddress.IPv4Address(match.group(1) + ".1")
+        except ipaddress.AddressValueError:
+            raise HTTPException(400, "IP 前缀包含无效的 IPv4 网段") from None
+        prefix = str(canonical).rsplit(".", 1)[0] + ".*"
+    return name, prefix
+
+
 def authorize(x_easyadb_token: str | None = Header(default=None)):
     if not x_easyadb_token or not secrets.compare_digest(x_easyadb_token, TOKEN):
         raise HTTPException(401, "访问密钥不正确")
@@ -147,13 +169,48 @@ def list_devices():
     return [manager.snapshot(d) for d in store.list()]
 
 
+@app.get("/api/groups", dependencies=[Depends(authorize)])
+def list_groups():
+    return store.list_groups()
+
+
+@app.post("/api/groups", status_code=201, dependencies=[Depends(authorize)])
+def create_group(payload: GroupInput):
+    name, prefix = clean_group(payload)
+    try:
+        return store.create_group(name, prefix)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "分组名称已存在") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@app.put("/api/groups/{group_name}", dependencies=[Depends(authorize)])
+def update_group(group_name: str, payload: GroupInput):
+    name, prefix = clean_group(payload)
+    old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
+    try:
+        result = store.update_group(group_name, name, prefix)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "分组名称已存在") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    if result is None:
+        raise HTTPException(404, "找不到该分组")
+    for device_id in old_members:
+        manager.clear(device_id)
+    return result
+
+
 @app.post("/api/devices", status_code=201, dependencies=[Depends(authorize)])
 def create_device(payload: DeviceInput):
     data = clean_input(payload)
     try:
         device = store.create(data)
     except sqlite3.IntegrityError:
-        raise HTTPException(409, "该 IP 和端口已经存在于设备列表") from None
+        raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
     return manager.snapshot(device)
 
 
@@ -169,10 +226,12 @@ def update_device(device_id: str, payload: DeviceInput):
     try:
         updated = store.update(device_id, data)
     except sqlite3.IntegrityError:
-        raise HTTPException(409, "该 IP 和端口已经存在于设备列表") from None
+        raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
     if not updated:
         raise HTTPException(404, "找不到该设备")
-    if (original["ip"], original["port"]) != (updated["ip"], updated["port"]):
+    if (original["ip"], original["port"], original["group_name"], original["lan_ip"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"]):
         manager.clear(device_id)
     return manager.snapshot(updated)
 
@@ -209,12 +268,13 @@ def refresh_device(device_id: str):
 
 @app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
 def device_screenshot(device_id: str):
-    device = get_device(device_id)
-    serial = f'{device["ip"]}:{device["port"]}'
-    if not is_connected(serial):
-        manager._set_state(device_id, "disconnected", "ADB 已断开")
-        raise HTTPException(409, "设备未连接，请重新连接后再截图")
-    return capture(serial)
+    with manager._device_lock(device_id):
+        device = get_device(device_id)
+        serial = manager.serial_for(device)
+        if not serial or not is_connected(serial):
+            manager._set_state(device_id, "disconnected", "当前 ADB 地址已断开")
+            raise HTTPException(409, "设备未连接，请重新连接后再截图")
+        return capture(serial)
 
 
 # Backward-compatible MVP routes (not used by the M1 page).
