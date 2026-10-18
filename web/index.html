@@ -5,20 +5,20 @@
 <title>EasyADB · 设备管理</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0d1320;color:#eef3fb}
-*{box-sizing:border-box}body{margin:0;padding:25px 15px}main{max-width:1680px;margin:auto}
+*{box-sizing:border-box}body{margin:0;padding:22px 16px}main{max-width:1920px;margin:auto}
 h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:0}p{line-height:1.5}
 .hint{color:#9baec9;font-size:13px}
-.workspace{display:grid;grid-template-columns:minmax(280px,330px) minmax(0,1fr);gap:17px;align-items:start;margin-top:17px}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px}
 .access-panel{display:grid;grid-template-columns:minmax(160px,260px) minmax(260px,1fr);gap:12px 24px;align-items:end}
 .access-panel .auth-copy{align-self:center}.access-panel .auth-copy .hint{margin:7px 0 0}
 .access-panel .auth-control label{margin-top:0}
 .access-panel #message{grid-column:1/-1;margin:0}
-.inventory-panel{position:sticky;top:14px;max-height:calc(100vh - 28px);overflow:auto}
-.stage-panel{min-width:0}
-.stage-main{display:grid;grid-template-columns:minmax(225px,285px) minmax(0,1fr);gap:16px;align-items:start;margin-top:15px}
-.stage-settings,.stage-view{min-width:0}.stage-main h3{font-size:14px;margin:0 0 10px;color:#c7d9f6}
-.stage-view{border-left:1px solid #34445e;padding-left:15px;min-height:240px}
-.stage-view .muted{margin-top:8px}
+.inventory-panel,.stage-panel{min-width:0}
+.inventory-panel>.heading{flex-wrap:wrap}
+.stage-panel{padding:22px}
+.stage-panel>.heading{margin-bottom:12px}
+.stage-panel>.heading h2{font-size:20px}
+.stage-view{min-width:0}
 .panel{background:#172233;border:1px solid #34445e;border-radius:14px;padding:20px;min-width:0}
 .stack{display:grid;gap:16px}.heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 label{display:block;font-size:13px;color:#c1d0e4;margin:10px 0 6px}
@@ -31,7 +31,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .check input{width:17px;height:17px;flex:none}
 .status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
-.device-list{display:grid;gap:12px;overflow:visible}
+.device-list{display:grid;gap:12px;overflow:visible;width:100%}
 .group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
 .device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
 .group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
@@ -39,7 +39,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
 .device-group:not([open])>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
-.group-items{display:grid;gap:9px;padding:0 10px 10px}
+.group-items{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;padding:0 10px 10px}
 .group-items .item{background:#101a2a}
 [hidden]{display:none!important}
 dialog.device-dialog{padding:0;color:#eef3fb;background:#172233;border:1px solid #405777;border-radius:16px;width:min(540px,calc(100% - 26px));max-height:min(92vh,820px);box-shadow:0 20px 70px #0009;overflow-y:auto}
@@ -50,14 +50,17 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
 .modal-status{min-height:0;margin-top:12px}
 .modal-status:empty{display:none}
-.item{border:1px solid #40536f;border-radius:10px;padding:12px;background:#101a2a}
-.item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px}
+.item{border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(305px,.9fr);align-items:start;gap:18px;width:100%}
+.device-primary{min-width:0}.device-primary>.muted{margin-top:6px}
+.device-quality{min-width:0;border-left:1px solid #34445e;padding-left:16px}
+.device-quality .multi-choice{border:0;background:transparent;padding:0}
+.item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
 .pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
 .pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
 .item-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.item-actions button{font-size:12px;padding:6px 10px}
-.address-row{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
+.address-row{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:6px;max-width:850px}
 .address-row.selected{background:#213956;border:1px solid #5475a5;border-radius:7px;padding:5px 7px}
 .address-switch{font-size:11px;padding:4px 8px;white-space:nowrap}
 .address-switch.selected{background:#24533e;color:#b5f1d0;border:1px solid #397656}
@@ -66,33 +69,37 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .pairing-destination{font-weight:700;color:#b5cffd;overflow-wrap:anywhere}
 .pill.idle{background:#314359}
 details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
-.multi-picker{display:grid;grid-template-columns:1fr;gap:12px;max-height:calc(100vh - 230px);overflow-y:auto;padding-right:3px}
-.multi-choice{display:grid;gap:8px;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
+.multi-picker{display:none!important}
+.multi-choice{display:grid;grid-template-columns:minmax(135px,.6fr) minmax(145px,.8fr);gap:8px 12px;align-items:center;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
 .multi-choice-label{display:flex;align-items:center;gap:9px;margin:0;cursor:pointer}
 .multi-choice .multi-quality,.multi-choice .multi-custom select{max-width:100%;width:100%;height:36px;background:#172233;color:#fff;border:1px solid #50627d;border-radius:7px}
-.multi-custom{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.multi-custom label{min-width:0;margin:0}
-.multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:#adc3df;background:#172233;border-radius:7px;padding:8px}
+.multi-custom{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.multi-custom label{min-width:0;margin:0}
+.multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:#adc3df;background:#172233;border-radius:7px;padding:8px}.multi-choice>.buttons{grid-column:1/-1;margin-top:0}.multi-probe-log{grid-column:1/-1;margin-top:0;padding-top:6px}.multi-probe-log summary{font-size:12px}.multi-probe-log .multi-check-log{margin-top:8px}
 .multi-log{margin:10px 0 0}.multi-log .multi-check-log{max-height:260px;overflow:auto;margin:8px 0}
 .multi-choice input{width:17px;height:17px;flex:none}.multi-unavailable{opacity:.55}
-.multi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;margin-top:12px}
+.multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:12px;min-width:0}
+.multi-grid[data-count="1"]{grid-template-columns:minmax(0,1fr)}
+.multi-grid[data-count="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}
 .multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
-.multi-card{border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:12px;min-width:0}
+.multi-card{border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:16px;min-width:0}
 .multi-card .heading{margin-bottom:8px;flex-wrap:wrap}
-.multi-video{display:block;width:100%;height:300px;max-height:48vh;object-fit:contain;background:#000;border-radius:8px}
+.multi-video{display:block;width:100%;height:min(72vh,760px);min-height:390px;object-fit:contain;background:#000;border-radius:9px}
 .multi-text{display:flex;gap:7px;margin-top:10px}.multi-text input{min-width:0;flex:1}.multi-card .muted{margin-top:8px}
-@media(max-width:1140px){
- .workspace{grid-template-columns:1fr}.inventory-panel{position:static;max-height:none}
- .device-list{max-height:350px;overflow:auto}
+@media(max-width:1050px){
+ .item{grid-template-columns:minmax(0,1fr)}.device-quality{border-left:0;border-top:1px solid #34445e;padding-left:0;padding-top:12px}
+ .multi-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:780px){
- .stage-main{grid-template-columns:1fr}.stage-view{border-left:0;border-top:1px solid #34445e;padding-left:0;padding-top:15px}
- .multi-picker{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));max-height:none;overflow:visible}
  .access-panel{grid-template-columns:1fr}.access-panel #message{grid-column:auto}
  .panel{padding:16px}body{padding:14px 10px}
+ .item-top{flex-wrap:wrap}
+ .multi-choice{grid-template-columns:minmax(0,1fr)}
+ .multi-video{height:min(65vh,620px);min-height:300px}
+ .inventory-panel>.heading{align-items:flex-start;flex-direction:column}
 }
 @media(max-width:480px){
- .multi-grid{grid-template-columns:1fr}.multi-video{height:260px}
- .stage-panel .heading{align-items:flex-start;flex-direction:column}
+ .multi-grid{grid-template-columns:1fr}.multi-video{height:60vh;min-height:270px}
+ .multi-custom{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 </style>
 </head>
@@ -106,21 +113,25 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
 </section>
 <div class="workspace">
- <aside class="panel inventory-panel" aria-label="设备管理">
-   <div class="heading"><h2>设备管理</h2><div class="buttons" style="margin:0"><button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
-   <div class="muted" id="count">尚未加载</div><div class="device-list" id="devices" style="margin-top:12px"></div>
-  </aside>
- <section class="panel stage-panel" id="multiPanel" aria-label="同一网页多设备同屏">
- <div class="heading"><div><h2>设备投屏 / 多设备同屏（同一个网页客户端）</h2><p class="hint">逐台手动连接后，任意勾选 1～4 台，点击开始即只启动所选设备；每台画质、诊断、播放和远控独立，默认只观看。不支持多浏览器接管，也不自动重连。</p></div>
-  <div class="buttons" style="margin:0"><button type="button" id="multiStart" disabled>开始同屏</button><button type="button" class="danger" id="multiStop" disabled>停止全部同屏</button></div>
- </div>
- <p class="hint">每台设备独立配置省流 / 基础 / 原生 / 自定义画质；每台可单独执行能力预检或视频实验。只启动勾选的设备，不必全部选择。</p>
- <div id="multiInfo" class="status" role="status" aria-live="polite">先加载设备并逐台手动连接，勾选至少一台即可开始，无须全选。</div>
- <div class="stage-main">
-  <div class="stage-settings"><h3>设备配置与检测</h3><div id="multiPicker" class="multi-picker"></div></div>
-  <div class="stage-view"><h3>实时画面</h3><div id="multiGrid" class="multi-grid"></div></div>
- </div>
-</section>
+ <section class="panel inventory-panel" aria-label="设备管理">
+  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：手动连接、地址选择、投屏勾选与独立画质。勾选任意 1～4 台后手动开始。</p></div>
+   <div class="buttons" style="margin:0">
+    <button type="button" id="multiStart" disabled>开始投屏</button>
+    <button type="button" class="danger" id="multiStop" disabled>停止全部投屏</button>
+    <button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button>
+    <button id="newDevice" type="button" disabled>＋ 添加设备</button>
+    <button class="secondary" id="refreshAll" disabled>检查全部状态</button>
+   </div>
+  </div>
+  <div class="muted" id="count">尚未加载</div>
+  <div class="device-list" id="devices" style="margin-top:12px"></div>
+  <div id="multiPicker" hidden aria-hidden="true"></div>
+ </section>
+ <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">画面优先显示在设备管理下方。各台分别开启远控、独立停止并查看本路诊断日志；停止全部后可直接再次点击开始，不保留旧画面窗口。</p></div></div>
+  <div id="multiInfo" class="status" role="status" aria-live="polite">在上方设备列表勾选至少一台已连接设备，点击「开始投屏」。</div>
+  <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
+ </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
  <div class="modal-head"><h2 id="formTitle">添加设备</h2><button class="secondary" type="button" id="closeDialog" aria-label="关闭弹窗">×</button></div>
@@ -196,6 +207,13 @@ function action(label,handler,cls='secondary'){
 }
 function select(id){selected=id;render();}
 function render(){
+ // Build a fresh set of per-device quality controls in the hidden staging
+ // container, then MOVE each control into its corresponding full-width row.
+ // Do not touch the independent live grid on any device-status redraw.
+ if(multiView)multiView.updatePicker(false);
+ const qualityRows=new Map();
+ if(multiView)for(const node of Array.from($('multiPicker').children))
+  qualityRows.set(node.getAttribute('data-device-id'),node);
  const list=$('devices');list.replaceChildren();
  const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,items:[]}]));
  for(const d of devices){
@@ -218,6 +236,7 @@ function render(){
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
    const top=elem('div','item-top'),info=elem('div');
+   const primary=elem('div','device-primary');
    info.append(elem('div','item-name',d.name));
    const addAddress=(label,route,ip)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row'+(chosen?' selected':''));
@@ -240,14 +259,18 @@ function render(){
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
-   top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));item.append(top);
-   if(d.status==='connected')item.append(elem('div','muted','ADB 已连接：'+d.active_serial));
-   if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
-   if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
+   top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));primary.append(top);
+   if(d.status==='connected')primary.append(elem('div','muted','ADB 已连接：'+d.active_serial));
+   if(d.model||d.android_version)primary.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
+   if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted',d.last_error));
    const actions=elem('div','item-actions');
    actions.append(action('连接',()=>runConnect(d.id)));
    actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
-   item.append(actions);wrapper.append(item);
+   primary.append(actions);item.append(primary);
+   const quality=elem('div','device-quality');
+   const row=qualityRows.get(d.id);
+   if(row)quality.append(row);
+   item.append(quality);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);shell.append(section);
@@ -259,7 +282,6 @@ function render(){
  $('refreshAll').disabled=loading||!loaded||(multiView&&multiView.hasActive());
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded||(multiView&&multiView.hasActive());
- if(multiView)multiView.updatePicker();
 }
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}

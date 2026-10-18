@@ -162,9 +162,15 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="previewTitle"' not in html
         assert 'class="workspace"' in html
         assert 'class="panel inventory-panel"' in html
-        assert 'class="stage-main"' in html
-        assert 'class="stage-settings"' in html and 'class="stage-view"' in html
+        assert 'class="stage-view"' in html
+        assert 'class="stage-main"' not in html and 'class="stage-settings"' not in html
+        assert 'id="multiPicker" hidden aria-hidden="true"' in html
+        assert "qualityRows.get(d.id)" in html
+        assert 'id="multiStart"' in html and 'id="multiStop"' in html
+        assert html.index('id="multiStart"') < html.index('id="devices"') < html.index('id="multiGrid"')
+        assert ".multi-grid[data-count=\"1\"]" in html
+        assert "grid-template-columns:repeat(2,minmax(0,1fr))" in html
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
-        assert "任意勾选 1～4 台" in html
+        assert "勾选任意 1～4 台" in html

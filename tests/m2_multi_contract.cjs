@@ -6,9 +6,17 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 class El{
  constructor(tag){this.tagName=tag;this.children=[];this.events={};this.style={};this.classList={add(){}};this.value='';this.disabled=false;this.textContent='';this.checked=false;this.open=false;}
  addEventListener(name,fn){(this.events[name]??=[]).push(fn);}
- append(...items){this.children.push(...items);}
- replaceChildren(...items){this.children=[...items];}
- remove(){this.removed=true;}
+ append(...items){
+  for(const item of items){
+   if(item.parent){const siblings=item.parent.children;const i=siblings.indexOf(item);if(i!==-1)siblings.splice(i,1);}
+   item.parent=this;this.children.push(item);
+  }
+ }
+ replaceChildren(...items){for(const child of this.children)child.parent=null;this.children=[];this.append(...items);}
+ remove(){
+  this.removed=true;
+  if(this.parent){const siblings=this.parent.children;const i=siblings.indexOf(this);if(i!==-1)siblings.splice(i,1);this.parent=null;}
+ }
  setAttribute(name,value){this[name]=value;}
  fire(name,ev={}){for(const fn of this.events[name]||[])fn({preventDefault(){},...ev});}
 }
@@ -43,14 +51,19 @@ const root={
 };root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
-assert.match(page,/任意勾选 1～4 台/);
+assert.match(page,/勾选任意 1～4 台/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
 assert.match(page,/class="workspace"/);
 assert.match(page,/class="panel inventory-panel"/);
-assert.match(page,/class="stage-main"/);
-assert.match(page,/class="stage-settings"/);
+assert.match(page,/elem\('div','device-quality'\)/);
 assert.match(page,/class="stage-view"/);
+assert.doesNotMatch(page,/class="stage-main"|class="stage-settings"/);
+assert.match(page,/id="multiPicker" hidden aria-hidden="true"/);
+assert.match(page,/id="multiStart"[\s\S]*id="multiStop"[\s\S]*id="devices"/);
+assert.match(page,/id="devices"[\s\S]*id="multiGrid"/);
+assert.match(page,/qualityRows\.get\(d\.id\)/);
+assert.match(page,/grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(page,/runPreflight:async id/);
 assert.match(page,/runVideoProbe:async\(id,profile\)/);
 assert.doesNotMatch(page,/id="multiProfile"/,'no global multiview quality selector');
@@ -98,6 +111,7 @@ const a=sockets[0];a.open();const pa=JSON.parse(a.sent[0]);
 assert.equal(pa.profile,'custom');assert.equal(pa.quality.video_bit_rate,12000000);
 assert.equal(pa.selected_serial,devices[0].selected_serial);
 assert.equal(multi.cards.size,1);
+assert.equal(grid.children.length,1);
 a.emit('starting',{session_id:'only-one'});
 assert.equal(sockets.length,1);
 init(a,'only-one');
@@ -115,6 +129,8 @@ assert.equal(ca.enabled,true);
 ca.stop.fire('click');assert.equal(a.sent.at(-1),'stop');
 a.emit('ended',{session_id:'only-one',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
+assert.equal(grid.children.length,0,'terminal session must REMOVE its old video DOM card');
+assert.equal(multi.selected.has('id-1'),true,'explicit selection survives clean stop');
 assert.match(ca.historyEl.textContent,/最近画质/);
 // selection is available again, no automatic start and no all-selected rule.
 assert.equal(sockets.length,1);
@@ -141,6 +157,30 @@ assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
 assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
 c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
 assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
+assert.equal(grid.children.length,2,'two selected devices create exactly two visible cards');
+// BUG regression: stop all, wait for actual cleanup acknowledgments, then
+// start the same selection again. No old window may remain behind.
+multi.stopAll();
+assert.equal(b.sent.at(-1),'stop');assert.equal(c.sent.at(-1),'stop');
+b.emit('ended',{session_id:'second-a',cleanup_complete:true});
+c.emit('ended',{session_id:'second-b',cleanup_complete:true});
+assert.equal(grid.children.length,0,'stop-all must clear ALL old windows');
+assert.equal(multi.cards.size,0);
+assert.equal(multi.selected.size,2,'selection is retained but restart remains manual');
+assert.equal(startButton.disabled,false);
+startButton.fire('click');
+assert.equal(grid.children.length,1,'restart adds only the first requested device');
+assert.equal(sockets.length,4);
+const d=sockets[3];d.open();d.emit('starting',{session_id:'restart-a'});init(d,'restart-a');
+assert.equal(grid.children.length,2,'restart must show exactly two NEW video cards');
+assert.equal(sockets.length,5);
+const e=sockets[4];e.open();e.emit('starting',{session_id:'restart-b'});init(e,'restart-b');
+assert.equal(grid.children.length,2,'no stale/duplicate windows after second init');
+multi.stopAll();
+d.emit('ended',{session_id:'restart-a',cleanup_complete:true});
+e.emit('ended',{session_id:'restart-b',cleanup_complete:true});
+assert.equal(grid.children.length,0);
+assert.equal(multi.cards.size,0);
 // preflight and probe on a chosen device are independent and explicit.
 multi.closeAll();assert.equal(multi.cards.size,0);
 const preButton=picker.children[1].children[2].children[0];

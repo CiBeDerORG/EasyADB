@@ -44,7 +44,7 @@ class MultiView{
   this.checking=new Set();
   startButton.addEventListener('click',()=>this.start());
   stopButton.addEventListener('click',()=>this.stopAll());
-  this.updatePicker();
+  this.updatePicker(false);
  }
  status(msg,error=false){this.info.textContent=msg;this.info.className='status'+(error?' error':'');}
  getChoice(id){
@@ -82,7 +82,7 @@ class MultiView{
   }catch(error){this.recordCheck(key,'检测失败：'+error.message);}
   finally{this.checking.delete(key);this.updatePicker();}
  }
- updatePicker(){
+ updatePicker(notify=true){
   const devices=this.getDevices()||[];
   const ids=new Set(devices.filter(d=>d.status==='connected'&&d.active_serial===d.selected_serial).map(d=>d.id));
   for(const id of this.selected)if(!ids.has(id)&&!this.cards.has(id))this.selected.delete(id);
@@ -91,6 +91,7 @@ class MultiView{
    const active=this.cards.has(d.id),connected=ids.has(d.id);
    const busy=this.opening||this.hasActive()||this.checking.has(d.id);
    const item=make('div','multi-choice');
+   item.setAttribute('data-device-id',d.id);
    const main=make('label','multi-choice-label');
    const check=make('input');check.type='checkbox';check.value=d.id;
    check.checked=this.selected.has(d.id);
@@ -99,7 +100,7 @@ class MultiView{
     if(check.checked)this.selected.add(d.id);else this.selected.delete(d.id);
     this.updatePicker();
    });
-   main.append(check,make('span','',d.name+' · '+(connected?d.selected_serial:'未手动连接')));
+   main.append(check,make('span','',connected?'参与本轮投屏 · '+d.name:'手动连接后可选择投屏'));
    item.append(main);
    if(!connected)item.classList.add('multi-unavailable');
    const value=this.getChoice(d.id);
@@ -126,15 +127,19 @@ class MultiView{
     actions.append(b);
    }
    item.append(actions);
+   const details=make('details','multi-probe-log');
+   const summary=make('summary','','检测记录');
    const log=make('div','multi-check-log',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
-   item.append(log);
+   details.append(summary,log);item.append(details);
    this.picker.append(item);
   }
   const available=[...this.selected].filter(id=>ids.has(id)&&!this.cards.has(id));
   this.startButton.disabled=this.opening||this.cards.size>0||
    this.checking.size>0||available.length<1||available.length>MAX_DEVICES;
   this.stopButton.disabled=this.cards.size===0&&!this.opening;
-  this.startButton.textContent='开始同屏（已选 '+available.length+' / 最多 '+MAX_DEVICES+' 台）';
+  this.startButton.textContent='开始投屏（已选 '+available.length+' / 最多 '+MAX_DEVICES+' 台）';
+  this.grid.setAttribute('data-count',String(this.cards.size));
+  if(notify)this.onChange();
  }
 
  hasActive(){return this.cards.size>0;}
@@ -157,13 +162,13 @@ class MultiView{
   this.launchQueue=batch;
   this.status('正在依次启动 '+selected.length+' 路独立投屏；每路控制仍需手动启用。');
   this._launchNext();
-  this.updatePicker();this.onChange();
+  this.updatePicker();
  }
  _launchNext(){
   if(!this.opening)return;
   const next=this.launchQueue.shift();
   if(!next){
-   this.opening=false;this.updatePicker();this.onChange();return;
+   this.opening=false;this.updatePicker();return;
   }
   this.open(next.device,next.quality,()=>this._launchNext());
  }
@@ -458,12 +463,13 @@ class MultiView{
   }
   card.enabled=false;card.pending=false;card.lastInput=false;card.refresh();
   card.stop.disabled=true;
-  const remove=make('button','secondary','移除已结束卡片');
-  remove.type='button';remove.addEventListener('click',()=>card.box.remove());
-  card.box.append(remove);
-  this.cards.delete(card.id);this.selected.delete(card.id);
+  // Remove the terminal DOM node NOW: deleting only the registry entry left a
+  // stale video card behind, so a second Start visually duplicated streams.
+  card.box.remove();
+  this.cards.delete(card.id);
+  // Keep explicit selection for a deliberate second Start; never auto-start.
   card.settleLaunch(); // early failure: clean this card before launching next
-  this.updatePicker();this.onChange();
+  this.updatePicker();
  }
 }
 root.EasyADBMulti=Object.freeze({
