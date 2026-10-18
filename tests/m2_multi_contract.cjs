@@ -77,4 +77,22 @@ multi.stopAll();assert.equal(b.sent.at(-1),'stop');
 b.emit('ended',{session_id:'session-b',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
 assert.equal(sockets.length,2,'stop never auto-starts/reconnects');
+// Four independently checked devices are allowed; a fifth is disabled.
+for(let i=0;i<4;i++){
+ const check=picker.children[i].children[0];
+ check.checked=true;check.fire('change');
+}
+assert.equal(picker.children[4].children[0].disabled,true);
+startButton.fire('click');
+assert.equal(sockets.length,6);
+assert.equal(multi.cards.size,4);
+const [third,fourth]=sockets.slice(2,4);
+third.open();fourth.open();
+third.emit('starting',{session_id:'failed-third'});
+fourth.emit('starting',{session_id:'healthy-fourth'});
+third.emit('error',{session_id:'failed-third',message:'encoder failed'});
+assert.equal(multi.cards.size,3,'a device failure must not kill other device cards');
+assert.equal(multi.cards.get('id-2').closed,false);
+multi.closeAll();
+assert.equal(multi.cards.size,0);
 console.log('M2 multi contract passed');
