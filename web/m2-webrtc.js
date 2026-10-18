@@ -99,7 +99,13 @@ class WebRTCPlayer {
   if(this.closed)return;this.closed=true;
   this.video.removeEventListener('playing',this._onPlaying);
   const pc=this.pc;this.pc=null;
-  if(pc){pc.ontrack=null;pc.onconnectionstatechange=null;pc.close().catch(()=>{});}
+  if(pc){
+   pc.ontrack=null;pc.onconnectionstatechange=null;
+   // Browser RTCPeerConnection.close() is synchronous and returns undefined,
+   // not a Promise. A .catch() here interrupted MultiView.end(), leaving a
+   // stale black card, disabled stop button and floating controls behind.
+   try{pc.close();}catch{} // local DOM/WS cleanup must continue even on failure
+  }
   try{this.video.pause();this.video.srcObject=null;}catch{}
  }
 }
