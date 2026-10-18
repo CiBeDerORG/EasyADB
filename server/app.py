@@ -63,6 +63,7 @@ class PairTarget(Target):
 class PairExisting(BaseModel):
     port: int
     code: str
+    selected_serial: str
 
 
 class DeviceInput(Target):
@@ -182,6 +183,8 @@ def pair_existing_device(device_id: str, target: PairExisting):
         serial = selected_address(device)
         if not serial:
             raise HTTPException(409, "当前连接地址不可用，请先选择有效的 IP")
+        if target.selected_serial != serial:
+            raise HTTPException(409, "所选连接地址已发生变化，请重新加载设备后再配对")
         ip = serial.rsplit(":", 1)[0]
         result = pair_at(ip, target.port, target.code)
         return {**result, "paired_ip": ip, "selected_route": device["selected_route"]}
