@@ -53,6 +53,24 @@ def test_reject_invalid_or_oversize_mp4_init(data):
         parse_init_segments(data)
 
 
+def test_live_diagnostics_are_session_local_and_need_no_adb(tmp_path):
+    live = LiveVideo("selected-only:5555", "baseline", server_file=tmp_path / "absent.jar")
+    before = live.diagnostics()
+    assert before["stage"] == "等待启动"
+    assert before["phone_packets"] == 0 and before["phone_idle_ms"] is None
+    assert before["mux_chunks"] == 0 and before["mux_idle_ms"] is None
+    assert before["init_ready_ms"] is None
+    live._phase_set("等待 FFmpeg 初始化段")
+    live._record_phone_packet()
+    live._record_mux_chunk()
+    after = live.diagnostics()
+    assert after["stage"] == "等待 FFmpeg 初始化段"
+    assert after["phone_packets"] == 1 and after["mux_chunks"] == 1
+    assert 0 <= after["phone_idle_ms"] < 1000
+    assert 0 <= after["mux_idle_ms"] < 1000
+    assert after["elapsed_ms"] >= before["elapsed_ms"]
+
+
 def test_live_registry_reserves_exclusively_and_stops_only_the_correct_session():
     registry = LiveRegistry()
     class Dummy:
