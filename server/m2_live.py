@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+from .m2_touch import InvalidTouch, encode_touch
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, PROFILES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
@@ -183,6 +184,10 @@ class LiveVideo:
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
         self.video_sock = None
+        self.control_sock = None
+        self.touch_size = None
+        self.touch_pressed = False
+        self._touch_lock = threading.Lock()
         self.adb_proc = None
         self.ffmpeg_proc = None
         self._resource_lock = threading.Lock()
@@ -245,6 +250,17 @@ class LiveVideo:
             sock = self.video_sock
             adb_proc = self.adb_proc
             mux = self.ffmpeg_proc
+        with self._touch_lock:
+            control = self.control_sock
+            self.control_sock = None
+            self.touch_size = None
+            self.touch_pressed = False
+            if control:
+                try:
+                    control.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                control.close()
         if sock:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -260,6 +276,19 @@ class LiveVideo:
                     proc.terminate()
                 except OSError:
                     pass
+
+    def send_touch(self, payload):
+        """Bounded write on this session's pinned control socket only."""
+        with self._touch_lock:
+            if self.stop_event.is_set() or self.finished.is_set() or not self.control_sock or not self.touch_size:
+                raise InvalidTouch("当前投屏控制通道尚未就绪")
+            packet, next_pressed = encode_touch(payload, self.touch_size, self.touch_pressed)
+            try:
+                self.control_sock.sendall(packet)
+            except (OSError, socket.timeout) as exc:
+                self.stop_event.set()
+                raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
+            self.touch_pressed = next_pressed
 
     def join(self, timeout=8):
         if self.thread:
@@ -331,7 +360,7 @@ class LiveVideo:
                 cmd = [
                     "adb", "-s", self.serial, "shell", f"CLASSPATH={remote}",
                     "app_process", "/", "com.genymobile.scrcpy.Server", VERSION,
-                    f"scid={scid}", "video=true", "audio=false", "control=false",
+                    f"scid={scid}", "video=true", "audio=false", "control=true",
                     "tunnel_forward=true", "send_device_meta=true",
                     "send_frame_meta=true", "send_stream_meta=true",
                     "send_dummy_byte=true", "cleanup=true", "power_on=false",
@@ -348,6 +377,21 @@ class LiveVideo:
                 video = _connect_forwarded(port, adb_proc, time.monotonic() + 16)
                 with self._resource_lock:
                     self.video_sock = video
+                # v5.0.1 forward socket order: video, audio(if on), control.
+                # Dummy 0x00 appears only on the FIRST socket (video).
+                # The Android server does not send its device metadata until
+                # the second (control) socket has also been accepted.
+                self._phase_set("建立本轮 scrcpy 控制通道")
+                try:
+                    control = socket.create_connection(("127.0.0.1", port), timeout=3)
+                    control.settimeout(2)
+                except OSError as exc:
+                    raise VideoProbeError("scrcpy 控制通道连接失败") from exc
+                with self._touch_lock:
+                    if self.stop_event.is_set():
+                        control.close()
+                        raise StreamStopped()
+                    self.control_sock = control
                 name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event).split(b"\0", 1)[0]
                 codec = _socket_read(video, 4, self.stop_event)
                 if codec != b"h264":
@@ -357,6 +401,8 @@ class LiveVideo:
                 if not flags & 0x80000000 or not 0 < width <= 8192 or not 0 < height <= 8192:
                     raise VideoProbeError("scrcpy 视频初始化尺寸无效")
                 first_header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                with self._touch_lock:
+                    self.touch_size = (width, height)
                 self._phase_set("等待 FFmpeg 初始化段")
 
                 # No transcoding; only repack existing H264 bytes into fMP4.
@@ -424,7 +470,8 @@ class LiveVideo:
                             self._phase = "已生成 MP4 初始化段"
                         self._emit(("init", {"mime": mime, "width": width, "height": height,
                                              "profile": self.profile,
-                                             "codec": "h264", "device": name.decode("utf-8", "replace")}))
+                                             "codec": "h264", "control_available": True,
+                                             "device": name.decode("utf-8", "replace")}))
                         self._emit(("bytes", init))
                         remainder = bytes(init_buffer[end:])
                         init_buffer.clear()
