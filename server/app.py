@@ -931,9 +931,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
                     "ws_video_chunks": ws_video_chunks,
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
-                        if stream.webrtc_track is not None else None),
+                        if getattr(stream, "webrtc_track", None) is not None else None),
                     "webrtc_dropped_frames": (stream.webrtc_track.dropped_frames
-                        if stream.webrtc_track is not None else None)
+                        if getattr(stream, "webrtc_track", None) is not None else None)
                 }), LIVE_WS_SEND_TIMEOUT)
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
