@@ -107,7 +107,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-live-status.ready{color:#b5d8ff}
 .multi-live-status.stopping,.multi-live-status.starting,.multi-live-status.queued{color:#ecc181}
 .multi-live button{margin:0;min-width:120px}
-.multi-latency{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
+.multi-latency,.multi-screen-off{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
 .multi-help{margin-top:12px}.multi-help .muted{margin-top:8px}
 .multi-grid{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start;gap:18px;margin-top:12px;min-width:0;width:100%}
 .multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;width:100%;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
@@ -115,7 +115,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-card .heading{margin-bottom:9px;flex-wrap:wrap}
 .multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
 .multi-video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent;touch-action:auto}
-.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(54px,32%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
+.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(170px,40%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
 .multi-fab.is-open{right:12px}
 .multi-fab button{display:flex;justify-content:center;align-items:center;line-height:1;box-shadow:0 5px 17px #0008}
 .multi-fab .fab-main,.multi-fab .fab-action{position:absolute;width:42px;height:42px;border-radius:50%;padding:0;color:#fff;background:#263d66;border:1px solid #7798cf;font-size:23px}
@@ -124,6 +124,13 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-fab.is-open .fab-action:not([hidden]){opacity:1;pointer-events:auto;transform:scale(1)}
 .multi-fab.is-open .fab-action:disabled{opacity:.38;cursor:not-allowed}
 .multi-fab .fab-up{bottom:52px;right:0}
+.multi-fab .fab-up-wake{bottom:104px;right:0}
+.multi-fab .fab-up-reconnect{bottom:156px;right:0}
+.multi-screen[data-orientation="landscape"] .multi-fab{top:52%}
+.multi-screen[data-orientation="landscape"] .fab-up-wake{bottom:52px;right:52px}
+.multi-screen[data-orientation="landscape"] .fab-up-reconnect{bottom:52px;right:104px}
+.multi-screen[data-orientation="landscape"] .fab-nav-home{top:52px;right:52px}
+.multi-screen[data-orientation="landscape"] .fab-nav-recents{top:52px;right:104px}
 .multi-fab .fab-remote{right:52px;top:0}
 .multi-fab .fab-text{right:104px;top:0}
 .multi-fab .fab-nav-back{top:48px;right:0}
