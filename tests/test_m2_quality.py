@@ -180,7 +180,10 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     for field in ("max_size", "video_bit_rate", "max_fps"):
         assert field in multi
     assert "qualityPayload(this.getChoice(d.id))" in multi
-    assert "const busy=this.opening||this.hasActive()" in multi
+    # A running phone locks ONLY its own quality/route, not every device.
+    assert "const busy=this.opening||this.getManagementBusy?.()" in multi
+    assert "this.isBusyFor(d.id)||this.checking.has(d.id)" in multi
+    assert "const additions=[...this.selected].filter(id=>!this.isBusyFor(id))" in multi
     assert "this.launchQueue=batch" in multi
     assert "runPreflight:async id" in page
     assert "runVideoProbe:async(id,profile)" in page
