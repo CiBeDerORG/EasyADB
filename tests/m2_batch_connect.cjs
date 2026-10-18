@@ -26,9 +26,9 @@ const task=id=>{
  const run=worker(items,task,(done,total,item)=>progress.push([done,total,item]),4);
  assert.deepEqual(requests,['A','B','C','D'],'four requests issued immediately');
  assert.equal(active,4,'no serial ADB connect loop');
- pending.get('C').done(null,'offline');await Promise.resolve();await Promise.resolve();
+ pending.get('C').done(null,'offline');await new Promise(resolve=>setImmediate(resolve));
  assert(requests.includes('E'),'E starts as soon as failed C settles; A remains pending');
- pending.get('B').done('ok-B');await Promise.resolve();await Promise.resolve();
+ pending.get('B').done('ok-B');await new Promise(resolve=>setImmediate(resolve));
  assert(requests.includes('F'),'F starts without waiting for slow A');
  for(const id of ['A','D','E','F'])pending.get(id).done('ok-'+id);
  const result=await run;
