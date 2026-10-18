@@ -23,8 +23,12 @@ class El{
 }
 const timers=new Map();let nextTimer=1;
 function advanceMenuTimers(){
- const due=[...timers.entries()];timers.clear();
- for(const [,fn] of due)fn();
+ const due=[...timers.entries()].filter(([,timer])=>timer.ms===5000);
+ for(const [id,{fn}] of due){timers.delete(id);fn();}
+}
+function advanceStopTimers(){
+ const due=[...timers.entries()].filter(([,timer])=>timer.ms===40000);
+ for(const [id,{fn}] of due){timers.delete(id);fn();}
 }
 const sockets=[];
 class WS{
@@ -38,7 +42,7 @@ class WS{
 let clock=0;
 const root={
  document:{createElement:tag=>new El(tag)},WebSocket:WS,
- setTimeout(fn,ms){assert.equal(ms,5000);const id=nextTimer++;timers.set(id,fn);return id;},
+ setTimeout(fn,ms){assert([5000,40000].includes(ms));const id=nextTimer++;timers.set(id,{fn,ms});return id;},
  clearTimeout(id){timers.delete(id);},
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
@@ -602,6 +606,42 @@ async function waitForCheck(id){
  assert.equal(sockets.length,countOnFailure,'dirty cleanup may not open replacement');
  assert.equal(multi.cards.size,0);
  assert.equal(sockets.length>=base+3,true);
+
+ // Real WebRTC stop regression: hiding a black screen/FAB must not depend on
+ // an indefinite server wait, but timeout cannot claim cleanup or reconnect.
+ root.EasyADBWebRTC={create:(_video,cbs)=>({
+  async start(){},initialize(){cbs.onState('ready');},
+  diagnostics(){return{queueBytes:0,sourceState:'connected',sourceRanges:0,
+   rangeEnd:null,currentTime:0,queueChunks:0,appendCalls:0,completedUpdates:0,
+   videoError:null,webrtcBytes:0,webrtcFrames:0};},
+  pollStats(){},resume(){},destroy(){this.destroyed=true;}
+ })};
+ multi.videoEngine='webrtc';multi.engineReady=true;multi.engineSupported=true;
+ batchSelected.clear();multi.updatePicker();
+ const webrtcCount=sockets.length;
+ liveButton(0).fire('click');
+ const rtcWS=sockets.at(-1);rtcWS.open();
+ assert.equal(JSON.parse(rtcWS.sent[0]).player,'webrtc');
+ rtcWS.emit('starting',{session_id:'webrtc-stop'});
+ init(rtcWS,'webrtc-stop');
+ const rtcCard=multi.cards.get('id-1');
+ rtcCard.main.fire('click');
+ rtcCard.stop.fire('click');
+ assert.equal(rtcWS.sent.at(-1),'stop');
+ assert.equal(rtcCard.fab.hidden,true,'stop immediately hides floating controls');
+ assert.equal(rtcCard.logPanel.hidden,true,'stop hides diagnostic overlay');
+ assert.equal(rtcCard.closed,false,'do not claim cleanup on stop request');
+ assert([...timers.values()].some(t=>t.ms===40000),'WebRTC stop has bounded no-ack wait');
+ advanceStopTimers(); // server never acknowledged cleanup: no indefinite black card
+ assert.equal(rtcCard.closed,true);
+ assert.equal(multi.cards.size,0);
+ assert.equal(grid.children.length,0);
+ assert.equal(sockets.length,webrtcCount+1,'a timeout must NOT auto-reconnect');
+ assert.equal(multi.lastLiveStatus.get('id-1'),'异常结束',
+  'timeout must NOT report cleanup_complete or falsely mark clean stop');
+ assert.match(info.textContent,/资源已释放|资源未释放|资源未确认释放/);
+ assert.equal(timers.size,0,'teardown cancels WebRTC stop timeout');
+ console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
  console.log('M2 selected-only batch stop preserves unselected live/control: OK');
  console.log('M2 independent row live status/start/stop/queue-cancel: OK');
