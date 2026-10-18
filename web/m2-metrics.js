@@ -65,11 +65,23 @@ class QualityMeter{
  }
 }
 function fmt(value,digits=1){return Number.isFinite(value)?value.toFixed(digits):'—';}
+function advice(s){
+ // Data-derived suggestion only. Static Android screens can have 0 FPS and
+ // low received bitrate without any stream failure: never infer from those.
+ if(Number.isFinite(s.dropPct)&&s.dropPct>=5)
+  return '近期掉帧偏高；可在停止后尝试降低分辨率或最高帧率';
+ if(Number.isFinite(s.queueBytes)&&s.queueBytes>4*1024*1024)
+  return '浏览器待追加片段偏多；建议降低画质并检查浏览器负载';
+ if(Number.isFinite(s.bufferAhead)&&s.bufferAhead<0.10&&
+    Number.isFinite(s.receiveMbps)&&s.receiveMbps>0)
+  return '播放缓冲较少；可观察网络抖动与后续掉帧';
+ return '暂未发现明确的画质降档信号（不会自动调整）';
+}
 function format(s){
  return '实测播放帧率 '+fmt(s.fps)+' FPS / 窗口掉帧率 '+fmt(s.dropPct)+'%'+
   '｜缓冲余量 '+fmt(s.bufferAhead,2)+'s / 最新画面距今 '+fmt(s.playbackAgeMs,0)+'ms'+
   '｜载荷速度 '+fmt(s.receiveMbps,2)+' Mbps / 待追加 '+(s.queueBytes??'—')+' B'+
   '（均为浏览器侧测量，不代表手机到屏幕的端到端延迟）';
 }
-root.EasyADBMetrics=Object.freeze({QualityMeter,fmt,format});
+root.EasyADBMetrics=Object.freeze({QualityMeter,fmt,format,advice});
 })(window);
