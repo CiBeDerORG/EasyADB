@@ -384,6 +384,7 @@ class LiveVideo:
                     "tunnel_forward=true", "send_device_meta=true",
                     "send_frame_meta=true", "send_stream_meta=true",
                     "send_dummy_byte=true", "cleanup=true", "power_on=false",
+                    "clipboard_autosync=false",
                     "downsize_on_error=false", "video_codec=h264",
                     f"max_size={settings['max_size']}",
                     f"video_bit_rate={settings['video_bit_rate']}",
