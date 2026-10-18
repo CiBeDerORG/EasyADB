@@ -32,11 +32,17 @@ sudo sh scripts/build-with-mihomo.sh
 
 **两个代理地址的区别：** FNOS 宿主机不在 `proxy-net` 的 Docker DNS 中，所以只在一次性 bootstrap helper 中临时读取 Mihomo 的 *桥接 IP*，供宿主机 curl/crane 直接代理下载。EasyADB 与 BuildKit 构建器真正运行后，都加入 `proxy-net`，**始终使用 `http://mihomo:7890` 这个容器名**，不会把临时 IP 保存到配置。
 
-`.env` 建议填写：
+`.env` 中填写 Mihomo 代理 URL（主脚本和首次下载 BuildKit 的辅助脚本会自动读取，使用 `sudo sh` 也不需要手动 `export`）：
 
 ```ini
+# Mihomo 没有认证时
 EASYADB_BUILD_PROXY=http://mihomo:7890
+# 如果启用了认证，请改为这种形式：
+# EASYADB_BUILD_PROXY=http://用户名:URL编码后的密码@mihomo:7890
+# 例如密码 abc@mihomo → abc%40mihomo
 ```
+
+不要将真实 `.env` 提交到 GitHub。脚本不会主动打印完整代理 URL，但代理凭据可能保存在 BuildKit 构建器的 Docker 配置中，且具有 Docker 管理权限的人可以读取。
 
 检查 Mihomo 已加入 `proxy-net` 且允许同网络访问 `mixed-port: 7890`（如 `allow-lan: true`、`bind-address: '*'`）；不要把代理端口开放到公网。首次下载需 FNOS 自带 `curl`、`tar`、`sha256sum` 和可用的系统 CA 证书；目前 helper 支持 Linux amd64 / arm64。下载临时文件放在仓库 `.cache/`，操作完成后自动清理；磁盘紧张可通过 `EASYADB_BOOTSTRAP_CACHE` 指定别的目录。
 
@@ -55,33 +61,25 @@ sudo docker image inspect moby/buildkit:buildx-stable-1
 
 ### 遇到 HTTP 407：代理要求认证
 
-如果 bootstrap 检查 Registry 时显示 `CONNECT tunnel failed, response 407`，说明已经访问到代理，但 CONNECT 请求被代理认证拒绝（也可能来自其上游代理），不是 Docker 构建网络不通。**部署页面的 `external-controller-cors` / trusted Web origins 仅控制管理 API 跨域访问，与 mixed-port 7890 的认证无关。**
+如 Mihomo 开启了代理账号密码，请在 **EasyADB 项目根目录的 `.env`** 中设置：
 
-先检查来源网络 CIDR（不要猜测网段）：
+```ini
+EASYADB_BUILD_PROXY=http://用户名:URL编码后的密码@mihomo:7890
+```
+
+例如密码为 `abc@mihomo`，应当写成 `abc%40mihomo`（`@` 必须为 `%40`；如包含 `#` 写为 `%23`）。**用户名与密码中的其他 URL 保留字符也需编码。** 脚本不对 `.env` 执行 shell source/eval；它只读取 `EASYADB_BUILD_PROXY` 字段，不会主动打印该 URL。
+
+更新代码后在项目目录执行：
 
 ```sh
-sudo docker network inspect proxy-net --format 'Subnet={{(index .IPAM.Config 0).Subnet}} Gateway={{(index .IPAM.Config 0).Gateway}}'
+git pull origin feat/adb-connect-preview
+sudo sh scripts/build-with-mihomo.sh
 ```
 
-在真正运行中的 Mihomo 配置中检查 `authentication` 与 `skip-auth-prefixes`。若你信任整个 `proxy-net`，可以在 `skip-auth-prefixes` 中**追加实际的 Subnet CIDR**（例如检测结果确实为 `172.19.0.0/16` 时）：
-
-```yaml
-skip-auth-prefixes:
-  - 172.19.0.0/16
-```
-
-与 `authentication`、`allow-lan` 同级配置并重载 Mihomo；不要加到 `external-controller-cors` 下，也不要使用 `0.0.0.0/0` 来绕开认证。该网段内所有容器都将跳过代理认证，不希望如此时请保留认证并为客户端单独配置代理凭据。
-
-复测：
-
-```sh
-sudo curl -sS -i -x http://172.19.0.2:7890 https://registry-1.docker.io/v2/
-```
-
-把示例 IP 换成脚本报告的 Mihomo 实际 IP。出现 Registry 的 HTTP 401 和 `UNAUTHORIZED` 是正常的未登录 Registry 响应，**不同于 Proxy 407**。如果 Mihomo 并未启用本地 `authentication` 但仍返回 407，检查当前选中的上游 HTTP 代理是否要求认证。
+若仍有 407，先确认 `.env` 没有保留无认证的 `http://mihomo:7890`，检查账号密码是否对应**代理 mixed-port** 而非 Dashboard API 的 secret。Mihomo `external-controller-cors` / trusted Web origins 与 7890 代理认证无关；不需要关闭认证或添加网段豁免。已配对但出错也可能是上游代理的认证问题，请检查 Mihomo 的实际出站配置。
 
 ---
- 
+
 ## 检查
 
 ```sh
