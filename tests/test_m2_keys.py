@@ -29,11 +29,11 @@ def nav_event(key="home", session_id="session"):
 
 def test_scrcpy_v501_ascii_text_has_four_byte_big_endian_length():
     packet = encode_text(text_event("Hello 123 !"))
-    assert packet == b"\\x01" + struct.pack(">I", 11) + b"Hello 123 !"
+    assert packet == b"\x01" + struct.pack(">I", 11) + b"Hello 123 !"
     assert len(encode_text(text_event("A" * 300))) == 305
 
 
-@pytest.mark.parametrize("value", ["", "A" * 301, "中文", "hi\\n", "\\x00", "é"])
+@pytest.mark.parametrize("value", ["", "A" * 301, "中文", "hi\n", "\x00", "é"])
 def test_reject_unsupported_text_before_socket(value):
     with pytest.raises(InvalidTouch):
         encode_text(text_event(value))
@@ -77,7 +77,7 @@ def test_input_writes_only_pinned_control_socket_and_rejects_old_session():
             stream.control_sock = left
             stream.touch_size = (720, 1600)
         stream.send_text(text_event("ABC", stream.session_id))
-        assert right.recv(8) == b"\\x01\\x00\\x00\\x00\\x03ABC"
+        assert right.recv(8) == b"\x01\x00\x00\x00\x03ABC"
         stream.send_nav(nav_event("back", stream.session_id))
         assert right.recv(28) == (struct.pack(">BBIII", 0, 0, 4, 0, 0)
                                   + struct.pack(">BBIII", 0, 1, 4, 0, 0))
@@ -158,7 +158,7 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
             ws.send_json(text_event("Hello 123", sid))
             accepted = receive_kind(ws, "input_accepted")
             assert accepted == {"type": "input_accepted", "session_id": sid, "kind": "input_text"}
-            assert len(made[0].sent) == 1 and made[0].sent[0].startswith(b"\\x01")
+            assert len(made[0].sent) == 1 and made[0].sent[0].startswith(b"\x01")
             assert "Hello 123" not in str(accepted)  # never echo typed content
             time.sleep(0.12)  # this UI limits deliberate input to at most 10 commands/sec
             ws.send_json(nav_event("home", sid))
