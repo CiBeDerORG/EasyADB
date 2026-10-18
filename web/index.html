@@ -56,6 +56,8 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .pill.idle{background:#314359}
 .screen{display:flex;justify-content:center;align-items:center;min-height:410px;background:#0a101b;border:1px dashed #475d7a;border-radius:11px;overflow:hidden}
 .screen img{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
+.screen video{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain;background:#000}
+.screen video[hidden]{display:none!important}
 .screen img[hidden],.screen .placeholder[hidden]{display:none}.placeholder{text-align:center;color:#9babc2;font-size:13px;line-height:1.8;padding:25px}
 details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
 @media(max-width:820px){.grid{grid-template-columns:1fr}.panel{padding:16px}body{padding:14px 10px}}
@@ -63,7 +65,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M2 · 已继承 M1 多设备管理；第一阶段增加手动设备能力预检，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。暂不支持实时投屏或控制。</p></header>
+<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M2 · 已继承 M1 多设备管理；第一阶段增加手动设备能力预检，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。M2-00-E 正在验证 HTTP 页面上的实时视频，远程触摸尚未开放。</p></header>
 <div class="grid">
  <div class="stack">
   <section class="panel">
@@ -81,12 +83,14 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
  <section class="panel">
   <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
-   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="shotButton" disabled>刷新截图</button></div>
+   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="liveStart" type="button" disabled>开始实时画面</button><button class="danger" id="liveStop" type="button" disabled>停止实时画面</button><button id="shotButton" disabled>刷新截图</button></div>
   </div>
-  <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"></div>
+  <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"><video id="liveVideo" muted autoplay playsinline hidden aria-label="所选 Android 设备实时画面"></video></div>
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
-  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。浏览器实时解码仍待实现。</p>
+  <div id="m2LiveInfo" class="status" role="status" aria-live="polite" hidden></div>
+  <label for="liveProfile">实时画面档位（需手动开始）</label><select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d"><option value="baseline">基础 · 最大边1600 / 8 Mbps / 30 FPS</option><option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option></select>
+  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。首版仅视频，无触屏/音频/录制。</p>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -141,6 +145,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
+let liveWS=null,liveMS=null,liveSB=null,liveUrl=null,liveQueue=[],liveQueuedBytes=0,liveDeviceId=null,liveStarted=false;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -150,9 +155,11 @@ async function api(path,options={}){
  return r;
 }
 function clearShot(){
+ stopLive();
  $('shot').hidden=true;$('shot').removeAttribute('src');$('placeholder').hidden=false;
  $('m2PreflightInfo').hidden=true;$('m2PreflightInfo').textContent='';
  $('m2VideoInfo').hidden=true;$('m2VideoInfo').textContent='';
+ $('m2LiveInfo').hidden=true;$('m2LiveInfo').textContent='';
  if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
@@ -229,7 +236,10 @@ function render(){
  $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
  $('previewInfo').textContent=d?('当前选择：'+(d.selected_route==='lan'?'内网 IP':'组网 IP')+' · '+d.selected_serial+(d.status==='connected'?' · 已连接':' · 待手动连接')):'从左侧列表选择设备';
  $('connect').disabled=loading||!d;
- $('shotButton').disabled=loading||!d||d.status!=='connected';
+ $('shotButton').disabled=loading||!!liveWS||!d||d.status!=='connected';
+ $('liveStart').disabled=loading||!!liveWS||!d||d.status!=='connected';
+ $('liveStop').disabled=!liveWS;
+ $('liveProfile').disabled=loading||!!liveWS;
  $('m2Preflight').disabled=loading||!d||d.status!=='connected';
  $('m2VideoBaseline').disabled=loading||!d||d.status!=='connected';
  $('m2VideoNative').disabled=loading||!d||d.status!=='connected';
@@ -423,6 +433,118 @@ $('m2Preflight').addEventListener('click',async()=>{
  }catch(e){if(selected===id){info.textContent=e.message;info.className='status error';info.hidden=false;}message(e.message,'error');}
  finally{loading=false;render();}
 });
+
+function liveStatus(text,kind=''){
+ const el=$('m2LiveInfo');el.hidden=false;el.textContent=text;el.className='status '+kind;
+}
+function stopLive(){
+ const ws=liveWS;liveWS=null;liveDeviceId=null;liveStarted=false;
+ if(ws){
+  try{if(ws.readyState===WebSocket.OPEN)ws.send('stop');ws.close();}catch{}
+  ws.onmessage=null;ws.onclose=null;ws.onerror=null;
+ }
+ const video=$('liveVideo');
+ video.pause();video.removeAttribute('src');video.load();video.hidden=true;
+ if(liveSB){try{if(liveSB.updating)liveSB.abort();}catch{}}
+ liveSB=null;liveMS=null;
+ if(liveUrl){URL.revokeObjectURL(liveUrl);liveUrl=null;}
+ liveQueue=[];liveQueuedBytes=0;
+ if(loaded)render();
+}
+function pumpLive(){
+ const sb=liveSB;
+ if(!sb||sb.updating||!liveWS)return;
+ const video=$('liveVideo');
+ if(liveQueue.length){
+  const part=liveQueue.shift();liveQueuedBytes-=part.byteLength;
+  try{sb.appendBuffer(part);}catch(e){liveStatus('视频缓冲区写入失败：'+e.message,'error');stopLive();}
+  return;
+ }
+ // Keep the decoder close to the live edge and cap stale buffered media.
+ try{
+  if(sb.buffered.length){
+   const end=sb.buffered.end(sb.buffered.length-1);
+   if(end-video.currentTime>2.5)video.currentTime=Math.max(0,end-0.45);
+   if(end-sb.buffered.start(0)>12){
+    const cutoff=Math.max(0,end-8);
+    if(cutoff>sb.buffered.start(0))sb.remove(0,cutoff);
+   }
+   if(!video.hidden){video.play().catch(()=>{});}
+  }
+ }catch{}
+}
+function enqueueLive(part){
+ if(!liveWS)return;
+ liveQueuedBytes+=part.byteLength;
+ if(liveQueuedBytes>12*1024*1024){
+  liveStatus('浏览器视频缓冲累积过大，已停止投屏。','error');stopLive();return;
+ }
+ liveQueue.push(part);pumpLive();
+}
+function beginMSE(mime){
+ if(!liveWS)return;
+ if(typeof MediaSource==='undefined'||!MediaSource.isTypeSupported(mime)){
+  liveStatus('当前浏览器不支持 '+mime+' 的 MSE 硬件/软件解码；可换最新版 Chrome/Edge。','error');
+  stopLive();return;
+ }
+ liveMS=new MediaSource();liveUrl=URL.createObjectURL(liveMS);
+ const video=$('liveVideo');video.src=liveUrl;video.muted=true;video.playsInline=true;
+ liveMS.addEventListener('sourceopen',()=>{
+  if(!liveWS||!liveMS||liveMS.readyState!=='open')return;
+  try{
+   liveSB=liveMS.addSourceBuffer(mime);
+   liveSB.addEventListener('updateend',()=>{
+    if(!liveWS)return;
+    $('liveVideo').hidden=false;$('shot').hidden=true;$('placeholder').hidden=true;
+    if(!liveStarted){liveStarted=true;liveStatus('M2 实时视频通道已打开；正在等待并解码 H.264 画面。','ok');}
+    pumpLive();
+    $('liveVideo').play().catch(()=>{liveStatus('视频已接收。若浏览器阻止自动播放，请点击视频区域。','error');});
+   });
+   liveSB.addEventListener('error',()=>{liveStatus('浏览器无法解码分片 MP4 数据。','error');stopLive();});
+   pumpLive();
+  }catch(e){liveStatus('MSE 初始化失败：'+e.message,'error');stopLive();}
+ },{once:true});
+}
+function startLive(){
+ if(liveWS||loading||!selected)return;
+ const d=devices.find(x=>x.id===selected);
+ if(!d||d.status!=='connected')return;
+ if(typeof MediaSource==='undefined'){
+  liveStatus('当前浏览器缺少 MSE 支持，HTTP + NAS IP 模式无法播放。','error');return;
+ }
+ clearShot();
+ const id=d.id;const serial=d.selected_serial;
+ const scheme=location.protocol==='https:'?'wss:':'ws:';
+ const ws=new WebSocket(scheme+'//'+location.host+'/api/devices/'+encodeURIComponent(id)+'/m2/live');
+ ws.binaryType='arraybuffer';liveWS=ws;liveDeviceId=id;
+ liveStatus('正在验证会话并启动手机端视频编码…');render();
+ ws.onopen=()=>{
+  if(liveWS!==ws)return;
+  ws.send(JSON.stringify({token:$('token').value.trim(),profile:$('liveProfile').value,selected_serial:serial}));
+ };
+ ws.onmessage=e=>{
+  if(liveWS!==ws)return;
+  if(typeof e.data==='string'){
+   let msg;try{msg=JSON.parse(e.data);}catch{liveStatus('视频服务端返回了无效消息。','error');stopLive();return;}
+   if(msg.type==='starting')liveStatus('正在启动 '+msg.selected_serial+' 的视频流…');
+   else if(msg.type==='init'){
+    liveStatus('已获取视频初始化信息：'+msg.width+'×'+msg.height+' · '+msg.mime);
+    beginMSE(msg.mime);
+   }else if(msg.type==='error'){liveStatus(msg.message||'实时视频已失败','error');stopLive();}
+   return;
+  }
+  enqueueLive(new Uint8Array(e.data));
+ };
+ ws.onerror=()=>{if(liveWS===ws)liveStatus('实时视频 WebSocket 发生网络错误。','error');};
+ ws.onclose=()=>{
+  if(liveWS===ws){stopLive();render();}
+ };
+}
+$('liveStart').addEventListener('click',startLive);
+$('liveStop').addEventListener('click',()=>{stopLive();liveStatus('实时画面已手动停止。');});
+$('liveVideo').addEventListener('click',()=>{$('liveVideo').play().catch(()=>{});});
+window.addEventListener('beforeunload',stopLive);
+
 async function runVideoProbe(profile){
  const id=selected;if(!id||loading)return;
  loading=true;render();
