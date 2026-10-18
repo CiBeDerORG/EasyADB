@@ -119,6 +119,46 @@ class LiveVideo:
         self.adb_proc = None
         self.ffmpeg_proc = None
         self._resource_lock = threading.Lock()
+        # Session-local, read-only telemetry. No ADB polling, videos or tokens.
+        self._born = time.monotonic()
+        self._metric_lock = threading.Lock()
+        self._phase = "等待启动"
+        self._phone_packets = 0
+        self._phone_last = None
+        self._mux_chunks = 0
+        self._mux_last = None
+        self._ready_at = None
+
+    def _phase_set(self, phase):
+        with self._metric_lock:
+            self._phase = phase
+
+    def _record_phone_packet(self):
+        with self._metric_lock:
+            self._phone_packets += 1
+            self._phone_last = time.monotonic()
+
+    def _record_mux_chunk(self):
+        with self._metric_lock:
+            self._mux_chunks += 1
+            self._mux_last = time.monotonic()
+
+    def diagnostics(self):
+        """Safe stage/age counters for an explicitly opened stream only."""
+        now = time.monotonic()
+        with self._metric_lock:
+            return {
+                "stage": self._phase,
+                "elapsed_ms": round((now - self._born) * 1000),
+                "phone_packets": self._phone_packets,
+                "phone_idle_ms": (round((now - self._phone_last) * 1000)
+                                  if self._phone_last is not None else None),
+                "mux_chunks": self._mux_chunks,
+                "mux_idle_ms": (round((now - self._mux_last) * 1000)
+                                if self._mux_last is not None else None),
+                "init_ready_ms": (round((self._ready_at - self._born) * 1000)
+                                   if self._ready_at is not None else None),
+            }
 
     def start(self):
         if self.thread is not None:
@@ -177,6 +217,8 @@ class LiveVideo:
             if not 0 < length <= MAX_FRAME_BYTES:
                 raise VideoProbeError("scrcpy H.264 媒体包大小异常")
             payload = _socket_read(video, length, self.stop_event)
+            if not pts & (1 << 62):
+                self._record_phone_packet()
             if pts & (1 << 62):
                 first_config = True
             elif not first_config and not (pts & (1 << 61)):
@@ -205,7 +247,9 @@ class LiveVideo:
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
+                self._phase_set("推送 scrcpy-server")
                 _run_adb(self.serial, "push", str(self.server_file), remote)
+                self._phase_set("创建 ADB 视频转发")
                 port_text = _run_adb(self.serial, "forward", "tcp:0", abstract)
                 if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
                     raise VideoProbeError("创建视频专用 ADB 转发失败")
@@ -227,6 +271,7 @@ class LiveVideo:
                                             stdout=adb_log, stderr=subprocess.STDOUT)
                 with self._resource_lock:
                     self.adb_proc = adb_proc
+                self._phase_set("等待 scrcpy 握手")
                 video = _connect_forwarded(port, adb_proc, time.monotonic() + 16)
                 with self._resource_lock:
                     self.video_sock = video
@@ -239,6 +284,7 @@ class LiveVideo:
                 if not flags & 0x80000000 or not 0 < width <= 8192 or not 0 < height <= 8192:
                     raise VideoProbeError("scrcpy 视频初始化尺寸无效")
                 first_header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                self._phase_set("等待 FFmpeg 初始化段")
 
                 # No transcoding; only repack existing H264 bytes into fMP4.
                 mux = subprocess.Popen(
@@ -290,6 +336,7 @@ class LiveVideo:
                                    else "视频编码流已结束")
                             raise VideoProbeError(msg)
                         break
+                    self._record_mux_chunk()
                     if not has_init:
                         init_buffer.extend(data)
                         if len(init_buffer) > MAX_INIT_BYTES:
@@ -298,6 +345,9 @@ class LiveVideo:
                         if parsed is None:
                             continue
                         end, init, mime = parsed
+                        with self._metric_lock:
+                            self._ready_at = time.monotonic()
+                            self._phase = "已生成 MP4 初始化段"
                         self._emit(("init", {"mime": mime, "width": width, "height": height,
                                              "profile": self.profile,
                                              "codec": "h264", "device": name.decode("utf-8", "replace")}))
@@ -307,6 +357,7 @@ class LiveVideo:
                             self._emit(("bytes", remainder))
                         init_buffer.clear()
                         has_init = True
+                        self._phase_set("持续传输")
                     else:
                         self._emit(("bytes", data))
         except StreamStopped:
@@ -316,6 +367,7 @@ class LiveVideo:
         except (OSError, subprocess.SubprocessError) as exc:
             failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
         finally:
+            self._phase_set("结束并清理视频会话")
             self.stop()
             if feeder:
                 feeder.join(timeout=3)
