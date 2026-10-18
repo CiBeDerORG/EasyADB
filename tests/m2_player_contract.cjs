@@ -24,8 +24,8 @@ class MediaSourceMock extends Emitter{
   open(){this.readyState='open';this.emit('sourceopen');}
 }
 class VideoMock extends Emitter {
-  constructor(){super();this.currentTime=0;this.paused=true;this.hidden=true;this.attrs=[];}
-  play(){this.paused=false;this.emit('playing');return Promise.resolve();}
+  constructor(){super();this.currentTime=0;this.paused=true;this.hidden=true;this.attrs=[];this.playCalls=0;}
+  play(){this.playCalls++;this.paused=false;this.emit('playing');return Promise.resolve();}
   pause(){this.paused=true;}
   removeAttribute(name){this.attrs.push(name);}
   load(){}
@@ -155,6 +155,9 @@ assert.equal(streamPlayer.queue.length,1,'resume one pending append after async 
 streamSB.updating=false;
 streamSB.emit('updateend');
 assert.equal(streamPlayer.queue.length,0,'resume remaining queued append');
+for(let i=0;i<20;i++)streamSB.emit('updateend');
+assert.equal(streamVideo.playCalls,1,
+  'do not call video.play() on each high-frequency MP4 append');
 const streamDiag=streamPlayer.diagnostics();
 assert.equal(streamDiag.sourceRanges,1);
 assert(streamDiag.appendCalls>=4);
