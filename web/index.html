@@ -5,9 +5,25 @@
 <title>EasyADB · 设备管理</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0d1320;color:#eef3fb}
-*{box-sizing:border-box}body{margin:0;padding:25px 15px}main{max-width:1220px;margin:auto}
+*{box-sizing:border-box}body{margin:0;padding:22px 16px}main{width:100%;max-width:none;margin:0 auto}
 h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:0}p{line-height:1.5}
-.hint{color:#9baec9;font-size:13px}.grid{display:grid;grid-template-columns:minmax(310px,440px) 1fr;gap:17px;align-items:start}
+.hint{color:#9baec9;font-size:13px}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px}
+.inventory-title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.inventory-auth{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.inventory-auth input{width:min(245px,60vw);height:36px}
+.inventory-auth button{white-space:nowrap}
+.inventory-panel>#message{margin:0 0 12px}
+.temp-editor{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:8px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#142033}
+.temp-editor label{margin:0;min-width:130px;flex:1}
+.temp-editor input{height:36px;margin-top:5px}
+.temp-editor button{min-height:36px}
+.inventory-panel,.stage-panel{min-width:0}
+.inventory-panel>.heading{flex-wrap:wrap}
+.stage-panel{padding:22px}
+.stage-panel>.heading{margin-bottom:12px}
+.stage-panel>.heading h2{font-size:20px}
+.stage-view{min-width:0}
 .panel{background:#172233;border:1px solid #34445e;border-radius:14px;padding:20px;min-width:0}
 .stack{display:grid;gap:16px}.heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 label{display:block;font-size:13px;color:#c1d0e4;margin:10px 0 6px}
@@ -20,7 +36,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .check input{width:17px;height:17px;flex:none}
 .status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
-.device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
+.device-list{display:grid;gap:12px;overflow:visible;width:100%}
 .group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
 .device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
 .group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
@@ -28,7 +44,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
 .device-group:not([open])>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
-.group-items{display:grid;gap:9px;padding:0 10px 10px}
+.group-items{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;padding:0 10px 10px}
 .group-items .item{background:#101a2a}
 [hidden]{display:none!important}
 dialog.device-dialog{padding:0;color:#eef3fb;background:#172233;border:1px solid #405777;border-radius:16px;width:min(540px,calc(100% - 26px));max-height:min(92vh,820px);box-shadow:0 20px 70px #0009;overflow-y:auto}
@@ -39,52 +55,141 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
 .modal-status{min-height:0;margin-top:12px}
 .modal-status:empty{display:none}
-.item{border:1px solid #40536f;border-radius:10px;padding:12px;background:#101a2a}
-.item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px}
-.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
+.item{border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(305px,.9fr);align-items:start;gap:18px;width:100%}
+.device-primary{min-width:0}.device-primary>.muted{margin-top:6px}
+.device-quality{min-width:0;border-left:1px solid #34445e;padding-left:16px}
+.device-quality .multi-choice{border:0;background:transparent;padding:0}
+.device-quality .adb-badge{justify-self:start;margin-left:0}
+.item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.management-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 3px}
+.management-bar label,.management-check{margin:0;display:inline-flex;align-items:center;gap:7px;color:#c5d9f6;cursor:pointer}
+.management-bar input,.management-check input{width:17px;height:17px;flex:none}
+.management-check{padding-top:2px;flex:none}.item-top .item-info{flex:1;min-width:0}
+.device-title{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:6px;min-width:0;margin-bottom:4px}
+.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}
+.device-model{font-size:12px;color:#aab8cd;overflow-wrap:anywhere}
+.device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
+.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
-.pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
-.pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
+.adb-badge{display:inline-flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:3px;max-width:100%;border:1px solid #49617e;border-radius:9px;padding:6px 10px;font-size:12px;background:#25344d;color:#c9d5e6;overflow-wrap:anywhere;margin-left:auto}
+.adb-badge .adb-label{font-weight:700;white-space:nowrap}
+.adb-badge .adb-address{font-size:11px;overflow-wrap:anywhere}
+.adb-badge.connected{background:#183e31;border-color:#387c5b;color:#a4efd0}
+.adb-badge.failed{background:#49252e;border-color:#92505c;color:#ffbbc4}
+.adb-badge.connecting,.adb-badge.checking{background:#4c4023;border-color:#82713f;color:#f6dd95}
+.connection-error{color:#ffbbc4}
 .item-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.item-actions button{font-size:12px;padding:6px 10px}
-.address-row{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
-.address-row.selected{background:#213956;border:1px solid #5475a5;border-radius:7px;padding:5px 7px}
-.address-switch{font-size:11px;padding:4px 8px;white-space:nowrap}
-.address-switch.selected{background:#24533e;color:#b5f1d0;border:1px solid #397656}
+.address-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;max-width:850px}
+.address-target{display:block;text-align:left;font-size:12px;font-weight:500;padding:7px 10px;max-width:100%;overflow-wrap:anywhere;background:#192b43;border:1px solid #405779;color:#c9daef}
+.address-target[aria-pressed="true"]{background:#24533e;color:#b5f1d0;border-color:#397656}
+.address-target:disabled[aria-pressed="true"]{opacity:1;cursor:default}
+.address-target:disabled:not([aria-pressed="true"]){opacity:.5}
 .address-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .first-pair{font-size:11px;padding:4px 8px;white-space:nowrap;background:#42659b}
 .pairing-destination{font-weight:700;color:#b5cffd;overflow-wrap:anywhere}
 .pill.idle{background:#314359}
-.screen{display:flex;justify-content:center;align-items:center;min-height:410px;background:#0a101b;border:1px dashed #475d7a;border-radius:11px;overflow:hidden}
-.screen img{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
-.screen img[hidden],.screen .placeholder[hidden]{display:none}.placeholder{text-align:center;color:#9babc2;font-size:13px;line-height:1.8;padding:25px}
 details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
-@media(max-width:820px){.grid{grid-template-columns:1fr}.panel{padding:16px}body{padding:14px 10px}}
+.multi-picker{display:none!important}
+.multi-choice{display:grid;grid-template-columns:minmax(0,1fr);gap:8px 12px;align-items:center;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
+.multi-choice .multi-quality,.multi-choice .multi-custom select{max-width:100%;width:100%;height:36px;background:#172233;color:#fff;border:1px solid #50627d;border-radius:7px}
+.multi-custom{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.multi-custom label{min-width:0;margin:0;font-size:12px;color:#b8cbe6;display:grid;gap:5px}
+.multi-choice>.buttons[hidden],.multi-choice>.multi-probe-log[hidden]{display:none!important}
+.multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:#adc3df;background:#172233;border-radius:7px;padding:8px}.multi-choice>.buttons{grid-column:1/-1;margin-top:0}.multi-probe-log{grid-column:1/-1;margin-top:0;padding-top:6px}.multi-probe-log summary{font-size:12px}.multi-probe-log .multi-check-log{margin-top:8px}
+.multi-log{display:grid;gap:8px;min-width:0}
+.multi-log h4{margin:12px 0 0;font-size:12px;color:#b9cff0}
+.multi-log .multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;background:#172233;border-radius:7px;padding:8px}
+.multi-log .muted{font-size:12px}
+.multi-choice input{width:17px;height:17px;flex:none}
+.multi-live{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid #34445e;padding-top:10px}
+.multi-live-status{font-size:13px;font-weight:600;color:#b8d0ee}
+.multi-live-status.playing{color:#80d7ad}
+.multi-live-status.ready{color:#b5d8ff}
+.multi-live-status.stopping,.multi-live-status.starting,.multi-live-status.queued{color:#ecc181}
+.multi-live button{margin:0;min-width:120px}
+.multi-latency{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
+.multi-help{margin-top:12px}.multi-help .muted{margin-top:8px}
+.multi-grid{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start;gap:18px;margin-top:12px;min-width:0;width:100%}
+.multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;width:100%;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
+.multi-card{flex:0 1 auto;width:386px;max-width:100%;border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:12px;min-width:0}
+.multi-card .heading{margin-bottom:9px;flex-wrap:wrap}
+.multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
+.multi-video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent;touch-action:auto}
+.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(54px,32%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
+.multi-fab.is-open{right:12px}
+.multi-fab button{display:flex;justify-content:center;align-items:center;line-height:1;box-shadow:0 5px 17px #0008}
+.multi-fab .fab-main,.multi-fab .fab-action{position:absolute;width:42px;height:42px;border-radius:50%;padding:0;color:#fff;background:#263d66;border:1px solid #7798cf;font-size:23px}
+.multi-fab .fab-main{top:0;right:0;background:#436de2;border-color:#a5baf9;z-index:2}
+.multi-fab .fab-action{opacity:0;pointer-events:none;transform:scale(.55);transition:opacity .18s ease,transform .18s ease}
+.multi-fab.is-open .fab-action:not([hidden]){opacity:1;pointer-events:auto;transform:scale(1)}
+.multi-fab.is-open .fab-action:disabled{opacity:.38;cursor:not-allowed}
+.multi-fab .fab-up{bottom:52px;right:0}
+.multi-fab .fab-remote{right:52px;top:0}
+.multi-fab .fab-text{right:104px;top:0}
+.multi-fab .fab-nav-back{top:48px;right:0}
+.multi-fab .fab-nav-home{top:94px;right:0}
+.multi-fab .fab-nav-recents{top:140px;right:0}
+.multi-fab .fab-down{background:#234c41;border-color:#73b69d}
+.multi-text-panel{position:absolute;z-index:6;right:0;top:52px;width:min(242px,calc(100cqw - 20px));padding:10px;background:#1b2b42;border:1px solid #6685b3;border-radius:11px;box-shadow:0 10px 30px #000b;display:grid;gap:9px}
+.multi-text-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;font-weight:700}
+.multi-text-head button{min-width:28px;min-height:28px;font-size:18px;padding:0;border-radius:6px}
+.multi-text-entry{display:flex;gap:6px;min-width:0}
+.multi-text-entry input{min-width:0;flex:1;height:34px;font-size:12px;padding:0 6px}
+.multi-text-entry button{font-size:12px;padding:6px}
+.multi-text-keys{display:flex;gap:7px}
+.multi-text-keys button{font-size:12px;flex:1;min-height:32px;border-radius:7px;padding:6px}
+.multi-log-panel{position:absolute;z-index:9;inset:7px;overflow-y:auto;overscroll-behavior:contain;border:1px solid #6783af;background:#132034f5;box-shadow:0 10px 30px #000b;border-radius:9px;padding:10px;text-align:left}
+.multi-log-head{display:flex;gap:6px;align-items:center;justify-content:space-between;position:sticky;top:-10px;background:#132034;padding:4px 0 8px;z-index:1;border-bottom:1px solid #40536f;font-size:12px}
+.multi-log-head strong{flex:1;min-width:0}
+.multi-log-head button{white-space:nowrap;font-size:11px;padding:6px}
+.multi-log-head .multi-log-close{font-size:20px;min-width:30px;padding:2px 7px}
+.multi-card .muted{margin-top:5px}
+@media(prefers-reduced-motion:reduce){.multi-fab,.multi-fab .fab-action{transition:none}}
+@media(max-width:1050px){
+ .item{grid-template-columns:minmax(0,1fr)}.device-quality{border-left:0;border-top:1px solid #34445e;padding-left:0;padding-top:12px}
+}
+@media(max-width:780px){
+  .panel{padding:16px}body{padding:14px 10px}
+ .item-top{flex-wrap:wrap}
+ .multi-choice{grid-template-columns:minmax(0,1fr)}
+ .inventory-panel>.heading{align-items:flex-start;flex-direction:column}
+}
+@media(max-width:480px){
+ .multi-custom{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
 </style>
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M1 · 保存多台设备、分别连接与截图，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。暂不支持实时投屏或控制。</p></header>
-<div class="grid">
- <div class="stack">
-  <section class="panel">
-   <h2>访问配置</h2>
-   <label for="token">访问密钥（EASYADB_TOKEN）</label>
-   <div class="two" style="grid-template-columns:1fr auto"><input id="token" type="password" autocomplete="off" placeholder="输入服务端访问密钥"><button id="load">加载设备</button></div>
-   <p class="hint">密钥仅保存在当前页面内存中，刷新网页需重新输入。</p>
-   <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
-  </section>
-  <section class="panel">
-   <div class="heading"><h2>设备列表</h2><div class="buttons" style="margin:0"><button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
-   <div class="muted" id="count">尚未加载</div><div class="device-list" id="devices" style="margin-top:12px"></div>
-  </section>
-  <!-- Add/edit form is an accessible native modal, not a permanent sidebar. -->
- </div>
- <section class="panel">
-  <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
-   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button id="shotButton" disabled>刷新截图</button></div>
+<header><h1>EasyADB <span>/ 远程设备工作台</span></h1><p class="hint">先在设备管理中明确选择地址并手动连接，再为任意 1～4 台已连接设备配置画质、开启投屏；每台远控分别手动启用，不自动连接或重试。</p></header>
+<div class="workspace">
+ <section class="panel inventory-panel" aria-label="设备管理">
+  <div class="heading"><div><div class="inventory-title-row"><h2>设备管理</h2>
+    <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载设备</button></div></div>
+    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p></div>
+   <div class="buttons" style="margin:0">
+    <button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button>
+    <button id="newDevice" type="button" disabled>＋ 添加设备</button>
+   </div>
   </div>
-  <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"></div>
-  <p class="hint">截图按需获取；切换设备会清除旧画面，避免显示另一台手机的截图。所有设备的操作通过稳定设备 ID 定位。</p>
+  <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
+  <div class="muted" id="count">尚未加载</div>
+  <div class="management-bar" aria-label="批量设备管理">
+   <label><input type="checkbox" id="bulkSelectAll" disabled>选择全部设备</label>
+   <span class="muted" id="bulkCount" role="status" aria-live="polite">已选 0 台</span>
+   <button type="button" class="secondary" id="bulkConnect" disabled>批量连接</button>
+   <button type="button" class="danger" id="bulkDelete" disabled>批量删除</button>
+    <button type="button" id="multiStart" disabled>批量投屏</button>
+    <button type="button" class="danger" id="multiStop" disabled>批量停止投屏</button>
+    <button class="secondary" id="refreshAll" disabled>批量检查状态</button>
+  </div>
+  <div class="device-list" id="devices" style="margin-top:12px"></div>
+  <div id="multiPicker" hidden aria-hidden="true"></div>
+ </section>
+ <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">每路画面按对应手机实际投屏像素宽度展示；可容纳的画面尽量横向排列，空间不够时自动换行，窄屏下等比例缩小。点击画面右侧半隐藏按钮展开操作。批量停止仅影响已选设备。</p></div></div>
+  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「批量投屏」，或在对应设备行单独开启画面。</div>
+  <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -136,20 +241,41 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
 </dialog>
 </main>
+<script src="/m2-player.js"></script>
+<script src="/m2-traffic.js"></script>
+<script src="/m2-touch.js"></script>
+<script src="/m2-metrics.js"></script>
+<script src="/m2-multi.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
+let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
+const managementSelected=new Set(); // one selection for every batch action
+let multiView=null;
 const groupOpen=new Map();
-const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
+function adbStatusBadge(d){
+ // The selected address is not proof of an active ADB connection.
+ // Display active_serial ONLY when connected; after an explicit failed
+ // connect show the attempted selected_serial. Idle is not an error.
+ const connected=d.status==='connected'&&Boolean(d.active_serial);
+ const inProgress=d.status==='connecting'||d.status==='checking';
+ const failed=!connected&&!inProgress&&(d.connect_failed===true||d.status==='error');
+ const tone=connected?'connected':failed?'failed':inProgress?d.status:'idle';
+ const label=connected?'ADB 已连接':failed?'ADB 连接失败':
+  d.status==='connecting'?'ADB 连接中':d.status==='checking'?'ADB 检查中':
+  d.status==='disconnected'?'ADB 未连接':'待手动连接';
+ const serial=connected?d.active_serial:(failed?d.selected_serial:null);
+ const badge=elem('div','adb-badge '+tone);
+ badge.setAttribute('role','status');
+ badge.setAttribute('aria-label',label+(serial?'：'+serial:''));
+ badge.append(elem('span','adb-label',label));
+ if(serial)badge.append(elem('span','adb-address',serial));
+ return badge;
+}
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
 async function api(path,options={}){
  const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
  if(!r.ok){let e={};try{e=await r.json();}catch{}throw Error(typeof e.detail==='string'?e.detail:'请求失败：HTTP '+r.status);}
  return r;
-}
-function clearShot(){
- $('shot').hidden=true;$('shot').removeAttribute('src');$('placeholder').hidden=false;
- if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
  const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;
@@ -157,11 +283,15 @@ function elem(tag,className,text){
 function action(label,handler,cls='secondary'){
  const b=elem('button',cls,label);b.type='button';b.addEventListener('click',handler);return b;
 }
-function select(id){
- if(selected!==id){selected=id;clearShot();}
- render();
-}
+function select(id){selected=id;render();}
 function render(){
+ // Build a fresh set of per-device quality controls in the hidden staging
+ // container, then MOVE each control into its corresponding full-width row.
+ // Do not touch the independent live grid on any device-status redraw.
+ if(multiView)multiView.updatePicker(false);
+ const qualityRows=new Map();
+ if(multiView)for(const node of Array.from($('multiPicker').children))
+  qualityRows.set(node.getAttribute('data-device-id'),node);
  const list=$('devices');list.replaceChildren();
  const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,items:[]}]));
  for(const d of devices){
@@ -183,58 +313,97 @@ function render(){
   const wrapper=elem('div','group-items');
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
-   const top=elem('div','item-top'),info=elem('div');
-   info.append(elem('div','item-name',d.name));
-   const addAddress=(label,route,ip)=>{
-    const chosen=d.selected_route===route,row=elem('div','address-row'+(chosen?' selected':''));
-    row.append(elem('span','muted',label+'：'+ip+':'+d.port));
-    const change=action(chosen?'✓ 当前选择':'⇄ 切换',()=>switchRoute(d.id,route),
-                        'secondary address-switch'+(chosen?' selected':''));
-    change.disabled=loading||chosen;
-    change.setAttribute('aria-label','将'+d.name+'的当前连接设为'+label+' '+ip+':'+d.port);
-    const controls=elem('div','address-controls');
-    controls.append(change);
-    // Only a failed explicit "连接" attempt exposes first-time pairing;
-    // a mere status check or an idle device must not show the button.
+   const top=elem('div','item-top'),info=elem('div','item-info');
+   const managementLabel=elem('label','management-check'),managementCheck=elem('input');
+   managementCheck.type='checkbox';managementCheck.value=d.id;
+   managementCheck.checked=managementSelected.has(d.id);managementCheck.disabled=loading;
+   managementCheck.setAttribute('aria-label','批量选择 '+d.name);
+   managementCheck.addEventListener('change',()=>{
+    if(managementCheck.checked)managementSelected.add(d.id);else managementSelected.delete(d.id);
+    render();
+   });
+   managementLabel.append(managementCheck,elem('span','','选择'));
+   const primary=elem('div','device-primary'),addressRows=[];
+   const title=elem('div','device-title');
+   title.append(elem('span','item-name',d.name));
+   if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
+   if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
+   info.append(title);
+   const addAddress=(label,route,ip,port=d.port)=>{
+    const chosen=d.selected_route===route,row=elem('div','address-row');
+    const target=action(label+'：'+ip+':'+port,()=>switchRoute(d.id,route),'address-target');
+    target.disabled=loading||chosen||Boolean(multiView&&multiView.isBusyFor(d.id));
+    target.setAttribute('aria-pressed',String(chosen));
+    target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
+    target.title=chosen?'当前使用此线路，点击另一地址即可切换':'点击将此地址设为当前连接线路（不会自动连接）';
+    row.append(target);
     if(chosen&&d.connect_failed){
      const pairButton=action('首次连接',()=>openFirstPair(d.id),'first-pair');
      pairButton.disabled=loading;
      pairButton.setAttribute('aria-label','为'+d.name+'当前选择的'+label+'进行首次无线配对');
-     controls.append(pairButton);
+     row.append(pairButton);
     }
-    row.append(controls);info.append(row);
+    addressRows.push(row);
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
-   top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));item.append(top);
-   if(d.status==='connected')item.append(elem('div','muted','ADB 已连接：'+d.active_serial));
-   if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
-   if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
+   if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port);
+   top.append(managementLabel,info);primary.append(top,...addressRows);
+   if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
-   actions.append(action('查看',()=>select(d.id)),action('连接',()=>runConnect(d.id)));
-   actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
-   item.append(actions);wrapper.append(item);
+   const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
+   const connect=action('连接',()=>runConnect(d.id));
+   const change=action('编辑',()=>edit(d.id));
+   const removeButton=action('删除',()=>remove(d.id),'danger');
+   const tempEdit=action(d.temp_ip?'修改临时 IP':'＋ 临时 IP',()=>openTempEditor(d,editor),'secondary');
+   const tempRemove=d.temp_ip?action('移除临时 IP',()=>removeTempAddress(d.id),'secondary'):null;
+   connect.disabled=change.disabled=removeButton.disabled=tempEdit.disabled=loading||locked;
+   if(tempRemove)tempRemove.disabled=loading||locked;
+   actions.append(connect,change,tempEdit);
+   if(tempRemove)actions.append(tempRemove);
+   actions.append(removeButton);
+   const editor=elem('form','temp-editor');editor.hidden=true;
+   primary.append(actions,editor);item.append(primary);
+   const quality=elem('div','device-quality');
+   const row=qualityRows.get(d.id);
+   if(row){row.prepend(adbStatusBadge(d));quality.append(row);}
+   item.append(quality);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);shell.append(section);
-  if(key!=='ungrouped')shell.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
+  if(key!=='ungrouped'){
+   const config=action('设置',()=>openGroup(g.title),'secondary group-edit');
+   config.disabled=loading||g.items.some(d=>multiView&&multiView.isBusyFor(d.id));
+   shell.append(config);
+  }
   list.append(shell);
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
- $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
- $('previewInfo').textContent=d?('当前选择：'+(d.selected_route==='lan'?'内网 IP':'组网 IP')+' · '+d.selected_serial+(d.status==='connected'?' · 已连接':' · 待手动连接')):'从左侧列表选择设备';
- $('connect').disabled=loading||!d;
- $('shotButton').disabled=loading||!d||d.status!=='connected';
- $('refreshAll').disabled=loading||!loaded;
+ $('refreshAll').disabled=loading||!loaded||!devices.some(d=>managementSelected.has(d.id)&&!(multiView&&multiView.isBusyFor(d.id)));
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded;
+ const candidates=devices.filter(d=>managementSelected.has(d.id));
+ const eligible=candidates.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const adbReady=candidates.filter(d=>d.status==='connected'&&d.connect_failed!==true&&
+  Boolean(d.selected_serial)&&d.active_serial===d.selected_serial);
+ $('bulkCount').textContent='已选设备 '+candidates.length+' 台 · ADB 可用 '+adbReady.length+' 台'+
+  (candidates.length-adbReady.length?' · 未连接/连接失败 '+(candidates.length-adbReady.length)+' 台':'')+
+  (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量管理':'');
+ $('bulkConnect').disabled=loading||!loaded||!eligible.length;
+ $('bulkDelete').disabled=loading||!loaded||!eligible.length;
+ const all=$('bulkSelectAll');
+ all.disabled=loading||!loaded||!devices.length;
+ all.checked=devices.length>0&&candidates.length===devices.length;
+ all.indeterminate=candidates.length>0&&candidates.length<devices.length;
 }
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
  try{
   const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
-  devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
+  devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected))selected=null;
+  const availableIds=new Set(data.map(d=>d.id));
+  for(const id of managementSelected)if(!availableIds.has(id))managementSelected.delete(id);
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
  }catch(e){if(!quiet)message(e.message,'error');}
 }
@@ -250,6 +419,10 @@ function modalMessage(text,kind='error',id='formMessage'){
 function closeModal(){if(loading)return;$('deviceDialog').close();}
 function openModal(id=null){
  if(loading||!loaded)return;
+ if(id&&multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请停止此路并完成清理后再修改配置。','error');
+  return;
+ }
  reset();const d=id?devices.find(x=>x.id===id):null;
  if(id&&!d)return;
  const options=$('groupNames');options.replaceChildren();
@@ -267,6 +440,10 @@ function edit(id){openModal(id);}
 function openGroup(name=null){
  if(loading||!loaded)return;
  const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
+ if(g&&devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+  message('该分组包含正在投屏的设备：可新建分组，但修改此分组请先停止相关设备。','error');
+  return;
+ }
  editingGroup=g?g.name:null;
  $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
  $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
@@ -289,21 +466,62 @@ function openFirstPair(id){
 }
 function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
 async function switchRoute(id,route){
- if(loading)return;loading=true;render();
+ if(loading)return;
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路再切换其连接地址。','error');return;
+ }
+ loading=true;render();
  message('正在保存当前连接地址…');
  try{
   const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
   })).json();
   devices=devices.map(d=>d.id===id?result:d);
-  if(selected===id)clearShot();
   await load(true);
-  message('已切换为'+(route==='lan'?'内网 IP':'组网 IP')+'，需要点击「连接」才能建立 ADB 连接','ok');
+  message('已切换为'+({lan:'内网 IP',temp:'临时 IP',mesh:'组网 IP'}[route]||'所选线路')+'，需要点击「连接」才能建立 ADB 连接','ok');
  }catch(e){message(e.message,'error');await load(true);}
  finally{loading=false;render();}
 }
+function openTempEditor(d,editor){
+ if(loading||multiView&&multiView.isBusyFor(d.id))return;
+ editor.replaceChildren();editor.hidden=false;
+ const ipLabel=elem('label','','临时 IPv4'),ip=elem('input');
+ ip.required=true;ip.placeholder='例如 10.10.30.206';ip.value=d.temp_ip||'';
+ ip.setAttribute('autocomplete','off');ipLabel.append(ip);
+ const portLabel=elem('label','','ADB 连接端口'),port=elem('input');
+ port.type='number';port.required=true;port.min='1';port.max='65535';port.placeholder='端口';
+ port.value=d.temp_port||'';portLabel.append(port);
+ const save=elem('button','','保存临时线路');save.type='submit';
+ const cancel=action('取消',()=>{editor.hidden=true;},'secondary');
+ editor.append(ipLabel,portLabel,save,cancel);
+ editor.onsubmit=event=>{
+  event.preventDefault();
+  if(!editor.hidden)saveTempAddress(d.id,ip.value.trim(),Number(port.value));
+ };
+ ip.focus();
+}
+async function saveTempAddress(id,ip,port){
+ if(loading||multiView&&multiView.isBusyFor(id))return;
+ loading=true;render();message('正在保存临时线路…');
+ try{
+  await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
+   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})
+  });
+  await load(true);message(ip?'临时 IP:端口已入库，可点击临时 IP 线路并手动连接':'临时线路已移除；如原线路已选中，则已恢复组网线路（未自动连接）','ok');
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
+}
+function removeTempAddress(id){
+ const d=devices.find(x=>x.id===id);
+ if(!d||loading||multiView&&multiView.isBusyFor(id))return;
+ if(confirm('确认移除「'+d.name+'」已保存的临时 IP:端口？不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
+}
 async function runConnect(id){
- if(loading)return;select(id);loading=true;render();message('正在连接所选设备…');
+ if(loading)return;
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路；可继续连接其他设备。','error');return;
+ }
+ select(id);loading=true;render();message('正在连接所选设备…');
  try{
   const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
   devices=devices.map(x=>x.id===id?d:x);message(d.name+' 已连接','ok');
@@ -312,13 +530,63 @@ async function runConnect(id){
  finally{loading=false;render();}
 }
 async function remove(id){
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路并完成清理后再删除。','error');return;
+ }
  const d=devices.find(x=>x.id===id);if(!d||loading||!confirm('从列表删除「'+d.name+'」？不会清除手机端 ADB 配对授权。'))return;
  loading=true;render();
- try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id){selected=null;clearShot();}if(editing===id && !$('deviceDialog').open)reset();await load(true);message('设备已从列表删除','ok');}
+ try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id)selected=null;if(editing===id && !$('deviceDialog').open)reset();await load(true);message('设备已从列表删除','ok');}
  catch(e){message(e.message,'error');}finally{loading=false;render();}
 }
 $('load').addEventListener('click',()=>load());
-$('token').addEventListener('input',()=>{loaded=false;devices=[];groups=[];selected=null;clearShot();render();});
+$('token').addEventListener('input',()=>{if(multiView)multiView.closeAll();loaded=false;devices=[];groups=[];selected=null;managementSelected.clear();render();});
+$('bulkSelectAll').addEventListener('change',()=>{
+ if(loading||!loaded)return;
+ if($('bulkSelectAll').checked)for(const d of devices)managementSelected.add(d.id);
+ else managementSelected.clear();
+ render();
+});
+$('bulkConnect').addEventListener('click',async()=>{
+ if(loading||!loaded)return;
+ const picked=devices.filter(d=>managementSelected.has(d.id));
+ const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const skipped=picked.length-candidates.length;
+ if(!candidates.length)return;
+ loading=true;render();let success=0;const failed=[];
+ for(const d of candidates){
+  message('批量连接中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
+  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：已启动投屏，跳过');continue;}
+  try{
+   await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'});
+   success++;
+  }catch(e){failed.push(d.name+'：'+e.message);}
+ }
+ await load(true);loading=false;render();
+ message('批量连接完成：成功 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
+  (failed.length?'；'+failed.join('；'):'')+'。未自动切换线路。',failed.length?'error':'ok');
+});
+$('bulkDelete').addEventListener('click',async()=>{
+ if(loading||!loaded)return;
+ const picked=devices.filter(d=>managementSelected.has(d.id));
+ const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const skipped=picked.length-candidates.length;
+ if(!candidates.length)return;
+ if(!confirm('将从列表永久删除以下 '+candidates.length+' 台设备：\n'+
+  candidates.map(d=>d.name).join('、')+
+  (skipped?'\n另有 '+skipped+' 台正在投屏或清理中，将跳过。':'')+
+  '\n不会清除手机上的 ADB 配对授权。确认删除？'))return;
+ loading=true;render();let success=0;const failed=[];
+ for(const d of candidates){
+  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：操作期间开始投屏，已跳过');continue;}
+  try{
+   await api('/api/devices/'+encodeURIComponent(d.id),{method:'DELETE'});
+   managementSelected.delete(d.id);if(selected===d.id)selected=null;success++;
+  }catch(e){failed.push(d.name+'：'+e.message);}
+ }
+ await load(true);loading=false;render();
+ message('批量删除完成：已删除 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他未删除 '+
+  failed.length+' 台'+(failed.length?'；'+failed.join('；'):'')+'.',failed.length?'error':'ok');
+});
 $('newDevice').addEventListener('click',()=>openModal());
 $('newGroup').addEventListener('click',()=>openGroup());
 $('closeFirstPair').addEventListener('click',closeFirstPair);
@@ -354,6 +622,10 @@ $('firstPairForm').addEventListener('submit',async ev=>{
 $('deleteGroup').addEventListener('click',async()=>{
  if(loading||!editingGroup)return;
  const name=editingGroup;
+ if(devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+  modalMessage('该分组包含正在投屏的设备，请先停止这些设备，再删除分组。','error','groupMessage');
+  return;
+ }
  const count=devices.filter(d=>d.group_name===name).length;
  const detail=count?'列表中的 '+count+' 台设备会移入「未分组」。':'这是一个空分组。';
  if(!confirm('确认删除分组「'+name+'」？\n'+detail+'\n设备记录和 ADB 授权会保留，原分组内网 IP 映射会取消。'))return;
@@ -361,7 +633,7 @@ $('deleteGroup').addEventListener('click',async()=>{
  try{
   const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
   $('groupDialog').close();groupOpen.delete('named:'+name);
-  clearShot();await load(true);
+  await load(true);
   message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
 });
@@ -371,12 +643,17 @@ $('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();}
 $('groupDialog').addEventListener('close',()=>{editingGroup=null;});
 $('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
 $('groupForm').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;loading=true;render();
+ ev.preventDefault();if(loading)return;
+ if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&multiView&&multiView.isBusyFor(d.id))){
+  modalMessage('该分组包含正在投屏的设备，请先停止这些设备再修改；新建分组不受限制。','error','groupMessage');
+  return;
+ }
+ loading=true;render();
  const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
  try{
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
   await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  $('groupDialog').close();clearShot();await load(true);message('分组设置已保存','ok');
+  $('groupDialog').close();await load(true);message('分组设置已保存','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
 });
 $('closeDialog').addEventListener('click',closeModal);
@@ -387,34 +664,60 @@ $('deviceDialog').addEventListener('click',ev=>{
  if(ev.target===$('deviceDialog')&&!loading)closeModal();
 });
 $('form').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;loading=true;render();
+ ev.preventDefault();if(loading)return;
+ if(editing&&multiView&&multiView.isBusyFor(editing)){
+  modalMessage('该设备正处于本轮投屏或启动中，请先停止此路再修改；新建其它设备不受限制。');return;
+ }
+ loading=true;render();
  const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
   const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
-  selected=d.id;clearShot();$('deviceDialog').close();await load(true);message('设备已保存','ok');
+  selected=d.id;$('deviceDialog').close();await load(true);message('设备已保存','ok');
  }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
 $('refreshAll').addEventListener('click',async()=>{
- if(loading)return;loading=true;render();message('正在逐台检查 ADB 状态…');
- try{devices=await(await api('/api/devices/refresh',{method:'POST'})).json();render();message('所选连接地址的状态检查已完成；没有自动发起连接','ok');}
- catch(e){message(e.message,'error');}finally{loading=false;render();}
+ if(loading||!loaded)return;
+ const picked=devices.filter(d=>managementSelected.has(d.id));
+ const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const skipped=picked.length-candidates.length;
+ if(!candidates.length)return;
+ loading=true;render();let success=0;const failed=[];
+ for(const d of candidates){
+  message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
+  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：投屏中跳过');continue;}
+  try{
+   const fresh=await(await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{method:'POST'})).json();
+   devices=devices.map(x=>x.id===d.id?fresh:x);success++;
+  }catch(e){failed.push(d.name+'：'+e.message);}
+ }
+ await load(true);loading=false;render();
+ message('批量检查完成：已检查 '+success+' 台，投屏中预先跳过 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台；只检查各自选定地址，不自动连接'+
+  (failed.length?'；'+failed.join('；'):''),failed.length?'error':'ok');
 });
-$('connect').addEventListener('click',()=>{if(selected)runConnect(selected);});
-$('shotButton').addEventListener('click',async()=>{
- const id=selected;if(!id||loading)return;loading=true;render();message('正在获取截图…');
- try{
-  const blob=await(await api('/api/devices/'+encodeURIComponent(id)+'/screenshot')).blob();
-  if(selected===id){const next=URL.createObjectURL(blob);clearShot();shotUrl=next;$('shot').src=next;$('shot').hidden=false;$('placeholder').hidden=true;message('截图已更新','ok');}
- }catch(e){message(e.message,'error');await load(true);}
- finally{loading=false;render();}
-});
+window.addEventListener('beforeunload',()=>{if(multiView)multiView.closeAll();});
+window.addEventListener('pagehide',()=>{if(multiView)multiView.closeAll();});
+window.addEventListener('offline',()=>{if(multiView)multiView.closeAll();});
 $('pair').addEventListener('click',async()=>{
  if(loading)return;loading=true;render();message('正在配对…');
  try{
   const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim()||$('ip').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
   $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
  }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
+});
+multiView=EasyADBMulti.create({
+ picker:$('multiPicker'),grid:$('multiGrid'),startButton:$('multiStart'),
+ stopButton:$('multiStop'),info:$('multiInfo'),
+ getDevices:()=>devices,getToken:()=>$('token').value.trim(),
+ getManagementBusy:()=>loading,
+ getBatchSelection:()=>managementSelected,
+ onBatchSelectionRemove:id=>{managementSelected.delete(id);render();},
+ onDeviceDisconnected:()=>load(true), // reload saved state only; never adb connect
+ runPreflight:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/preflight',{method:'POST'})).json(),
+ runVideoProbe:async(id,profile)=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{
+  method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile})
+ })).json(),
+ onChange:()=>render()
 });
 render();
 </script>

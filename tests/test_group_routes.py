@@ -303,3 +303,106 @@ def test_first_time_pair_button_only_follows_manual_connection_failure():
     assert "'/pair'" in web
     assert "selected_serial:pairingSerial" in web
     assert "setInterval(" not in web
+
+
+def test_temporary_route_persists_and_uses_its_own_port_without_fallback(monkeypatch, tmp_path):
+    mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
+    from server.m2_live import LiveRegistry
+    mod.live_registry = LiveRegistry()
+    base = "/api/devices"
+    temporary = "10.50.60.70:41177"
+    with TestClient(mod.app) as client:
+        added = client.post(base, headers=AUTH, json=dev()).json()
+        device_id = added["id"]
+        endpoint = f"{base}/{device_id}/temp-address"
+        assert client.put(endpoint, json={"ip": "10.50.60.70", "port": 41177}).status_code == 401
+        assert client.put(endpoint, headers=AUTH, json={"ip": "10.50.60.70"}).status_code == 400
+        assert client.put(endpoint, headers=AUTH, json={"ip": "invalid", "port": 41177}).status_code == 400
+        assert client.put(endpoint, headers=AUTH, json={"ip": "10.50.60.70", "port": 65536}).status_code == 400
+        assert choose(client, device_id, "temp").status_code == 409
+        saved = client.put(endpoint, headers=AUTH,
+                           json={"ip": " 10.50.60.70 ", "port": 41177}).json()
+        assert saved["temp_ip"] == "10.50.60.70" and saved["temp_port"] == 41177
+        assert saved["selected_route"] == "mesh"
+        assert not calls, "Saving the optional address must not probe/connect"
+        chosen = choose(client, device_id, "temp").json()
+        assert chosen["selected_route"] == "temp" and chosen["selected_serial"] == temporary
+        assert chosen["status"] == "idle" and not calls
+        blocked.add(temporary)
+        assert client.post(f"{base}/{device_id}/connect", headers=AUTH).status_code == 502
+        assert [x[2] for x in calls if x[1] == "connect"] == [temporary]
+        blocked.clear()
+        assert client.post(f"{base}/{device_id}/connect", headers=AUTH).json()["active_serial"] == temporary
+        assert [x[2] for x in calls if x[1] == "connect"] == [temporary, temporary]
+
+        edited = client.put(endpoint, headers=AUTH,
+                            json={"ip": "10.50.60.71", "port": 42222}).json()
+        assert edited["selected_route"] == "temp"
+        assert edited["selected_serial"] == "10.50.60.71:42222"
+        assert edited["active_serial"] is None and edited["status"] == "idle"
+        assert [x[2] for x in calls if x[1] == "connect"] == [temporary, temporary]
+
+        removed = client.put(endpoint, headers=AUTH, json={"ip": None, "port": None}).json()
+        assert removed["temp_ip"] is None and removed["temp_port"] is None
+        assert removed["selected_route"] == "mesh" and removed["active_serial"] is None
+        assert choose(client, device_id, "temp").status_code == 409
+
+    reopened = DeviceStore(str(tmp_path / "devices.sqlite3"))
+    reopened.initialize()
+    assert reopened.get(device_id)["selected_route"] == "mesh"
+    assert reopened.get(device_id)["temp_ip"] is None
+
+
+def test_temp_route_conflict_group_edit_migration_and_live_mutation_guard(monkeypatch, tmp_path):
+    import threading
+    from server.m2_live import LiveRegistry
+
+    mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
+    mod.live_registry = LiveRegistry()
+    with TestClient(mod.app) as client:
+        client.post("/api/groups", headers=AUTH,
+                    json={"name": "Home", "ip_prefix": "192.168.10.*"})
+        one = client.post("/api/devices", headers=AUTH, json=dev()).json()
+        two = client.post("/api/devices", headers=AUTH,
+                          json=dev(ip="10.10.30.207", port=5555)).json()
+        eid = f"/api/devices/{one['id']}/temp-address"
+        assert client.put(eid, headers=AUTH,
+                          json={"ip": "192.168.10.207", "port": 5555}).status_code == 409
+        assert mod.store.get(one["id"])["temp_ip"] is None, "collision must roll back"
+        saved = client.put(eid, headers=AUTH,
+                           json={"ip": "172.16.0.1", "port": 5556}).json()
+        assert saved["temp_ip"] == "172.16.0.1"
+        assert client.put(f"/api/devices/{two['id']}/temp-address", headers=AUTH,
+                          json={"ip": "172.16.0.1", "port": 5556}).status_code == 409
+        assert choose(client, one["id"], "temp").json()["selected_serial"] == "172.16.0.1:5556"
+        assert client.put("/api/groups/Home", headers=AUTH,
+                          json={"name": "Home", "ip_prefix": None}).status_code == 200
+        assert mod.store.get(one["id"])["selected_route"] == "temp", "group changes must preserve temp"
+        assert client.delete("/api/groups/Home", headers=AUTH).status_code == 200
+        assert mod.store.get(one["id"])["selected_route"] == "temp", "group delete must preserve temp"
+        class Live:
+            cleanup_complete = False
+            finished = threading.Event()
+            def stop(self): pass
+        mod.live_registry.sessions[one["id"]] = Live()
+        assert client.put(eid, headers=AUTH,
+                          json={"ip": "172.16.0.2", "port": 5556}).status_code == 409
+        assert mod.store.get(one["id"])["temp_ip"] == "172.16.0.1"
+        mod.live_registry.sessions.clear()
+        assert not calls
+
+    # Migrate pre-existing M1 schema non-destructively.
+    legacy = tmp_path / "legacy-temp.sqlite3"
+    with sqlite3.connect(legacy) as db:
+        db.execute("""CREATE TABLE devices (
+            id TEXT PRIMARY KEY,name TEXT NOT NULL,group_name TEXT NOT NULL DEFAULT '',
+            ip TEXT NOT NULL,port INTEGER NOT NULL,model TEXT,android_version TEXT,
+            UNIQUE(ip,port))""")
+        db.execute("INSERT INTO devices(id,name,group_name,ip,port) VALUES(?,?,?,?,?)",
+                   ("old", "Old Phone", "", "10.20.30.40", 4444))
+    store = DeviceStore(str(legacy))
+    store.initialize()
+    assert store.get("old")["temp_ip"] is None and store.get("old")["temp_port"] is None
+    store.set_temp_address("old", "10.20.30.41", 4445)
+    store.select_route("old", "temp")
+    assert DeviceStore(str(legacy)).get("old")["selected_route"] == "temp"

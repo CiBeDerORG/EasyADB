@@ -1,2 +1,5 @@
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
+# Uvicorn base install has no WebSocket protocol backend; live MSE needs this.
+# wsproto works with Uvicorn's auto WS detection without optional C builds.
+wsproto>=1.2,<2

@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Update only the EasyADB M1 branch, before doing any Docker work.
+# Update only the EasyADB M2 branch, before doing any Docker work.
 # Keep Git under the original login user: root may not have their GitHub SSH key.
-TARGET_BRANCH=feat/m1-multi-device
+TARGET_BRANCH=feat/m2-web-control
 
 git_as_owner() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then

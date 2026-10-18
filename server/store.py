@@ -42,6 +42,8 @@ class DeviceStore:
                     port INTEGER NOT NULL,
                     auto_reconnect INTEGER NOT NULL DEFAULT 0,
                     selected_route TEXT NOT NULL DEFAULT 'mesh',
+                    temp_ip TEXT,
+                    temp_port INTEGER,
                     model TEXT,
                     android_version TEXT,
                     UNIQUE (ip, port)
@@ -54,6 +56,11 @@ class DeviceStore:
                 row["name"] for row in db.execute("PRAGMA table_info(devices)")
             }:
                 db.execute("ALTER TABLE devices ADD COLUMN selected_route TEXT NOT NULL DEFAULT 'mesh'")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(devices)")}
+            if "temp_ip" not in columns:
+                db.execute("ALTER TABLE devices ADD COLUMN temp_ip TEXT")
+            if "temp_port" not in columns:
+                db.execute("ALTER TABLE devices ADD COLUMN temp_port INTEGER")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS group_configs (
                     name TEXT PRIMARY KEY,
@@ -77,6 +84,8 @@ class DeviceStore:
             result["mesh_ip"] = result["ip"]
             if result["selected_route"] == "lan" and not result["lan_ip"]:
                 result["selected_route"] = "mesh"
+            if result["selected_route"] == "temp" and not (result["temp_ip"] and result["temp_port"]):
+                result["selected_route"] = "mesh"
         return result
 
     @staticmethod
@@ -91,11 +100,15 @@ class DeviceStore:
         rows = db.execute(DeviceStore._query()).fetchall()
         for row in rows:
             lan = internal_ip(row["ip_prefix"], row["ip"])
-            for ip in {row["ip"], lan} - {None}:
-                serial = (ip, row["port"])
+            serials = {(row["ip"], row["port"])}
+            if lan:
+                serials.add((lan, row["port"]))
+            if row["temp_ip"] is not None and row["temp_port"] is not None:
+                serials.add((row["temp_ip"], row["temp_port"]))
+            for serial in serials:
                 other = owners.get(serial)
                 if other and other != row["id"]:
-                    raise ValueError("内网 IP 与其他设备的连接地址冲突，请调整分组前缀或设备端口")
+                    raise ValueError("ADB 连接地址与其他设备的组网、内网或临时 IP:端口冲突")
                 owners[serial] = row["id"]
 
     def list(self):
@@ -162,7 +175,9 @@ class DeviceStore:
             members = [row["id"] for row in db.execute(
                 "SELECT id FROM devices WHERE group_name=? ORDER BY id", (name,)
             )]
-            db.execute("UPDATE devices SET group_name='',selected_route='mesh' WHERE group_name=?", (name,))
+            db.execute("""UPDATE devices SET group_name='',
+                          selected_route=CASE WHEN selected_route='lan' THEN 'mesh' ELSE selected_route END
+                          WHERE group_name=?""", (name,))
             db.execute("DELETE FROM group_configs WHERE name=?", (name,))
             self._check_routes(db)
             return {"deleted": True, "moved_count": len(members), "device_ids": members}
@@ -191,7 +206,7 @@ class DeviceStore:
             cursor = db.execute(
                 """UPDATE devices
                    SET name=?,group_name=?,ip=?,port=?,
-                       selected_route=CASE WHEN ?=0 THEN 'mesh' ELSE selected_route END,
+                       selected_route=CASE WHEN ?=0 AND selected_route='lan' THEN 'mesh' ELSE selected_route END,
                        model=CASE WHEN ip<>? OR port<>? THEN NULL ELSE model END,
                        android_version=CASE WHEN ip<>? OR port<>? THEN NULL ELSE android_version END
                    WHERE id=?""",
@@ -211,15 +226,30 @@ class DeviceStore:
 
     def select_route(self, device_id, route):
         """Persist the selected address, never issue an ADB operation."""
-        if route not in ("mesh", "lan"):
-            raise ValueError("请选择组网 IP 或内网 IP")
+        if route not in ("mesh", "lan", "temp"):
+            raise ValueError("请选择组网 IP、内网 IP 或临时 IP")
         with self.connection() as db:
             row = db.execute(self._query() + " WHERE d.id=?", (device_id,)).fetchone()
             if not row:
                 return None
             if route == "lan" and not internal_ip(row["ip_prefix"], row["ip"]):
                 raise ValueError("该设备所属分组没有配置有效的内网 IP")
+            if route == "temp" and not (row["temp_ip"] and row["temp_port"]):
+                raise ValueError("该设备还没有保存临时 IP 和端口")
             db.execute("UPDATE devices SET selected_route=? WHERE id=?", (route, device_id))
+        return self.get(device_id)
+
+    def set_temp_address(self, device_id, ip, port):
+        """Persist optional temporary route. No ADB side effects."""
+        with self.connection() as db:
+            row = db.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone()
+            if not row:
+                return None
+            db.execute("""UPDATE devices SET temp_ip=?,temp_port=?,
+                          selected_route=CASE WHEN ? IS NULL AND selected_route='temp'
+                                              THEN 'mesh' ELSE selected_route END
+                          WHERE id=?""", (ip, port, ip, device_id))
+            self._check_routes(db)
         return self.get(device_id)
 
     def set_metadata(self, device_id, model, android_version):
