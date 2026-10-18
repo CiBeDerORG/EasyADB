@@ -447,7 +447,13 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
-                    stream.start()
+                    try:
+                        stream.start()
+                    except (RuntimeError, OSError):
+                        # An unstarted candidate must not pin the device slot.
+                        live_registry.release(device_id, candidate)
+                        stream = None
+                        error = "视频会话未能启动，请稍后重试"
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
@@ -604,9 +610,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
             await asyncio.to_thread(stream.join, 20)
-            if stream.finished.is_set():
-                # A completed terminal message means this same device ID is
-                # available for a new explicitly requested session.
+            if live_registry.is_cleaned(stream):
+                # Ended(cleanup_complete=true) only after all session-owned
+                # video/control/ADB resources were verifiably released.
                 live_registry.release(device_id, stream)
                 if manual_stop:
                     try:
@@ -621,7 +627,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 # cleanup has not finished. reserve() retires it once finished.
                 try:
                     await websocket.send_json({"type": "error",
-                                               "message": "视频会话清理超时，稍后重试；不会同时启动第二路视频"})
+                                               "message": "视频会话尚未完全清理，设备会话保持占用；不会同时启动第二路视频"})
                 except (WebSocketDisconnect, RuntimeError, OSError):
                     pass
         try:
