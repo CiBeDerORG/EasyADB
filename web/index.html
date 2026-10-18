@@ -551,7 +551,7 @@ function liveDiagnostic(diag){
    receiveMbps:traffic?traffic.mbps:null,queueBytes:player?player.queueBytes:null,
    procCpuPct:diag.proc_cpu_pct,procRssMib:diag.proc_rss_mib
   });
-  const el=$('m2QualityMetrics');el.hidden=false;el.textContent=EasyADBMetrics.format(stat);
+  const el=$('m2QualityMetrics');el.hidden=false;el.textContent=EasyADBMetrics.format(stat)+'｜提示：'+EasyADBMetrics.advice(stat);
  }
  const elapsed=age=>age===null||age===undefined?'尚未收到':(age/1000).toFixed(1)+'s';
  const browserAge=liveLastBytesAt?performance.now()-liveLastBytesAt:null;
