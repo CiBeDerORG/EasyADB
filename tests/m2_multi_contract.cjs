@@ -91,7 +91,9 @@ assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-a
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
-assert.match(page,/top\.append\(managementLabel,info,adbStatusBadge\(d\)\)/);
+assert.match(page,/top\.append\(managementLabel,info\);primary\.append\(top,\.\.\.addressRows\)/);
+assert.match(page,/row\.prepend\(adbStatusBadge\(d\)\)/);
+assert.match(page,/\.device-quality \.adb-badge\{justify-self:start;margin-left:0\}/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','ADB 已连接：'/,
  'success address is in the header badge, not repeated below it');
 assert.match(page,/\.adb-badge\.connected\{background:#183e31/,'green successful ADB');
@@ -126,21 +128,21 @@ assert.match(checkingBadge.className,/checking/,'ongoing check must not show sta
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
-const calls=[];
+const calls=[],batchSelected=new Set();
 const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
  getDevices:()=>devices,getToken:()=> 'token-test',
  onChange(){},
+ getBatchSelection:()=>batchSelected,onBatchSelectionRemove:id=>batchSelected.delete(id),
  runPreflight:async id=>{calls.push(['preflight',id]);return{selected_serial:'checked-'+id,model:'Test',android_sdk:35,cpu_abi:'arm64',display_size:'1080x2400'};},
  runVideoProbe:async(id,p)=>{calls.push(['probe',id,p]);return{codec:'H.264',encoded_width:720,
   encoded_height:1280,media_packets:3,key_frames:1,sample_bytes:1024,elapsed_ms:150};}
 });
-const checkbox=i=>picker.children[i].children[0].children[0];
-const quality=(i,key)=>picker.children[i].children[1].children[
+const quality=(i,key)=>picker.children[i].children[0].children[
  ({max_size:0,video_bit_rate:1,max_fps:2})[key]].children[0];
 const liveRow=i=>picker.children[i].children.find(node=>node.className==='multi-live');
 const liveButton=i=>liveRow(i).children[1];
 const liveStatus=i=>liveRow(i).children[0].textContent;
-function select(i){const el=checkbox(i);el.checked=true;el.fire('change');}
+function select(i){batchSelected.add(devices[i].id);multi.updatePicker();}
 function init(ws,sid){
  ws.emit('init',{session_id:sid,width:720,height:1280,
   mime:'video/mp4; codecs="avc1.640028"',format:'fmp4',control_available:true,
@@ -149,14 +151,14 @@ function init(ws,sid){
 assert.equal(root.EasyADBMulti.MAX_DEVICES,4);
 assert.equal(sockets.length,0);
 assert.equal(startButton.disabled,true,'empty selection cannot start');
-assert.equal(checkbox(0).disabled,false);
+assert.equal(picker.children[0].children.some(x=>x.className==='multi-choice-label'),false,'no duplicate projection checkbox');
 assert.match(liveStatus(0),/未开启/);
 assert.equal(liveButton(0).disabled,false);
 assert.match(liveStatus(1),/未开启/);
 select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
 assert.match(startButton.textContent,/待新增 1/);
-assert.equal(checkbox(1).checked,false);
+assert.equal(batchSelected.has('id-2'),false);
 assert.equal(multi.getChoice('id-1').profile,'custom');
 assert.equal(quality(0,'max_size').value,'960');
 assert.equal(quality(0,'video_bit_rate').value,'3000000');
@@ -164,8 +166,8 @@ assert.equal(quality(0,'max_fps').value,'24');
 assert.equal(quality(1,'max_size').value,'960');
 assert.equal(quality(1,'video_bit_rate').value,'3000000');
 assert.equal(quality(1,'max_fps').value,'24');
-assert.equal(picker.children[0].children[2].hidden,true,'hide probe actions only');
-assert.equal(picker.children[0].children[3].hidden,true,'hide probe log only');
+assert.equal(picker.children[0].children[1].hidden,true,'hide probe actions only');
+assert.equal(picker.children[0].children[2].hidden,true,'hide probe log only');
 assert.match(page,/\.multi-choice>\.buttons\[hidden\],\.multi-choice>\.multi-probe-log\[hidden\]/);
 const latency0=picker.children[0].children.at(-1).children[0];
 assert.equal(latency0.checked,true,'low latency defaults enabled for every device');
@@ -222,7 +224,7 @@ ca.stop.fire('click');assert.equal(a.sent.at(-1),'stop');
 a.emit('ended',{session_id:'only-one',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
 assert.equal(grid.children.length,0,'terminal session must REMOVE its old video DOM card');
-assert.equal(multi.selected.has('id-1'),true,'explicit selection survives clean stop');
+assert.equal(batchSelected.has('id-1'),true,'left-side selection survives clean stop');
 assert.match(ca.historyEl.textContent,/最近画质/);
 // selection is available again, no automatic start and no all-selected rule.
 assert.equal(sockets.length,1);
@@ -276,7 +278,7 @@ b.emit('ended',{session_id:'second-a',cleanup_complete:true});
 c.emit('ended',{session_id:'second-b',cleanup_complete:true});
 assert.equal(grid.children.length,0,'stop-all must clear ALL old windows');
 assert.equal(multi.cards.size,0);
-assert.equal(multi.selected.size,2,'selection is retained but restart remains manual');
+assert.equal(batchSelected.size,2,'selection is retained but restart remains manual');
 assert.equal(startButton.disabled,false);
 startButton.fire('click');
 assert.equal(grid.children.length,1,'restart adds only the first requested device');
@@ -293,7 +295,7 @@ assert.equal(grid.children.length,0);
 assert.equal(multi.cards.size,0);
 // preflight and probe on a chosen device are independent and explicit.
 multi.closeAll();assert.equal(multi.cards.size,0);
-const preButton=picker.children[1].children[2].children[0];
+const preButton=picker.children[1].children[1].children[0];
 async function waitForCheck(id){
  // Each explicit check updates the picker asynchronously; don't test a stale
  // detached button while the previous request still has checking=true.
@@ -307,7 +309,7 @@ async function waitForCheck(id){
  assert.equal(calls[0][1],'id-2');
  assert.match(multi.probeResults.get('id-2'),/M2 能力预检/);
  // updatePicker() replaces the DOM; choose the button on the CURRENT card.
- const probeButton=picker.children[1].children[2].children[1];
+ const probeButton=picker.children[1].children[1].children[1];
  assert.equal(probeButton.disabled,false);
  probeButton.fire('click');
  await waitForCheck('id-2');
@@ -317,11 +319,12 @@ async function waitForCheck(id){
  assert.match(multi.probeResults.get('id-2'),/M2 能力预检/,'probe retains earlier log');
  assert.equal(multi.probeResults.has('id-1'),false,'device logs stay isolated');
  for(let i=0;i<4;i++)select(i);
- assert.equal(checkbox(4).disabled,true);
+ select(4);assert.equal(startButton.disabled,true,'five selected streams exceed four slots');
+ batchSelected.delete(devices[4].id);multi.updatePicker();
  assert.equal(startButton.disabled,false);
  // A live device must NOT impose a whole-page lock. Start one, add another
  // logical device to the loaded list, then append it without touching A.
- multi.selected.clear();multi.updatePicker();
+ batchSelected.clear();multi.updatePicker();
  select(0);startButton.fire('click');
  const liveA=sockets.at(-1);liveA.open();liveA.emit('starting',{session_id:'append-A'});
  init(liveA,'append-A');
@@ -335,8 +338,8 @@ async function waitForCheck(id){
  devices.push({id:'id-6',name:'Phone 6',status:'connected',
   selected_serial:'10.10.0.6:5555',active_serial:'10.10.0.6:5555'});
  multi.updatePicker();
- assert.equal(checkbox(0).disabled,true,'active A cannot be unchecked mid-stream');
- assert.equal(checkbox(5).disabled,false,'new device can be checked while A runs');
+ assert.equal(multi.isBusyFor('id-1'),true,'active A cannot restart mid-stream');
+ assert.equal(multi.cards.size<4,true,'new device can be selected while A runs');
  select(5);
  assert.equal(startButton.disabled,false);
  assert.match(startButton.textContent,/追加投屏/);
@@ -362,7 +365,7 @@ async function waitForCheck(id){
  init(liveC,'append-C');
  assert.equal(multi.cards.size,4);
  assert.equal(grid.children.length,4);
- assert.equal(checkbox(3).disabled,true,'fifth concurrent device unavailable');
+ assert.equal(multi.cards.size,4,'fifth concurrent device unavailable');
  assert.equal(liveButton(4).disabled,true,'no per-device fifth stream when pool is full');
  assert.equal(startButton.disabled,true,'full four-slot pool');
  multi.start();assert.equal(multi.cards.size,4,'cannot duplicate any running card');
@@ -371,7 +374,7 @@ async function waitForCheck(id){
  liveF.emit('ended',{session_id:'append-F',cleanup_complete:true});
  assert.equal(multi.cards.size,3);
  assert.equal(multi.cards.get('id-1'),liveCardA);
- assert.equal(multi.selected.has('id-6'),false,
+ assert.equal(batchSelected.has('id-6'),false,
   'single stop unchecks F so a later append never silently restarts F');
  select(3);assert.equal(startButton.disabled,false);
  startButton.fire('click');
@@ -388,12 +391,12 @@ async function waitForCheck(id){
  assert.equal(sockets.length,socketCount+4,'only four additional sessions ever created');
  // Per-device buttons target ONLY their own session, never the batch's other
  // checked devices and never an already-running WS or MSE player.
- multi.selected.clear();multi.updatePicker();
+ batchSelected.clear();multi.updatePicker();
  const aloneCount=sockets.length;
  liveButton(0).fire('click');
  assert.equal(sockets.length,aloneCount+1,'one row starts exactly its own stream');
  assert.equal(multi.cards.size,1);
- assert.equal(multi.selected.has('id-1'),true,'row start joins selected set');
+ assert.equal(batchSelected.has('id-1'),false,'independent row start does not alter bulk selection');
  assert.match(liveStatus(0),/启动中/);
  assert.match(liveStatus(1),/未开启|已停止/);
  assert.match(liveRow(0).children[1].textContent,/关闭此设备画面/);
@@ -430,7 +433,7 @@ async function waitForCheck(id){
  ownARestart.emit('ended',{session_id:'own-A2',cleanup_complete:true});
  assert.equal(grid.children.length,0);
  // A queued device can independently cancel without ever opening a WS.
- multi.selected.clear();multi.updatePicker();select(2);select(3);
+ batchSelected.clear();multi.updatePicker();select(2);select(3);
  const queueCount=sockets.length;startButton.fire('click');
  assert.equal(sockets.length,queueCount+1);
  assert.match(liveStatus(3),/排队中/);
