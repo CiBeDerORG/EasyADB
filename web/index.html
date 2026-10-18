@@ -316,10 +316,10 @@ function render(){
  $('liveTextInput').disabled=!inputReady;
  $('liveTextSend').disabled=!inputReady||!$('liveTextInput').value.length;
  for(const button of document.querySelectorAll('#liveNavButtons button[data-nav]'))button.disabled=!inputReady;
- $('liveProfile').disabled=loading||!!liveWS;
+ $('liveProfile').disabled=loading||!!liveWS||(multiView&&multiView.hasActive());
  const isCustom=$('liveProfile').value==='custom';
  $('liveCustomQuality').hidden=!isCustom;
- for(const id of ['liveQualitySize','liveQualityBitrate','liveQualityFps'])$(id).disabled=loading||!!liveWS||!isCustom;
+ for(const id of ['liveQualitySize','liveQualityBitrate','liveQualityFps'])$(id).disabled=loading||!!liveWS||(multiView&&multiView.hasActive())||!isCustom;
  $('m2Preflight').disabled=loading||!d||d.status!=='connected';
  $('m2VideoBaseline').disabled=loading||(multiView&&multiView.hasActive())||!d||d.status!=='connected';
  $('m2VideoNative').disabled=loading||(multiView&&multiView.hasActive())||!d||d.status!=='connected';
@@ -585,6 +585,8 @@ function liveDiagnostic(diag){
   '｜MP4 初始化耗时：'+elapsed(diag.init_ready_ms)+
   '｜手机编码包：'+diag.phone_packets+' / 距今 '+elapsed(diag.phone_idle_ms)+
   '｜FNOS MP4 读取：'+diag.mux_chunks+' / 完整媒体分片：'+(diag.media_fragments??'—')+' / 距今 '+elapsed(diag.mux_idle_ms)+
+  '｜本轮本地进程 CPU：'+EasyADBMetrics.fmt(diag.proc_cpu_pct)+'%（100%=一个 CPU 核）'+
+  ' / RSS '+EasyADBMetrics.fmt(diag.proc_rss_mib,2)+' MiB（ADB shell + FFmpeg，不含手机）'+
   '｜WS已发视频：'+(typeof diag.ws_video_bytes==='number'?EasyADBTraffic.size(diag.ws_video_bytes):'—')+
   '｜浏览器收包：'+elapsed(browserAge)+
   '｜实际渲染：'+(liveVideoFrameAt?liveVideoFrames+' 帧 / 距今 '+elapsed(frameAge):'尚无渲染帧或浏览器不支持计数')+
