@@ -111,6 +111,8 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   </section>
   <div id="m2LiveTraffic" class="status" role="status" hidden></div>
   <div id="m2LiveDiag" class="status" role="status" hidden></div>
+  <div id="m2QualityMetrics" class="status" role="status" hidden></div>
+  <details><summary>本页最近画质测试结果（仅内存）</summary><div id="m2QualityCompare" class="muted">尚无完整样本；先手动开启一轮投屏。</div></details>
   <p class="hint">当前播放引擎：MSE（WebCodecs 接口已预留，尚未实现、不可选择）。</p>
   <label for="liveProfile">实时画面画质（停止后才能调整）</label>
   <select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d">
@@ -182,6 +184,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <script src="/m2-player.js"></script>
 <script src="/m2-traffic.js"></script>
 <script src="/m2-touch.js"></script>
+<script src="/m2-metrics.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
@@ -190,6 +193,7 @@ let liveWsOpenedAt=0,liveLastBytesAt=0,liveFirstBytesAt=0,liveVideoFrameAt=0,liv
 let liveFrameCallbackId=null,liveTraffic=null,liveState='idle',liveSessionId=null;
 let liveTouch=null,liveTouchAvailable=false,liveTouchEnabled=false,liveTouchPending=false,liveTouchSize=null;
 let liveInputPending=null,liveInputSentText=null,liveQualitySummary='';
+let liveQualityMeter=null,liveQualityProfile='',liveQualityDevice='',liveQualityHistory=[];
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -516,6 +520,16 @@ function updateLiveTraffic(finished=false){
 function liveDiagnostic(diag){
  updateLiveTraffic();
  const video=$('liveVideo');
+ if(liveQualityMeter){
+  const traffic=liveTraffic?liveTraffic.snapshot():null;
+  const player=livePlayer&&livePlayer.diagnostics?livePlayer.diagnostics():null;
+  const stat=liveQualityMeter.sample(video,performance.now(),{
+   renderedFrames:liveVideoFrames,
+   frameAgeMs:liveVideoFrameAt?performance.now()-liveVideoFrameAt:null,
+   receiveMbps:traffic?traffic.mbps:null,queueBytes:player?player.queueBytes:null
+  });
+  const el=$('m2QualityMetrics');el.hidden=false;el.textContent=EasyADBMetrics.format(stat);
+ }
  const elapsed=age=>age===null||age===undefined?'尚未收到':(age/1000).toFixed(1)+'s';
  const browserAge=liveLastBytesAt?performance.now()-liveLastBytesAt:null;
  const frameAge=liveVideoFrameAt?performance.now()-liveVideoFrameAt:null;
@@ -558,6 +572,23 @@ function liveDiagnostic(diag){
 }
 function stopLive(){
  const ws=liveWS;
+ if(ws&&liveQualityMeter&&liveQualityMeter.samples.length){
+  const summary=liveQualityMeter.summary(liveQualityProfile,liveQualityDevice);
+  if(summary.seconds>=0.25){
+   liveQualityHistory.unshift(summary);
+   liveQualityHistory.length=Math.min(8,liveQualityHistory.length);
+   const format=EasyADBMetrics.fmt;
+   $('m2QualityCompare').replaceChildren(...liveQualityHistory.map(x=>{
+    const line=document.createElement('p');
+    line.textContent=x.device+' · '+x.profile+' · '+format(x.seconds,0)+'s'+
+     ' · 实测均值 '+format(x.avgFps)+' FPS / 掉帧 '+format(x.avgDropPct)+'%'+
+     ' · 接收 '+format(x.avgReceiveMbps,2)+' Mbps / 缓冲 '+format(x.avgBufferSeconds,2)+'s'+
+     ' · 累计 '+EasyADBTraffic.size(x.totalBytes)+' / 峰值待追加 '+x.maxQueueBytes+'B';
+    return line;
+   }));
+  }
+ }
+ liveQualityMeter=null;liveQualityProfile='';liveQualityDevice='';
  if(liveTouch){liveTouch.destroy();liveTouch=null;}
  liveTouchAvailable=false;liveTouchEnabled=false;liveTouchPending=false;liveTouchSize=null;
  liveWS=null;liveDeviceId=null;
@@ -620,6 +651,9 @@ function startLive(){
   });
  }catch(error){liveStatus(error.message,'error');return;}
  liveTraffic=new EasyADBTraffic.Meter(performance.now());
+ liveQualityMeter=new EasyADBMetrics.QualityMeter(performance.now());
+ liveQualityProfile=qualityProfile;liveQualityDevice=d.name;
+ $('m2QualityMetrics').hidden=true;$('m2QualityMetrics').textContent='';
  updateLiveTraffic();
  const scheme=location.protocol==='https:'?'wss:':'ws:';
  const ws=new WebSocket(scheme+'//'+location.host+'/api/devices/'+encodeURIComponent(id)+'/m2/live');
@@ -759,6 +793,7 @@ function startLive(){
   if(!liveFirstBytesAt)liveFirstBytesAt=liveLastBytesAt;
   // Count actual binary bytes received, regardless of MSE append/decode time.
   if(liveTraffic)liveTraffic.record(e.data.byteLength);
+  if(liveQualityMeter)liveQualityMeter.recordBytes(e.data.byteLength);
   if(liveState==='stopping')return; // Ignore queued old video during cleanup.
   try{livePlayer.append(new Uint8Array(e.data));}
   catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
