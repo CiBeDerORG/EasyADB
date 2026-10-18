@@ -404,16 +404,23 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if not await asyncio.to_thread(is_connected, serial):
             await websocket.send_json({"type": "error", "message": "当前选择的 ADB 地址已离线"})
             return
-        # Guard again after the potentially slow ADB check; NEVER auto-connect.
-        current = store.get(device_id)
-        if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
-            await websocket.send_json({"type": "error", "message": "当前选择的 IP 已改变，请重新开启投屏"})
+        # Atomic with route mutation: another browser cannot switch the
+        # selected serial between validation and reserving this live session.
+        error = None
+        with manager._device_lock(device_id):
+            current = store.get(device_id)
+            if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
+                error = "当前选择的 IP 已改变，请重新开启投屏"
+            else:
+                candidate = LiveVideo(serial, profile=profile)
+                if not live_registry.reserve(device_id, candidate):
+                    error = "这台设备已有实时投屏会话，请先停止原会话"
+                else:
+                    stream = candidate
+                    stream.start()
+        if error:
+            await websocket.send_json({"type": "error", "message": error})
             return
-        stream = LiveVideo(serial, profile=profile)
-        if not live_registry.reserve(device_id, stream):
-            await websocket.send_json({"type": "error", "message": "这台设备已有实时投屏会话，请先停止原会话"})
-            return
-        stream.start()
         await websocket.send_json({"type": "starting", "selected_serial": serial})
 
         async def receive_commands():
@@ -429,7 +436,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 stream.stop()
 
         receiver = asyncio.create_task(receive_commands())
-        while not stream.stop_event.is_set():
+        while True:
+            if stream.finished.is_set() and stream.events.empty():
+                break
             current = store.get(device_id)
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 await websocket.send_json({"type": "error", "message": "设备连接地址已变更，投屏已停止"})
