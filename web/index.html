@@ -449,13 +449,28 @@ function liveDiagnostic(diag){
  const elapsed=age=>age===null||age===undefined?'尚未收到':(age/1000).toFixed(1)+'s';
  const browserAge=liveLastBytesAt?performance.now()-liveLastBytesAt:null;
  const frameAge=liveVideoFrameAt?performance.now()-liveVideoFrameAt:null;
- let buffer='未建立';
+ let buffer='video无区间';
  try{
   if(video.buffered&&video.buffered.length){
    const last=video.buffered.length-1;
    buffer=(video.buffered.end(last)-video.currentTime).toFixed(2)+'s';
   }
  }catch{buffer='读取失败';}
+ const mse=livePlayer&&typeof livePlayer.diagnostics==='function'
+  ?livePlayer.diagnostics():null;
+ const t=value=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(2):'—';
+ const mseInfo=mse?
+  '｜MSE：'+mse.sourceState+
+  ' / SB区间 '+mse.sourceRanges+
+  ' / 最新 ['+t(mse.latestStart)+','+t(mse.rangeEnd)+']'+
+  ' / 播放点 '+t(mse.currentTime)+
+  ' / 更新中 '+mse.updating+
+  ' / 队列 '+mse.queueChunks+'块 '+mse.queueBytes+'B'+
+  ' / append '+mse.appendCalls+'次'+
+  ' / update '+mse.completedUpdates+'次'+
+  ' / 距更新 '+elapsed(mse.updateIdleMs)+
+  ' / seeking '+mse.seeking+
+  ' / error '+(mse.videoError===null?'无':mse.videoError):'';
  const info=$('m2LiveDiag');
  info.hidden=false;
  info.textContent='投屏诊断｜阶段：'+diag.stage+
@@ -465,8 +480,9 @@ function liveDiagnostic(diag){
   '｜FNOS MP4 输出：'+diag.mux_chunks+' / 距今 '+elapsed(diag.mux_idle_ms)+
   '｜浏览器收包：'+elapsed(browserAge)+
   '｜实际渲染：'+(liveVideoFrameAt?liveVideoFrames+' 帧 / 距今 '+elapsed(frameAge):'尚无渲染帧或浏览器不支持计数')+
-  '｜视频缓冲余量：'+buffer+
-  '｜readyState：'+video.readyState;
+  '｜video缓冲余量：'+buffer+
+  '｜readyState：'+video.readyState+
+  mseInfo;
 }
 function stopLive(){
  const ws=liveWS;liveWS=null;liveDeviceId=null;
