@@ -1,4 +1,4 @@
-"""Per-device ADB state and bounded reconnect loop (single Uvicorn worker)."""
+"""Bounded multi-device ADB monitor with LAN-first / mesh-fallback routing."""
 import threading
 from datetime import datetime, timezone
 
@@ -7,6 +7,19 @@ from fastapi import HTTPException
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def candidates(device):
+    """Priority order: derived LAN address, then saved mesh address."""
+    lan = device.get("lan_ip")
+    mesh = device["mesh_ip"]
+    result = []
+    if lan:
+        result.append((f'{lan}:{device["port"]}', "lan"))
+    mesh_serial = f'{mesh}:{device["port"]}'
+    if not result or mesh_serial != result[0][0]:
+        result.append((mesh_serial, "mesh"))
+    return result
 
 
 class DeviceManager:
@@ -21,69 +34,95 @@ class DeviceManager:
 
     def _device_lock(self, device_id):
         with self.guard:
-            return self.locks.setdefault(device_id, threading.Lock())
+            return self.locks.setdefault(device_id, threading.RLock())
 
     def clear(self, device_id):
         with self.guard:
             self.states.pop(device_id, None)
 
+    def clear_group(self, name):
+        for device in self.store.list():
+            if device["group_name"] == name:
+                self.clear(device["id"])
+
     def snapshot(self, device):
         with self.guard:
             state = self.states.get(device["id"], {}).copy()
+        allowed = {serial for serial, _ in candidates(device)}
+        if state.get("active_serial") not in allowed:
+            state = {}
         return {
             **device,
             "status": state.get("status", "checking"),
             "last_error": state.get("last_error"),
             "last_seen": state.get("last_seen"),
+            "active_serial": state.get("active_serial"),
+            "active_route": state.get("active_route"),
         }
 
-    def _set_state(self, device_id, status, error=None):
+    def _set_state(self, device_id, status, error=None, serial=None, route=None):
         with self.guard:
             old = self.states.get(device_id, {})
             self.states[device_id] = {
                 "status": status,
                 "last_error": error,
                 "last_seen": utc_now() if status == "connected" else old.get("last_seen"),
+                "active_serial": serial if status == "connected" else None,
+                "active_route": route if status == "connected" else None,
             }
+
+    def serial_for(self, device):
+        state = self.snapshot(device)
+        if state["status"] != "connected":
+            return None
+        return state["active_serial"]
 
     def _get_state(self, serial):
         response = self.adb("-s", serial, "get-state", timeout=5)
         return response.returncode == 0 and response.stdout.strip() == "device"
 
     def probe(self, device_id, force_connect=False):
-        """A single device may have only one concurrent ADB probe or reconnect."""
+        """Serialize probes per device; prefer LAN, fallback to mesh on failure."""
         with self._device_lock(device_id):
             device = self.store.get(device_id)
             if not device:
                 return None
-            serial = f'{device["ip"]}:{device["port"]}'
             self._set_state(device_id, "checking")
-            try:
-                connected = self._get_state(serial)
-                if force_connect or (not connected and device["auto_reconnect"]):
-                    if not connected:
-                        self._set_state(device_id, "connecting")
-                        self.adb("connect", serial, timeout=12)
+            selected = None
+            error = None
+            allow_connect = force_connect or device["auto_reconnect"]
+            for serial, route in candidates(device):
+                try:
                     connected = self._get_state(serial)
-                if not connected:
-                    self._set_state(device_id, "disconnected",
-                                    "ADB 未连接；请检查无线调试、端口和网络")
-                else:
-                    if not device["model"] or not device["android_version"]:
-                        model = self.adb("-s", serial, "shell", "getprop",
-                                         "ro.product.model", timeout=5)
-                        version = self.adb("-s", serial, "shell", "getprop",
-                                           "ro.build.version.release", timeout=5)
+                    if not connected and allow_connect:
+                        self._set_state(device_id, "connecting")
+                        attempt = self.adb("connect", serial, timeout=12)
+                        # Do not trust adb's stdout; confirm that THIS serial is live.
+                        connected = attempt.returncode == 0 and self._get_state(serial)
+                    if connected:
+                        selected = (serial, route)
+                        break
+                except HTTPException as exc:
+                    error = str(exc.detail)
+                except Exception:
+                    error = "检查连接地址时出现内部错误"
+            if selected:
+                serial, route = selected
+                if not device["model"] or not device["android_version"]:
+                    try:
+                        model = self.adb("-s", serial, "shell", "getprop", "ro.product.model", timeout=5)
+                        version = self.adb("-s", serial, "shell", "getprop", "ro.build.version.release", timeout=5)
                         self.store.set_metadata(
                             device_id,
                             model.stdout.strip()[:120] if model.returncode == 0 else None,
                             version.stdout.strip()[:40] if version.returncode == 0 else None,
                         )
-                    self._set_state(device_id, "connected")
-            except HTTPException as exc:
-                self._set_state(device_id, "error", str(exc.detail))
-            except Exception:
-                self._set_state(device_id, "error", "检查设备时出现内部错误")
+                    except HTTPException:
+                        pass  # A transient metadata error does not invalidate a live ADB route.
+                self._set_state(device_id, "connected", serial=serial, route=route)
+            else:
+                self._set_state(device_id, "error" if error else "disconnected",
+                                error or "内网 IP / 组网 IP 均未连接；请检查网络、端口及无线调试")
             latest = self.store.get(device_id)
             return self.snapshot(latest) if latest else None
 
@@ -92,7 +131,6 @@ class DeviceManager:
                 if (state := self.probe(device["id"])) is not None]
 
     def _loop(self):
-        # Initial check, then bounded 20-second intervals (not one thread/device).
         while not self.stop_event.is_set():
             self.poll_all()
             if self.stop_event.wait(20):
