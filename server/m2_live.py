@@ -567,16 +567,17 @@ class LiveVideo:
             # finished means the worker is terminal; cleanup_complete is the
             # stronger promise required before the device slot can be reused.
             # Attempt EVERY owned-resource cleanup even when one step fails.
-            cleaned = True
+            cleaned = False
+            cleanup_ok = True
             try:
                 try:
                     self.stop()
                 except (OSError, ValueError):
-                    cleaned = False
+                    cleanup_ok = False
                 if feeder:
                     feeder.join(timeout=3)
                     if feeder.is_alive():
-                        cleaned = False
+                        cleanup_ok = False
                 for proc in (self.ffmpeg_proc, self.adb_proc):
                     if proc is not None:
                         try:
@@ -586,19 +587,20 @@ class LiveVideo:
                                 proc.kill()
                                 proc.wait(timeout=2)
                             except (OSError, subprocess.TimeoutExpired):
-                                cleaned = False
+                                cleanup_ok = False
                         except (OSError, ValueError):
-                            cleaned = False
+                            cleanup_ok = False
                 if port is not None:
                     try:
                         _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
                     except VideoProbeError:
-                        cleaned = False
+                        cleanup_ok = False
                 if remote_pushed:
                     try:
                         _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
                     except VideoProbeError:
-                        cleaned = False
+                        cleanup_ok = False
+                cleaned = cleanup_ok
             finally:
                 self.cleanup_complete = cleaned
                 if failure:
