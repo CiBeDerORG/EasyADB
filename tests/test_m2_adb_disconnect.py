@@ -49,6 +49,29 @@ def test_socket_eof_is_a_transport_error_but_manual_stop_is_not():
         local.close()
 
 
+def test_existing_adb_child_exit_aborts_a_quiet_socket_without_adb_polling():
+    class ExitedChild:
+        def __init__(self): self.calls = 0
+        def poll(self):
+            self.calls += 1
+            return 1
+    local, remote = socket.socketpair()
+    child = ExitedChild()
+    try:
+        # The peer is still open, so recv() alone would wait forever.
+        with pytest.raises(VideoProbeError, match="ADB/scrcpy 视频进程已退出"):
+            _socket_read(local, 12, threading.Event(), timeout=0.03, adb_proc=child)
+        assert child.calls == 1
+        stopped = threading.Event()
+        stopped.set()
+        with pytest.raises(StreamStopped):
+            _socket_read(local, 12, stopped, timeout=0.03, adb_proc=child)
+        assert child.calls == 1  # deliberate stop wins, no false disconnect
+    finally:
+        local.close()
+        remote.close()
+
+
 def test_confirmed_adb_loss_updates_only_current_selected_serial(monkeypatch, tmp_path):
     mod, client = setup(monkeypatch, tmp_path)
     checks = []
