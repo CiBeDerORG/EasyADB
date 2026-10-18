@@ -91,7 +91,11 @@ def test_one_shot_video_experiment_always_cleans_its_adb_resources(monkeypatch, 
     monkeypatch.setattr(video.subprocess, "Popen", lambda *a, **kw: child)
     def make_socket(port, proc, deadline):
         assert port == 47001 and proc is child
-        return sock_with_data(sample_packets() if good_stream else b"\xff")
+        sock = sock_with_data(sample_packets() if good_stream else b"\xff")
+        # _connect_forwarded has already performed the real dummy handshake.
+        if good_stream:
+            assert sock.recv(1) == b"\x00"
+        return sock
     monkeypatch.setattr(video, "_connect_forwarded", make_socket)
     if good_stream:
         result = video.probe_video("10.10.30.206:40455", profile="native", server_file=server)
@@ -155,3 +159,51 @@ def test_failed_preflight_without_scrcpy_image_does_not_touch_device(tmp_path, m
     with pytest.raises(video.VideoProbeError, match="重新构建"):
         video.probe_video("10.10.30.206:40455", server_file=tmp_path / "absent")
     assert called == []
+
+
+
+def test_early_adb_forward_eof_is_retried_until_real_android_dummy(monkeypatch):
+    """TCP accept alone is not readiness: ADB can accept before Android listens."""
+    attempts = []
+    def fake_connect(address, timeout):
+        assert address[0] == "127.0.0.1"
+        attempts.append((address, timeout))
+        if len(attempts) == 1:
+            return sock_with_data(b"")  # tunnel exists but remote socket not up
+        return sock_with_data(sample_packets())
+    monkeypatch.setattr(video.socket, "create_connection", fake_connect)
+    monkeypatch.setattr(video.time, "sleep", lambda _: None)
+    child = FakeChild()
+    with video._connect_forwarded(47001, child, time.monotonic() + 2) as stream:
+        # Dummy was consumed by the readiness helper; parse from 64-byte name.
+        parsed = video.read_scrcpy_sample(stream, time.monotonic() + 2,
+                                          handshake_done=True)
+    assert len(attempts) == 2
+    assert parsed["continuous_frames"] is True
+    assert parsed["encoded_width"] == 1440
+    assert not child.terminated
+
+
+def test_server_error_classification_is_safe_and_specific(tmp_path):
+    log = tmp_path / "server.log"
+    log.write_bytes(b"[server] ERROR: android.media.MediaCodec$CodecException\n"
+                    b"private screen data must never be returned")
+    with log.open("rb") as reader:
+        hint = video._server_failure_hint(reader)
+    assert hint == "手机端视频编码器初始化异常"
+    assert "private" not in hint
+
+
+def test_ready_handshake_is_not_an_adb_connect_retry(monkeypatch):
+    child = FakeChild()
+    calls = []
+    def fake_connect(*a, **kw):
+        calls.append("temporary loopback socket only")
+        return sock_with_data(b"")
+    monkeypatch.setattr(video.socket, "create_connection", fake_connect)
+    monkeypatch.setattr(video.time, "sleep", lambda _: None)
+    with pytest.raises(video.VideoProbeError, match="限时内未就绪"):
+        video._connect_forwarded(47001, child, time.monotonic() + 0.01)
+    assert calls
+    # no subprocess / adb was ever requested by the local readiness helper
+    assert all(x == "temporary loopback socket only" for x in calls)
