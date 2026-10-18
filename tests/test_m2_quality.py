@@ -74,9 +74,12 @@ def test_every_allowed_custom_option_is_explicitly_bounded():
     assert LiveVideo("only-selected:5555", "baseline").settings == PROFILES["baseline"]
 
 
-def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch):
+def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_path):
     monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
     mod = importlib.import_module("server.app")
+    mod.store = DeviceStore(str(tmp_path / "rejected-quality.sqlite3"))
+    mod.manager = DeviceManager(mod.store, mod.adb)
+    mod.live_registry = LiveRegistry()
     monkeypatch.setattr(mod, "is_connected", lambda serial: pytest.fail("invalid profile used ADB"))
     monkeypatch.setattr(mod, "LiveVideo", lambda *args, **kwargs: pytest.fail("invalid profile created worker"))
     cases = [
