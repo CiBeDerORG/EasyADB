@@ -11,6 +11,7 @@ MIHOMO_CONTAINER="${MIHOMO_CONTAINER:-mihomo}"
 MIHOMO_PORT="${MIHOMO_PORT:-7890}"
 IMAGE="${BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1}"
 CRANE_VERSION="${CRANE_VERSION:-v0.22.1}"
+. scripts/proxy-config.sh
 
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "BuildKit image already cached: $IMAGE"
@@ -37,7 +38,23 @@ if [ -z "$MIHOMO_IP" ]; then
   echo "ERROR: $MIHOMO_CONTAINER is not attached to proxy-net." >&2
   exit 1
 fi
-HOST_PROXY="http://${MIHOMO_IP}:${MIHOMO_PORT}"
+# Substitute only the proxy-net DNS hostname; retain the URL-encoded userinfo.
+# The host cannot resolve "mihomo" but can reach its proxy-net bridge IP.
+case "$PROXY" in
+  http://mihomo:7890)
+    HOST_PROXY="http://${MIHOMO_IP}:${MIHOMO_PORT}"
+    ;;
+  http://*@mihomo:7890)
+    USERINFO="${PROXY#http://}"
+    USERINFO="${USERINFO%@mihomo:7890}"
+    case "$USERINFO" in
+      *:*@*|*@*|'') echo 'ERROR: URL-encode any @ characters in username/password as %40.' >&2; exit 1 ;;
+      *:*) ;;
+      *) echo 'ERROR: proxy URL requires username and URL-encoded password.' >&2; exit 1 ;;
+    esac
+    HOST_PROXY="http://${USERINFO}@${MIHOMO_IP}:${MIHOMO_PORT}"
+    ;;
+esac
 
 case "$(uname -m)" in
   x86_64|amd64) CRANE_ARCH=x86_64; PLATFORM=linux/amd64 ;;
@@ -45,26 +62,21 @@ case "$(uname -m)" in
   *) echo 'ERROR: bootstrap currently supports Linux amd64 and arm64 only.' >&2; exit 1 ;;
 esac
 
-echo "[1/5] Checking Mihomo proxy from FNOS host ($HOST_PROXY) ..."
-HTTP_CODE="$(curl -sS --connect-timeout 8 --max-time 25 --noproxy '' \
-  --proxy "$HOST_PROXY" -o /dev/null -w '%{http_code}' https://registry-1.docker.io/v2/)" || {
-    case "$HTTP_CODE" in
-      407)
-        echo 'ERROR: HTTP 407 Proxy Authentication Required: Mihomo (or its upstream) requires proxy credentials.' >&2
-        echo 'The external-controller-cors trusted Web origins (port 7012) do NOT configure mixed-port 7890 authentication.' >&2
-        echo 'Check authentication / skip-auth-prefixes in the active Mihomo configuration.' >&2
-        echo 'If intentionally allowing passwordless access for trusted proxy-net, add its actual CIDR to skip-auth-prefixes, then reload Mihomo.' >&2
-        ;;
-      *)
-        echo "ERROR: cannot reach Docker Hub through Mihomo (curl HTTP $HTTP_CODE). Check proxy reachability and the active upstream node." >&2
-        ;;
-    esac
-    exit 1
-  }
-case "$HTTP_CODE" in
-  200|401) echo "Docker Registry is reachable (HTTP $HTTP_CODE)." ;;
-  407) echo 'ERROR: HTTP 407: Mihomo (or its upstream) requires proxy authentication.' >&2; exit 1 ;;
-  *) echo "ERROR: unexpected Docker Registry HTTP $HTTP_CODE via Mihomo." >&2; exit 1 ;;
+echo "[1/5] Checking authenticated Mihomo proxy from FNOS host (credentials hidden) ..."
+# curl may return exit 56 on a 407; inspect CONNECT status even on failure.
+STATUS="$(curl -sS --connect-timeout 8 --max-time 25 --noproxy '' \
+  --proxy "$HOST_PROXY" -o /dev/null -w '%{http_connect}:%{http_code}' \
+  https://registry-1.docker.io/v2/)" && CURL_RESULT=0 || CURL_RESULT=$?
+case "$STATUS" in
+  200:401|200:200|200:404) echo "Docker Registry reachable via Mihomo (CONNECT 200; registry status ${STATUS#*:})." ;;
+  407:*|*:407)
+    echo 'ERROR: HTTP 407 Proxy Authentication Required: check the account and URL-encoded password in .env EASYADB_BUILD_PROXY.' >&2
+    echo 'Use %40 for @ in the password. The proxy must be http://USER:PASSWORD@mihomo:7890.' >&2
+    exit 1 ;;
+  *)
+    echo "ERROR: registry proxy check failed (curl exit $CURL_RESULT, HTTP status $STATUS)." >&2
+    echo 'Check Mihomo authentication, upstream connectivity and proxy rules.' >&2
+    exit 1 ;;
 esac
 
 # Keep large image downloads on the project/data filesystem rather than
