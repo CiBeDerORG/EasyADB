@@ -109,6 +109,10 @@ def test_http_nas_player_uses_mse_adapter_and_reserves_webcodecs_interface():
     assert 'id="liveVideo"' in html and 'id="liveStart"' in html
     assert 'id="liveStop"' in html and '<script src="/m2-player.js"></script>' in html
     assert "EasyADBPlayers.create(playerMode,video" in html
+    assert 'id="m2LiveDiag"' in html
+    assert "else if(msg.type==='diagnostic'){liveDiagnostic(msg);}" in html
+    assert "requestVideoFrameCallback" in html
+    assert "adb_check_ms" in html
     assert "new MediaSource()" in adapter
     assert "MediaSource.isTypeSupported(mime)" in adapter
     assert "new WebSocket(" in html and "player:playerMode" in html
