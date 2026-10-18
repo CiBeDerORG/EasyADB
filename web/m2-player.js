@@ -20,6 +20,9 @@ class MSEPlayer {
     this.closed=false;
     this._lastBufferedEnd=0;
     this._waitingAtEdge=false;
+    this._appendCalls=0;
+    this._completedUpdates=0;
+    this._lastUpdateAt=null;
     this._onSourceOpen=null;
     this._onUpdateEnd=null;
     this._onSourceError=null;
@@ -63,7 +66,13 @@ class MSEPlayer {
         const sb=ms.addSourceBuffer(mime);
         sb.mode='segments';
         this.sourceBuffer=sb;
-        this._onUpdateEnd=()=>{if(!this.closed){this._pump();this._play();}};
+        this._onUpdateEnd=()=>{
+          if(this.closed)return;
+          this._completedUpdates++;
+          this._lastUpdateAt=Date.now();
+          this._pump();
+          this._play();
+        };
         this._onSourceError=()=>{if(!this.closed)this.onError('浏览器 MSE 视频解码缓冲区发生错误。');};
         sb.addEventListener('updateend',this._onUpdateEnd);
         sb.addEventListener('error',this._onSourceError);
@@ -88,31 +97,24 @@ class MSEPlayer {
     this.queue.push(chunk);
     this._pump();
   }
-  _pump(){
-    const sb=this.sourceBuffer, ms=this.mediaSource;
-    if(this.closed||!sb||sb.updating||!ms||ms.readyState!=='open')return;
-    if(this.queue.length){
-      const next=this.queue.shift();
-      this.pendingBytes-=next.byteLength;
-      try{sb.appendBuffer(next);}
-      catch(error){this.onError('视频片段追加失败：'+error.message);}
-      return;
-    }
+  _maintainLivePosition(){
+    const sb=this.sourceBuffer;
+    if(!sb||sb.updating)return false;
     try{
       const ranges=sb.buffered;
-      if(!ranges.length)return;
-      const start=ranges.start(0);
-      const latest=ranges.length-1;
+      if(!ranges.length)return false;
+      const start=ranges.start(0), latest=ranges.length-1;
       const latestStart=ranges.start(latest), end=ranges.end(latest);
       const position=this.video.currentTime;
       const newer=end>this._lastBufferedEnd+0.015;
-      // For sparse video, new media may begin after a real timestamp gap.
-      // Seeking relative to the FIRST range mistakenly targets that gap.
-      // Stay within the newest playable range and avoid aggressive seeking
-      // while the display is legitimately idle.
-      const outsideLatest=position<latestStart-0.03;
+      // Recheck on EVERY completed append, even when another network chunk
+      // is already queued. The former implementation returned immediately
+      // whenever queue.length > 0, starving live-edge recovery and trimming
+      // throughout a continuous stream.
+      const outsideLatest=position<latestStart-0.03||
+        (newer&&position>end+0.03);
       const fallingBehind=end-position>2.5;
-      const recovering=this._waitingAtEdge && newer &&
+      const recovering=this._waitingAtEdge&&newer&&
         position>=this._lastBufferedEnd-0.15;
       if(outsideLatest||fallingBehind||recovering){
         const target=Math.max(latestStart,end-(recovering?0.08:0.15));
@@ -120,12 +122,59 @@ class MSEPlayer {
         this._waitingAtEdge=false;
       }
       this._lastBufferedEnd=end;
-      // Bound old memory without removing media near the current playhead.
-      const oldEnd=Math.min(end-8,this.video.currentTime-0.7);
-      if(oldEnd>start && end-start>12)sb.remove(0,oldEnd);
+      // scrcpy defaults to approximately 10 seconds between keyframes.
+      // Preserve >=16s of the *media timeline* instead of pruning to 8s:
+      // overly aggressive eviction may discard the last random-access frame.
+      const oldEnd=Math.min(end-16,this.video.currentTime-0.7);
+      if(end-start>24&&oldEnd>start){
+        sb.remove(0,oldEnd);
+        return true; // remove() is async; next updateend resumes appending.
+      }
     }catch(error){
-      this.onError('无法更新实时播放位置：'+error.message);
+      this.onError('无法维护 MSE 实时缓冲区：'+error.message);
+      return true;
     }
+    return false;
+  }
+  _pump(){
+    const sb=this.sourceBuffer,ms=this.mediaSource;
+    if(this.closed||!sb||sb.updating||!ms||ms.readyState!=='open')return;
+    if(this._maintainLivePosition())return;
+    if(this.closed||sb.updating)return;
+    if(this.queue.length){
+      const next=this.queue.shift();
+      this.pendingBytes-=next.byteLength;
+      try{
+        sb.appendBuffer(next);
+        this._appendCalls++;
+      }catch(error){this.onError('视频片段追加失败：'+error.message);}
+    }
+  }
+  diagnostics(){
+    const sb=this.sourceBuffer,ms=this.mediaSource,v=this.video;
+    const ranges=sb&&sb.buffered;
+    const data={
+      sourceState:ms?ms.readyState:'未初始化',
+      sourceBufferReady:Boolean(sb),
+      updating:Boolean(sb&&sb.updating),
+      queueChunks:this.queue.length,
+      queueBytes:this.pendingBytes,
+      appendCalls:this._appendCalls,
+      completedUpdates:this._completedUpdates,
+      updateIdleMs:this._lastUpdateAt===null?null:Math.max(0,Date.now()-this._lastUpdateAt),
+      sourceRanges:0,rangeStart:null,latestStart:null,rangeEnd:null,
+      currentTime:v.currentTime,paused:v.paused,seeking:Boolean(v.seeking),
+      videoError:v.error?v.error.code:null
+    };
+    try{
+      if(ranges&&ranges.length){
+        data.sourceRanges=ranges.length;
+        data.rangeStart=ranges.start(0);
+        data.latestStart=ranges.start(ranges.length-1);
+        data.rangeEnd=ranges.end(ranges.length-1);
+      }
+    }catch{}
+    return data;
   }
   _play(){
     if(this.closed||!this.sourceBuffer)return;
