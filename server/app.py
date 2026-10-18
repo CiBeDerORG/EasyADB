@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from .devices import DeviceManager
+from .devices import DeviceManager, selected_address
 from .store import DeviceStore
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
@@ -57,6 +57,11 @@ class Target(BaseModel):
 
 
 class PairTarget(Target):
+    code: str
+
+
+class PairExisting(BaseModel):
+    port: int
     code: str
 
 
@@ -152,15 +157,34 @@ def home():
     return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-store"})
 
 
-@app.post("/api/pair", dependencies=[Depends(authorize)])
-def pair(target: PairTarget):
-    dest = address(target.ip, target.port)
-    if not re.fullmatch(r"\d{6}", target.code):
+def pair_at(ip, port, code):
+    dest = address(ip, port)
+    if not re.fullmatch(r"\d{6}", code):
         raise HTTPException(400, "配对码应为手机显示的 6 位数字")
-    result = adb("pair", dest, timeout=20, input_text=target.code + "\n")
+    result = adb("pair", dest, timeout=20, input_text=code + "\n")
     if result.returncode != 0 or "Successfully paired" not in result.stdout:
         raise HTTPException(502, "ADB 配对失败，请检查配对端口、配对码和网络")
     return {"message": "配对成功，请使用无线调试主页的连接端口继续连接"}
+
+
+@app.post("/api/pair", dependencies=[Depends(authorize)])
+def pair(target: PairTarget):
+    # Original first-time pairing from the add-device form remains compatible.
+    return pair_at(target.ip, target.port, target.code)
+
+
+@app.post("/api/devices/{device_id}/pair", dependencies=[Depends(authorize)])
+def pair_existing_device(device_id: str, target: PairExisting):
+    # Bind pairing to the database-selected route: do not accept a client-side
+    # IP override or switch routes, and NEVER connect automatically after pair.
+    with manager._device_lock(device_id):
+        device = get_device(device_id)
+        serial = selected_address(device)
+        if not serial:
+            raise HTTPException(409, "当前连接地址不可用，请先选择有效的 IP")
+        ip = serial.rsplit(":", 1)[0]
+        result = pair_at(ip, target.port, target.code)
+        return {**result, "paired_ip": ip, "selected_route": device["selected_route"]}
 
 
 @app.get("/api/devices", dependencies=[Depends(authorize)])
