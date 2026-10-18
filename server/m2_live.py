@@ -174,6 +174,9 @@ class LiveVideo:
             raise ValueError("未知视频档位")
         self.serial = serial
         self.profile = profile
+        # Opaque ID for this user-started session. Used for lifecycle messages
+        # and future control-channel binding; it never selects an ADB target.
+        self.session_id = secrets.token_hex(12)
         self.server_file = Path(server_file) if server_file is not None else SERVER_FILE
         self.stop_event = threading.Event()
         self.finished = threading.Event()
@@ -485,8 +488,14 @@ class LiveRegistry:
 
     def reserve(self, device_id, session):
         with self.lock:
-            if device_id in self.sessions:
-                return False
+            old = self.sessions.get(device_id)
+            if old is not None:
+                # If a bounded WS cleanup timed out but the worker eventually
+                # finished, retire it only AFTER its resources have gone.
+                finished = getattr(old, "finished", None)
+                if finished is None or not finished.is_set():
+                    return False
+                self.sessions.pop(device_id, None)
             self.sessions[device_id] = session
             return True
 
