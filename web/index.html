@@ -54,6 +54,7 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-primary{min-width:0}.device-primary>.muted{margin-top:6px}
 .device-quality{min-width:0;border-left:1px solid #34445e;padding-left:16px}
 .device-quality .multi-choice{border:0;background:transparent;padding:0}
+.device-quality .adb-badge{justify-self:start;margin-left:0}
 .item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .management-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 3px}
 .management-bar label,.management-check{margin:0;display:inline-flex;align-items:center;gap:7px;color:#c5d9f6;cursor:pointer}
@@ -85,8 +86,7 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .pill.idle{background:#314359}
 details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
 .multi-picker{display:none!important}
-.multi-choice{display:grid;grid-template-columns:minmax(135px,.6fr) minmax(145px,.8fr);gap:8px 12px;align-items:center;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
-.multi-choice-label{display:flex;align-items:center;gap:9px;margin:0;cursor:pointer}
+.multi-choice{display:grid;grid-template-columns:minmax(0,1fr);gap:8px 12px;align-items:center;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
 .multi-choice .multi-quality,.multi-choice .multi-custom select{max-width:100%;width:100%;height:36px;background:#172233;color:#fff;border:1px solid #50627d;border-radius:7px}
 .multi-custom{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.multi-custom label{min-width:0;margin:0;font-size:12px;color:#b8cbe6;display:grid;gap:5px}
 .multi-choice>.buttons[hidden],.multi-choice>.multi-probe-log[hidden]{display:none!important}
@@ -138,7 +138,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </section>
 <div class="workspace">
  <section class="panel inventory-panel" aria-label="设备管理">
-  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：勾选任意 1～4 台，投屏期间可继续添加、手动连接其他设备，勾选新设备后点击「追加投屏」；只锁定正在运行的设备自身连接配置，同时最多四路。</p></div>
+  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：左侧「选择」同时用于批量管理与批量投屏；开始或追加投屏时只启动勾选且已连接的设备，最多四路。单台也可独立开启画面，投屏期间可继续添加、手动连接其他设备。</p></div>
    <div class="buttons" style="margin:0">
     <button type="button" id="multiStart" disabled>开始投屏</button>
     <button type="button" class="danger" id="multiStop" disabled>停止全部投屏</button>
@@ -159,7 +159,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </section>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
   <div class="heading"><div><h2>实时画面</h2><p class="hint">画面优先显示在设备管理下方。各台分别开启远控、独立停止并查看本路诊断日志；停止全部后可直接再次点击开始，不保留旧画面窗口。</p></div></div>
-  <div id="multiInfo" class="status" role="status" aria-live="polite">在上方设备列表勾选至少一台已连接设备，点击「开始投屏」。</div>
+  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「开始投屏」，或在对应设备行单独开启画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
 </div>
@@ -294,7 +294,7 @@ function render(){
     render();
    });
    managementLabel.append(managementCheck,elem('span','','选择'));
-   const primary=elem('div','device-primary');
+   const primary=elem('div','device-primary'),addressRows=[];
    const title=elem('div','device-title');
    title.append(elem('span','item-name',d.name));
    if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
@@ -314,11 +314,11 @@ function render(){
      pairButton.setAttribute('aria-label','为'+d.name+'当前选择的'+label+'进行首次无线配对');
      row.append(pairButton);
     }
-    info.append(row);
+    addressRows.push(row);
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
-   top.append(managementLabel,info,adbStatusBadge(d));primary.append(top);
+   top.append(managementLabel,info);primary.append(top,...addressRows);
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
@@ -330,7 +330,7 @@ function render(){
    primary.append(actions);item.append(primary);
    const quality=elem('div','device-quality');
    const row=qualityRows.get(d.id);
-   if(row)quality.append(row);
+   if(row){row.prepend(adbStatusBadge(d));quality.append(row);}
    item.append(quality);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
@@ -623,6 +623,8 @@ multiView=EasyADBMulti.create({
  stopButton:$('multiStop'),info:$('multiInfo'),
  getDevices:()=>devices,getToken:()=>$('token').value.trim(),
  getManagementBusy:()=>loading,
+ getBatchSelection:()=>managementSelected,
+ onBatchSelectionRemove:id=>{managementSelected.delete(id);render();},
  onDeviceDisconnected:()=>load(true), // reload saved state only; never adb connect
  runPreflight:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/preflight',{method:'POST'})).json(),
  runVideoProbe:async(id,profile)=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{
