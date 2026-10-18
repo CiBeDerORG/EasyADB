@@ -207,7 +207,8 @@ class MultiView{
  start(){
   const ds=this.getDevices()||[];
   const picked=this.getBatchSelection?this.getBatchSelection():this.selected;
-  const additions=[...picked].filter(id=>!this.isBusyFor(id))
+  const connected=new Set(ds.filter(d=>d.status==='connected'&&d.active_serial===d.selected_serial).map(d=>d.id));
+  const additions=[...picked].filter(id=>connected.has(id)&&!this.isBusyFor(id))
    .map(id=>ds.find(d=>d.id===id));
   if(!additions.length)return false;
   return this._startDevices(additions);
