@@ -24,6 +24,7 @@ from .store import DeviceStore
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
+from .m2_touch import InvalidTouch
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -396,6 +397,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     stream = None
     receiver = None
     requested_stop = asyncio.Event()
+    touch_ready = asyncio.Event()
     manual_stop = False
     try:
         try:
@@ -448,13 +450,63 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
 
         async def receive_commands():
             nonlocal manual_stop
+            control_enabled = False
+            last_move = 0.0
             try:
                 while True:
-                    message = await websocket.receive_text()
-                    if message == "stop":
+                    raw = await websocket.receive_text()
+                    if raw == "stop":
                         manual_stop = True
                         break
-                    # Other input/control commands are NOT enabled by M2-01.
+                    if len(raw) > 512:
+                        break  # fail closed for oversized/unrecognized control traffic
+                    try:
+                        message = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(message, dict) or message.get("type") not in (
+                        "control_enable", "control_disable", "touch"
+                    ):
+                        continue  # NEVER interpret arbitrary device/ADB commands
+                    if message.get("session_id") != stream.session_id:
+                        break  # old or cross-session control attempt: terminate THIS WS
+                    current = store.get(device_id)
+                    if (not current or selected_address(current) != serial
+                            or manager.serial_for(current) != serial or requested_stop.is_set()):
+                        break  # no implicit connect, IP fallback or stale-target injection
+                    kind = message["type"]
+                    if kind == "control_enable":
+                        if set(message) != {"type", "session_id"} or not touch_ready.is_set():
+                            await websocket.send_json({"type": "touch_error", "message": "等待本轮视频与控制通道就绪"})
+                            continue
+                        control_enabled = True
+                        await websocket.send_json({"type": "control_enabled",
+                                                   "session_id": stream.session_id})
+                    elif kind == "control_disable":
+                        control_enabled = False
+                        try:
+                            await asyncio.to_thread(stream.release_touch)
+                        except (OSError, ValueError):
+                            break
+                        await websocket.send_json({"type": "control_disabled",
+                                                   "session_id": stream.session_id})
+                    elif kind == "touch":
+                        if not control_enabled or not touch_ready.is_set():
+                            await websocket.send_json({"type": "touch_error", "message": "请先手动启用鼠标控制"})
+                            continue
+                        try:
+                            # Always validate down/up. Avoid a flood of MOVE
+                            # messages, but never throttle the final release.
+                            if message.get("action") == "move" and time.monotonic()-last_move < 1/60:
+                                continue
+                            await asyncio.to_thread(stream.send_touch, message)
+                            if message.get("action") == "move":
+                                last_move = time.monotonic()
+                        except InvalidTouch as exc:
+                            await websocket.send_json({"type": "touch_error", "message": str(exc)})
+                        except VideoProbeError as exc:
+                            await websocket.send_json({"type": "touch_error", "message": str(exc)})
+                            break
             except (WebSocketDisconnect, RuntimeError):
                 pass
             finally:
@@ -497,6 +549,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if kind == "init":
                 await websocket.send_json({"type": "init", "session_id": stream.session_id,
                                            "player": "mse", "format": "fmp4", **payload})
+                if payload.get("control_available"):
+                    touch_ready.set()
             elif kind == "bytes":
                 await websocket.send_bytes(payload)
                 ws_video_bytes += len(payload)
