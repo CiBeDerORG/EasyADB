@@ -54,9 +54,10 @@ class DeviceManager:
             "last_seen": state.get("last_seen"),
             "active_serial": state.get("active_serial"),
             "active_route": state.get("active_route"),
+            "connect_failed": bool(state.get("connect_failed", False)),
         }
 
-    def _set_state(self, device_id, status, error=None, serial=None, route=None):
+    def _set_state(self, device_id, status, error=None, serial=None, route=None, connect_failed=None):
         with self.guard:
             old = self.states.get(device_id, {})
             self.states[device_id] = {
@@ -65,6 +66,8 @@ class DeviceManager:
                 "last_seen": utc_now() if status == "connected" else old.get("last_seen"),
                 "active_serial": serial if status == "connected" else None,
                 "active_route": route if status == "connected" else None,
+                "connect_failed": (bool(connect_failed) if connect_failed is not None
+                                   else bool(old.get("connect_failed", False))),
             }
 
     def serial_for(self, device):
@@ -105,14 +108,18 @@ class DeviceManager:
                             )
                         except HTTPException:
                             pass
-                    self._set_state(device_id, "connected", serial=serial, route=route)
+                    self._set_state(device_id, "connected", serial=serial, route=route, connect_failed=False)
                 else:
                     self._set_state(device_id, "disconnected",
-                                    "所选连接地址未连接；请手动点击「连接」")
+                                    ("所选连接地址连接失败；请核对端口及网络，首次连接可先配对"
+                                     if force_connect else "所选连接地址未连接；请手动点击「连接」"),
+                                    connect_failed=True if force_connect else None)
             except HTTPException as exc:
-                self._set_state(device_id, "error", str(exc.detail))
+                self._set_state(device_id, "error", str(exc.detail),
+                                connect_failed=True if force_connect else None)
             except Exception:
-                self._set_state(device_id, "error", "检查所选地址时发生内部错误")
+                self._set_state(device_id, "error", "检查所选地址时发生内部错误",
+                                connect_failed=True if force_connect else None)
             return self.snapshot(self.store.get(device_id) or device)
 
     def poll_all(self):
