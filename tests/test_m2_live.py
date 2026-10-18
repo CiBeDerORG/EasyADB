@@ -201,7 +201,7 @@ def test_real_ffmpeg_copy_remux_produces_mse_init_and_media_fragments():
         "-frames:v", "12", "-c:v", "libx264", "-preset", "ultrafast",
         "-pix_fmt", "yuv420p", "-f", "h264", "pipe:1",
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=True).stdout
-    assert encoded.startswith(b"\\x00\\x00\\x00\\x01") or encoded.startswith(b"\\x00\\x00\\x01")
+    assert encoded.startswith(bytes((0, 0, 0, 1))) or encoded.startswith(bytes((0, 0, 1)))
     fragmented = subprocess.run(
         ["ffmpeg", *FFMPEG_MSE_ARGS], input=encoded,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
