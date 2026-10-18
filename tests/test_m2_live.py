@@ -203,7 +203,10 @@ def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch
                     break
             else:
                 pytest.fail("second session did not acknowledge cleanup")
-        assert created[1].joined
+        assert not created[1].started and not created[1].joined  # rejected candidate
+        assert len(created) == 3
+        assert created[2].started and created[2].joined
+        assert d["id"] not in mod.live_registry.sessions
 
 
 def test_socket_read_is_stoppable_without_a_background_reconnect():
