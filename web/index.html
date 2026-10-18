@@ -139,32 +139,33 @@ function select(id){
 }
 function render(){
  const list=$('devices');list.replaceChildren();
- const grouped=new Map();
+ const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,items:[]}]));
  for(const d of devices){
   const key=d.group_name?'named:'+d.group_name:'ungrouped';
-  if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',items:[]});
+  if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',ip_prefix:null,items:[]});
   grouped.get(key).items.push(d);
  }
  const keys=[...grouped.keys()].sort((a,b)=>a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
  for(const key of keys){
-  const group=grouped.get(key);
-  const section=elem('details','device-group');
+  const g=grouped.get(key),section=elem('details','device-group');
   section.open=groupOpen.has(key)?groupOpen.get(key):true;
   section.addEventListener('toggle',()=>groupOpen.set(key,section.open));
-  const summary=elem('summary');
-  summary.append(elem('span','',group.title));
-  const online=group.items.filter(d=>d.status==='connected').length;
-  summary.append(elem('span','group-count',online+' / '+group.items.length+' 已连接'));
-  section.append(summary);
+  const header=elem('div','group-header'),summary=elem('summary');
+  summary.append(elem('span','',g.title));
+  if(g.ip_prefix)summary.append(elem('span','group-prefix',g.ip_prefix));
+  summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
+  header.append(summary);
+  if(key!=='ungrouped')header.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
+  section.append(header);
   const wrapper=elem('div','group-items');
-  for(const d of group.items){
+  for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
-   const top=elem('div','item-top');
-   const info=elem('div');
-   info.append(elem('div','item-name',d.name),elem('div','muted',d.ip+':'+d.port));
-   const pill=elem('span','pill '+d.status,labels[d.status]||'待检查');
-   top.append(info,pill);item.append(top);
+   const top=elem('div','item-top'),info=elem('div');
+   info.append(elem('div','item-name',d.name),elem('div','muted','组网 IP：'+(d.mesh_ip||d.ip)+':'+d.port));
+   if(d.lan_ip)info.append(elem('div','muted','内网 IP：'+d.lan_ip+':'+d.port));
+   top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));item.append(top);
+   if(d.status==='connected')item.append(elem('div','muted','当前连接：'+(d.active_route==='lan'?'内网 IP':'组网 IP')+' · '+d.active_serial));
    if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
    if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
    const actions=elem('div','item-actions');
@@ -172,16 +173,18 @@ function render(){
    actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
    item.append(actions);wrapper.append(item);
   }
+  if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);list.append(section);
  }
- if(!devices.length)list.append(elem('p','hint','暂无设备。点击「添加设备」保存第一台手机。'));
+ if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
  $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
- $('previewInfo').textContent=d?(d.ip+':'+d.port+' · '+(labels[d.status]||'待检查')):'从左侧列表选择设备';
+ $('previewInfo').textContent=d?(d.status==='connected'?'当前连接：'+(d.active_route==='lan'?'内网 IP':'组网 IP')+' · '+d.active_serial:'组网 IP：'+(d.mesh_ip||d.ip)+(d.lan_ip?' · 内网 IP：'+d.lan_ip:'')):'从左侧列表选择设备';
  $('connect').disabled=loading||!d;
  $('shotButton').disabled=loading||!d||d.status!=='connected';
  $('refreshAll').disabled=loading||!loaded;
  $('newDevice').disabled=loading||!loaded;
+ $('newGroup').disabled=loading||!loaded;
 }
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
