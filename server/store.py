@@ -132,6 +132,26 @@ class DeviceStore:
             self._check_routes(db)
         return self.get_group(name)
 
+    def delete_group(self, name):
+        """Delete the group and move members to ungrouped in one transaction.
+
+        Device IDs, stored mesh IPs, port numbers and ADB credentials remain
+        unchanged. Derived LAN addresses disappear when group_name is cleared.
+        """
+        with self.connection() as db:
+            exists = db.execute(
+                "SELECT 1 FROM group_configs WHERE name=?", (name,)
+            ).fetchone()
+            if not exists:
+                return None
+            members = [row["id"] for row in db.execute(
+                "SELECT id FROM devices WHERE group_name=? ORDER BY id", (name,)
+            )]
+            db.execute("UPDATE devices SET group_name='' WHERE group_name=?", (name,))
+            db.execute("DELETE FROM group_configs WHERE name=?", (name,))
+            self._check_routes(db)
+            return {"deleted": True, "moved_count": len(members), "device_ids": members}
+
     def create(self, values):
         device_id = uuid.uuid4().hex
         with self.connection() as db:
