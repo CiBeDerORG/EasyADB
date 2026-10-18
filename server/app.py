@@ -8,6 +8,7 @@ import subprocess
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from .devices import DeviceManager, selected_address
 from .store import DeviceStore
 from .m2_preflight import inspect_device
+from .m2_video_probe import probe_video, VideoProbeError
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -75,6 +77,10 @@ class DeviceInput(Target):
 
 class RouteInput(BaseModel):
     route: str
+
+
+class VideoProbeInput(BaseModel):
+    profile: Literal['baseline', 'native'] = 'baseline'
 
 
 class GroupInput(BaseModel):
@@ -332,6 +338,20 @@ def m2_device_preflight(device_id: str):
         if not serial or manager.serial_for(device) != serial or not is_connected(serial):
             raise HTTPException(409, "请先手动连接当前选择的设备，再执行 M2 预检")
         return inspect_device(serial, adb)
+
+
+@app.post("/api/devices/{device_id}/m2/video-probe", dependencies=[Depends(authorize)])
+def m2_video_probe(device_id: str, payload: VideoProbeInput):
+    """Opt-in, bounded, non-recording experiment: phone encoder -> FNOS only."""
+    with manager._device_lock(device_id):
+        device = get_device(device_id)
+        serial = selected_address(device)
+        if not serial or manager.serial_for(device) != serial or not is_connected(serial):
+            raise HTTPException(409, "请先手动连接当前选择的地址，再启动视频链路实验")
+        try:
+            return probe_video(serial, profile=payload.profile)
+        except VideoProbeError as exc:
+            raise HTTPException(502, str(exc)) from None
 
 
 @app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
