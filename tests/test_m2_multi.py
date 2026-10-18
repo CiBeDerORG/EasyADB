@@ -174,6 +174,15 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
         assert "勾选任意 1～4 台" in html
+        multi_js=client.get("/m2-multi.js").text
+        assert "liveState(id)" in multi_js
+        assert "startFor(id)" in multi_js and "stopFor(id)" in multi_js
+        assert "this._startDevices([d])" in multi_js
+        assert "this.lastLiveStatus.set(card.id" in multi_js
+        assert "multi-live-status" in multi_js
+        assert "开启此设备画面" in multi_js and "关闭此设备画面" in multi_js
+        assert ".multi-live-status.playing" in html
+        assert "getManagementBusy:()=>loading" in html
 
 
 def test_new_device_and_group_do_not_interrupt_another_live_session(monkeypatch, tmp_path):

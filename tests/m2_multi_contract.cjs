@@ -35,7 +35,7 @@ const root={
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
  EasyADBPlayers:{create:(_type,_video,cbs)=>({
-   initialize(){cbs.onState('ready');},append(){},
+   initialize(){cbs.onState('ready');},append(){},triggerPlaying(){cbs.onState('playing');},
    diagnostics(){return {queueBytes:0,sourceState:'open',sourceRanges:1,
     rangeEnd:3,currentTime:2,queueChunks:0,appendCalls:4,completedUpdates:4,videoError:null};},
    resume(){},destroy(){}
@@ -85,6 +85,9 @@ const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
 });
 const checkbox=i=>picker.children[i].children[0].children[0];
 const quality=i=>picker.children[i].children[1];
+const liveRow=i=>picker.children[i].children.find(node=>node.className==='multi-live');
+const liveButton=i=>liveRow(i).children[1];
+const liveStatus=i=>liveRow(i).children[0].textContent;
 function select(i){const el=checkbox(i);el.checked=true;el.fire('change');}
 function init(ws,sid){
  ws.emit('init',{session_id:sid,width:720,height:1280,
@@ -95,6 +98,9 @@ assert.equal(root.EasyADBMulti.MAX_DEVICES,4);
 assert.equal(sockets.length,0);
 assert.equal(startButton.disabled,true,'empty selection cannot start');
 assert.equal(checkbox(0).disabled,false);
+assert.match(liveStatus(0),/未开启/);
+assert.equal(liveButton(0).disabled,false);
+assert.match(liveStatus(1),/未开启/);
 select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
 assert.match(startButton.textContent,/待新增 1/);
@@ -273,6 +279,7 @@ async function waitForCheck(id){
  assert.equal(multi.cards.size,4);
  assert.equal(grid.children.length,4);
  assert.equal(checkbox(3).disabled,true,'fifth concurrent device unavailable');
+ assert.equal(liveButton(4).disabled,true,'no per-device fifth stream when pool is full');
  assert.equal(startButton.disabled,true,'full four-slot pool');
  multi.start();assert.equal(multi.cards.size,4,'cannot duplicate any running card');
  // A single confirmed stop frees ONE slot; the three others remain intact.
@@ -295,6 +302,62 @@ async function waitForCheck(id){
  assert.equal(multi.cards.size,0);
  assert.equal(grid.children.length,0,'full stop removes every owned live DOM card');
  assert.equal(sockets.length,socketCount+4,'only four additional sessions ever created');
+ // Per-device buttons target ONLY their own session, never the batch's other
+ // checked devices and never an already-running WS or MSE player.
+ multi.selected.clear();multi.updatePicker();
+ const aloneCount=sockets.length;
+ liveButton(0).fire('click');
+ assert.equal(sockets.length,aloneCount+1,'one row starts exactly its own stream');
+ assert.equal(multi.cards.size,1);
+ assert.equal(multi.selected.has('id-1'),true,'row start joins selected set');
+ assert.match(liveStatus(0),/启动中/);
+ assert.match(liveStatus(1),/未开启|已停止/);
+ assert.match(liveRow(0).children[1].textContent,/关闭此设备画面/);
+ const ownA=sockets.at(-1);ownA.open();ownA.emit('starting',{session_id:'own-A'});
+ init(ownA,'own-A');assert.match(liveStatus(0),/等待画面/);
+ multi.cards.get('id-1').player.triggerPlaying();
+ assert.match(liveStatus(0),/播放中/);
+ const ownACard=multi.cards.get('id-1'),ownAPlayer=ownACard.player;
+ liveButton(1).fire('click');
+ assert.equal(sockets.length,aloneCount+2,'row B starts without restarting A');
+ assert.equal(multi.cards.get('id-1'),ownACard);
+ assert.equal(multi.cards.get('id-1').player,ownAPlayer);
+ const ownB=sockets.at(-1);ownB.open();ownB.emit('starting',{session_id:'own-B'});init(ownB,'own-B');
+ assert.equal(multi.cards.size,2);
+ liveButton(0).fire('click');
+ assert.equal(ownA.sent.at(-1),'stop');
+ assert.match(liveStatus(0),/停止中/);
+ assert.equal(liveButton(0).disabled,true,'do not create another stream before confirmed cleanup');
+ assert.equal(multi.cards.get('id-2').closed,false);
+ assert.equal(ownB.sent.filter(x=>x==='stop').length,0,'row A stop cannot stop B');
+ ownA.emit('ended',{session_id:'own-A',cleanup_complete:true});
+ assert.equal(multi.cards.size,1);
+ assert.match(liveStatus(0),/已停止/);
+ assert.equal(liveButton(0).disabled,false);
+ const restartCount=sockets.length;
+ liveButton(0).fire('click');
+ assert.equal(sockets.length,restartCount+1,'row A may restart after confirmed cleanup');
+ const ownARestart=sockets.at(-1);ownARestart.open();
+ ownARestart.emit('starting',{session_id:'own-A2'});init(ownARestart,'own-A2');
+ assert.equal(multi.cards.size,2);
+ assert.equal(multi.cards.get('id-2').closed,false);
+ multi.stopAll();
+ ownB.emit('ended',{session_id:'own-B',cleanup_complete:true});
+ ownARestart.emit('ended',{session_id:'own-A2',cleanup_complete:true});
+ assert.equal(grid.children.length,0);
+ // A queued device can independently cancel without ever opening a WS.
+ multi.selected.clear();multi.updatePicker();select(2);select(3);
+ const queueCount=sockets.length;startButton.fire('click');
+ assert.equal(sockets.length,queueCount+1);
+ assert.match(liveStatus(3),/排队中/);
+ assert.match(liveButton(3).textContent,/关闭此设备画面/);
+ liveButton(3).fire('click');
+ assert.match(liveStatus(3),/已取消排队/);
+ const ownC=sockets.at(-1);ownC.open();ownC.emit('starting',{session_id:'own-C'});init(ownC,'own-C');
+ assert.equal(sockets.length,queueCount+1,'cancel queued D without opening its WS');
+ multi.stopAll();ownC.emit('ended',{session_id:'own-C',cleanup_complete:true});
+ assert.equal(grid.children.length,0);
+ console.log('M2 independent row live status/start/stop/queue-cancel: OK');
  console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');
  console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -38,11 +38,11 @@ const briefQuality=v=>v.profile==='custom'
  ?'自定义 · '+(v.max_size||'原生')+' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
- constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected}){
-  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected});
+ constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy}){
+  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
-  this.checking=new Set();
+  this.checking=new Set();this.lastLiveStatus=new Map();
   startButton.addEventListener('click',()=>this.start());
   stopButton.addEventListener('click',()=>this.stopAll());
   this.updatePicker(false);
@@ -140,7 +140,26 @@ class MultiView{
    low.setAttribute('aria-label',d.name+' 低延迟播放实验');
    low.addEventListener('change',()=>this.setChoice(d.id,{low_latency:low.checked}));
    latency.append(low,make('span','','低延迟播放实验（仅浏览器追帧，不改变手机编码）'));
-   item.append(latency);
+   // Same-page, session-owned live status. It is intentionally NOT the
+   // database's ADB connected status and never starts a background poll.
+   const live=this.liveState(d.id);
+   const liveRow=make('div','multi-live');
+   const liveStatus=make('span','multi-live-status '+live.code,'实时画面：'+live.label);
+   liveStatus.setAttribute('role','status');
+   const liveButton=make('button',live.active?'danger':'secondary',
+    live.active?'关闭此设备画面':'开启此设备画面');
+   liveButton.type='button';
+   liveButton.setAttribute('aria-label',d.name+' '+(live.active?'关闭':'开启')+'实时画面');
+   liveButton.disabled=live.active?
+    live.code==='stopping':
+    !connected||this.opening||this.getManagementBusy?.()||
+    this.checking.has(d.id)||this.cards.size>=MAX_DEVICES;
+   liveButton.addEventListener('click',()=>{
+    if(liveButton.disabled)return;
+    if(live.active)this.stopFor(d.id);else this.startFor(d.id);
+   });
+   liveRow.append(liveStatus,liveButton);
+   item.append(liveRow,latency);
    this.picker.append(item);
   }
   // Existing cards, including pending stop/cleanup, retain their server slots.
@@ -158,36 +177,66 @@ class MultiView{
 
  hasActive(){return this.cards.size>0;}
  isBusyFor(id){
-  // A pending/active/stopping card owns its device until its cleanup finishes.
+  // Includes an opened card during stopping and an unstarted queued item.
   return this.cards.has(id)||this.launchQueue.some(item=>item.device.id===id);
  }
+ liveState(id){
+  const card=this.cards.get(id);
+  if(card){
+   const code=card.state==='stopping'?'stopping':
+    card.state==='playing'?'playing':
+    card.state==='ready'?'ready':'starting';
+   return {code,label:({
+    stopping:'停止中 · 等待清理',playing:'播放中',
+    ready:'等待画面 · 会话已就绪',starting:'启动中'
+   })[code],active:true};
+  }
+  if(this.launchQueue.some(item=>item.device.id===id))
+   return {code:'queued',label:'排队中',active:true};
+  return {code:'idle',label:this.lastLiveStatus.get(id)||'未开启',active:false};
+ }
+ startFor(id){
+  // Only this target. Never inherit the other checked devices from the batch
+  // picker, never replace an already-running device, never reconnect ADB.
+  if(this.isBusyFor(id))return false;
+  const d=(this.getDevices()||[]).find(item=>item.id===id);
+  if(!d)return false;
+  const started=this._startDevices([d]);
+  if(started){
+   this.selected.add(id);this.updatePicker();
+  }
+  return started;
+ }
  start(){
-  if(this.opening||this.getManagementBusy?.())return;
   const ds=this.getDevices()||[];
   const additions=[...this.selected].filter(id=>!this.isBusyFor(id))
    .map(id=>ds.find(d=>d.id===id));
-  if(additions.length<1)return; // Do not reopen a running device.
-  if(additions.length>MAX_DEVICES-this.cards.size||
-     additions.some(d=>!d||d.status!=='connected'||!d.selected_serial||
-       d.active_serial!==d.selected_serial||this.checking.has(d.id))){
-   this.status('请检查新增设备的连接状态，或等待现有设备清理完成；最多同时四路。',true);
-   this.updatePicker();return;
+  if(!additions.length)return false;
+  return this._startDevices(additions);
+ }
+ _startDevices(additions){
+  if(this.opening||this.getManagementBusy?.())return false;
+  if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
+     additions.length>MAX_DEVICES-this.cards.size||
+     additions.some(d=>!d||this.isBusyFor(d.id)||d.status!=='connected'||
+      !d.selected_serial||d.active_serial!==d.selected_serial||this.checking.has(d.id))){
+   this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多四路）。',true);
+   this.updatePicker();return false;
   }
-  if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return;}
-  // Only snapshot NEW devices. Running sessions keep their original stream,
-  // touch controller, MSE player and requested profile completely untouched.
+  if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return false;}
   const batch=additions.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
-    lowLatency:this.getChoice(d.id).low_latency===true}));
+   lowLatency:this.getChoice(d.id).low_latency===true}));
   const isAppend=this.cards.size>0;
+  for(const d of additions)this.lastLiveStatus.delete(d.id);
   this.opening=true;
-  // One explicit user request, staggered by authenticated server "init"
-  // completion. Avoid pushing/initializing 2-4 scrcpy+FFmpeg pipelines
-  // at the same instant; do not create timers or background reconnect jobs.
+  // Only this explicit user-requested batch is launched sequentially.
+  // Never reopen/modify currently running WS, MSE or touch controller.
   this.launchQueue=batch;
   this.status((isAppend?'正在追加 ':'正在依次启动 ')+additions.length+
-    ' 路独立投屏；已经运行的设备保持原会话与远控。');
+   ' 路独立投屏；已经运行的设备保持原会话与远控。');
   this._launchNext();
   this.updatePicker();
+  return true;
  }
  _launchNext(){
   if(!this.opening)return;
@@ -249,6 +298,7 @@ class MultiView{
   Object.assign(card,{box,video,stateEl:state,statsEl:stats,toggle,stop,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history});
   this.cards.set(card.id,card);
+  this.updatePicker();
   card.settleLaunch=()=>{
    if(card.startSettled)return;
    card.startSettled=true;
@@ -256,6 +306,7 @@ class MultiView{
   };
   const mark=(msg,error=false)=>{
    state.textContent=msg;state.className='status'+(error?' error':'');
+   if(error)card.lastFailure=msg;
    card.logLines.push((new Date()).toLocaleTimeString()+' · '+msg);
    if(card.logLines.length>24)card.logLines.shift();
    eventLog.textContent=card.logLines.join('\n');
@@ -285,9 +336,13 @@ class MultiView{
     lowOverhead:true,lowLatency:card.lowLatency,
     onState:stage=>{
      if(card.closed)return;
-     if(stage==='ready'){if(card.state!=='stopping'){card.state='ready';mark('MSE 已就绪，控制通道可单独开启；等待首帧…');refresh();}}
-     if(stage==='playing'&&card.state!=='stopping'){
-      card.state='playing';mark('画面播放中（此路独立会话）');refresh();
+     if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='ready';mark('MSE 已就绪，控制通道可单独开启；等待首帧…');
+      refresh();this.updatePicker();
+     }
+     if(stage==='playing'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='playing';mark('画面播放中（此路独立会话）');
+      refresh();this.updatePicker();
      }
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
     },
@@ -319,6 +374,7 @@ class MultiView{
     }
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
+     this.updatePicker();
     }else if(m.type==='diagnostic'){
      if(card.session&&m.session_id===card.session&&card.state!=='stopping'&&
         ws.readyState===WebSocket.OPEN){
@@ -382,7 +438,7 @@ class MultiView{
       card.player.initialize(m);
       // Control remains independent of the playback "playing" event.
       if(card.state==='connecting')card.state='ready';
-      refresh();
+      refresh();this.updatePicker();
       card.settleLaunch(); // start next phone only after this pipeline initialized
      }catch(e){mark(e.message,true);this.end(card,false);}
     }else if(m.type==='control_enabled'){
@@ -418,7 +474,7 @@ class MultiView{
       this.onDeviceDisconnected?.(card.id);this.end(card,false);
      }
     }else if(m.type==='stopping'){
-     card.state='stopping';mark('正在清理此路资源…');refresh();
+     card.state='stopping';mark('正在清理此路资源…');refresh();this.updatePicker();
     }else if(m.type==='ended'){
      if(m.cleanup_complete!==true){mark('服务端未确认完整清理',true);this.end(card,false);}
      else{mark('已停止，资源已释放');this.end(card,true);}
@@ -478,13 +534,23 @@ class MultiView{
   card.keepSelected=keepSelected;
   if(card.touch){card.touch.disable();}
   card.enabled=false;card.pending=false;card.lastInput=false;
-  card.state='stopping';card.refresh();
+  card.state='stopping';card.refresh();this.updatePicker();
   if(card.ws&&card.ws.readyState===WebSocket.OPEN){
    try{card.ws.send('stop');card.stateEl.textContent='正在请求服务端停止并清理…';}
    catch{this.end(card,false);}
   }else this.end(card,false);
  }
- stopFor(id){const card=this.cards.get(id);if(card)this.stop(card);}
+ stopFor(id){
+  const card=this.cards.get(id);
+  if(card){this.stop(card);return true;}
+  // Explicit cancellation of a still-queued, not-yet-opened device.
+  const before=this.launchQueue.length;
+  this.launchQueue=this.launchQueue.filter(item=>item.device.id!==id);
+  if(before===this.launchQueue.length)return false;
+  this.selected.delete(id);
+  this.lastLiveStatus.set(id,'已取消排队');
+  this.updatePicker();return true;
+ }
  stopAll(){
   this.opening=false;this.launchQueue=[];
   for(const card of [...this.cards.values()])this.stop(card,true);
@@ -522,6 +588,8 @@ class MultiView{
   // Remove the terminal DOM node NOW: deleting only the registry entry left a
   // stale video card behind, so a second Start visually duplicated streams.
   card.box.remove();
+  this.lastLiveStatus.set(card.id,clean?'已停止':
+   (card.lastFailure?'异常结束':'已结束 · 清理未确认'));
   if(!card.keepSelected&&this.cards.size>1)this.selected.delete(card.id);
   this.cards.delete(card.id);
   // Full stop keeps the previous selection; stopping one live card
