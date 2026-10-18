@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import subprocess
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -412,9 +413,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if not serial or serial != initial.get("selected_serial") or manager.serial_for(device) != serial:
             await websocket.send_json({"type": "error", "message": "请先手动连接当前选择的设备"})
             return
+        adb_checked_at = time.monotonic()
         if not await asyncio.to_thread(is_connected, serial):
             await websocket.send_json({"type": "error", "message": "当前选择的 ADB 地址已离线"})
             return
+        adb_check_ms = round((time.monotonic() - adb_checked_at) * 1000)
         # Atomic with route mutation: another browser cannot switch the
         # selected serial between validation and reserving this live session.
         error = None
@@ -432,7 +435,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
-        await websocket.send_json({"type": "starting", "selected_serial": serial})
+        await websocket.send_json({"type": "starting", "selected_serial": serial,
+                                   "adb_check_ms": adb_check_ms})
 
         async def receive_commands():
             try:
@@ -447,7 +451,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 stream.stop()
 
         receiver = asyncio.create_task(receive_commands())
+        next_diagnostic = 0.0
         while True:
+            # Diagnostics exist only during this explicitly opened WebSocket;
+            # metadata only; no extra ADB work or phone-screen bytes in logs.
+            now = time.monotonic()
+            if now >= next_diagnostic and not stream.finished.is_set():
+                await websocket.send_json({"type": "diagnostic", **stream.diagnostics()})
+                next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
                 break
             current = store.get(device_id)
