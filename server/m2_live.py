@@ -252,21 +252,31 @@ class LiveVideo:
             sock = self.video_sock
             adb_proc = self.adb_proc
             mux = self.ffmpeg_proc
+        # One stop gate closes touch, text and keys together. Since stop_event
+        # was set first, no fresh command may race this final finger release.
         with self._touch_lock:
             control = self.control_sock
-            self.control_sock = None
-            self.touch_size = None
-            self.touch_pressed = False
-            self.touch_point = None
-            if control:
-                try:
-                    control.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                try:
-                    control.close()
-                except OSError:
-                    pass
+            try:
+                if control and self.touch_pressed:
+                    try:
+                        self._release_touch_locked()
+                    except (OSError, InvalidTouch):
+                        # Broken control socket must not block video/ADB cleanup.
+                        pass
+            finally:
+                self.control_sock = None
+                self.touch_size = None
+                self.touch_pressed = False
+                self.touch_point = None
+                if control:
+                    try:
+                        control.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    try:
+                        control.close()
+                    except OSError:
+                        pass
         if sock:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -323,20 +333,26 @@ class LiveVideo:
     def send_nav(self, payload):
         self._send_input(payload, encode_key)
 
-    def release_touch(self):
-        """Explicit disable releases this session's own pressed finger only."""
-        with self._touch_lock:
-            if not self.touch_pressed or not self.control_sock or not self.touch_size or not self.touch_point:
-                return
-            x, y = self.touch_point
-            width, height = self.touch_size
-            packet, _ = encode_touch({
-                "type": "touch", "session_id": self.session_id, "action": "cancel",
-                "x": x, "y": y, "width": width, "height": height,
-            }, (width, height), True)
+    def _release_touch_locked(self):
+        """Use only while holding _touch_lock. Clears state even if socket fails."""
+        if not self.touch_pressed or not self.control_sock or not self.touch_size or not self.touch_point:
+            return
+        x, y = self.touch_point
+        width, height = self.touch_size
+        packet, _ = encode_touch({
+            "type": "touch", "session_id": self.session_id, "action": "cancel",
+            "x": x, "y": y, "width": width, "height": height,
+        }, (width, height), True)
+        try:
             self.control_sock.sendall(packet)
+        finally:
             self.touch_pressed = False
             self.touch_point = None
+
+    def release_touch(self):
+        """Explicit disable releases only this session's currently held finger."""
+        with self._touch_lock:
+            self._release_touch_locked()
 
     def join(self, timeout=8):
         if self.thread:
