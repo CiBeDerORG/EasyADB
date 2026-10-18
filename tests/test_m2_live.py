@@ -16,7 +16,8 @@ from starlette.websockets import WebSocketDisconnect
 from server.devices import DeviceManager
 from server.store import DeviceStore
 from server.m2_live import (
-    FFMPEG_MSE_ARGS, LiveRegistry, LiveVideo, StreamStopped, _socket_read, parse_init_segments,
+    FFMPEG_MSE_ARGS, Fmp4FragmentAssembler, LiveRegistry, LiveVideo, StreamStopped,
+    VideoProbeError, _socket_read, parse_init_segments,
 )
 
 AUTH = {"X-EasyADB-Token": "local-test-token-123"}
@@ -69,6 +70,34 @@ def test_live_diagnostics_are_session_local_and_need_no_adb(tmp_path):
     assert 0 <= after["phone_idle_ms"] < 1000
     assert 0 <= after["mux_idle_ms"] < 1000
     assert after["elapsed_ms"] >= before["elapsed_ms"]
+
+
+
+def test_fmp4_fragmenter_coalesces_split_boxes_without_extra_frame_wait():
+    frag1 = box(b"moof", b"frag1") + box(b"mdat", b"media1")
+    frag2 = box(b"moof", b"frag2") + box(b"mdat", b"media2")
+    assembler = Fmp4FragmentAssembler()
+    emitted = []
+    for byte in frag1 + frag2:
+        emitted.extend(assembler.feed(bytes((byte,))))
+    assert emitted == [frag1, frag2]
+    assert assembler.feed(b"") == []
+
+
+def test_fmp4_fragmenter_optional_prefix_and_malformed_boxes():
+    assembler = Fmp4FragmentAssembler()
+    prefix = box(b"styp", b"isom")
+    media = box(b"moof", b"head") + box(b"mdat", b"data")
+    assert assembler.feed(prefix + media) == [prefix + media]
+    assert assembler.feed(box(b"mfra", b"index")) == []
+    for bad in (
+        box(b"mdat", b"orphan"), box(b"junk", b"unknown"),
+        struct.pack(">I4s", 0, b"moof"),
+        struct.pack(">I4s", 0x7FFFFFFF, b"moof"),
+        box(b"moof", b"one") + box(b"moof", b"two"),
+    ):
+        with pytest.raises(VideoProbeError):
+            Fmp4FragmentAssembler().feed(bad)
 
 
 def test_live_registry_reserves_exclusively_and_stops_only_the_correct_session():
@@ -237,6 +266,16 @@ def test_real_ffmpeg_copy_remux_produces_mse_init_and_media_fragments():
     assert mime.startswith('video/mp4; codecs="avc1.')
     assert b"moof" in fragmented[end:]
     assert b"mdat" in fragmented[end:]
+    # The real pipe is arbitrarily chunked, including splitting a box header.
+    # Transport exactly one complete moof+mdat group per encoded frame.
+    assembler = Fmp4FragmentAssembler()
+    media = fragmented[end:]
+    chunks = []
+    for offset in range(0, len(media), 37):
+        chunks.extend(assembler.feed(media[offset:offset + 37]))
+    assert len(chunks) == 12
+    assert all(b"moof" in chunk and b"mdat" in chunk for chunk in chunks)
+    assert b"".join(chunks) == media[:media.find(b"mfra") - 4]
 
 
 def test_sparse_scrcpy_like_input_keeps_real_timeline_in_fragmented_mp4(tmp_path):
