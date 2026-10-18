@@ -23,7 +23,7 @@ jobs:
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done
-          python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==1 and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
+          python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==2 and "groupDialog" in h and "groupPrefix" in h and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
           node --check /tmp/easyadb-web.js
       - name: Run mock ADB tests
         env:
