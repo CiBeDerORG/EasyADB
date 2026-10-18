@@ -138,7 +138,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,loading=false,loaded=false,shotUrl=null;
+let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -276,6 +276,18 @@ function openGroup(name=null){
  $('groupDialog').showModal();$('groupName').focus();
 }
 function closeGroup(){if(!loading)$('groupDialog').close();}
+function openFirstPair(id){
+ if(loading||!loaded)return;
+ const d=devices.find(x=>x.id===id);
+ if(!d||!d.connect_failed||!d.selected_serial)return;
+ pairingDeviceId=d.id;pairingSerial=d.selected_serial;
+ $('firstPairForm').reset();
+ $('firstPairTitle').textContent='首次连接 · '+d.name;
+ $('firstPairIp').value=d.selected_serial.slice(0,d.selected_serial.lastIndexOf(':'));
+ $('firstPairMessage').hidden=true;$('firstPairMessage').textContent='';
+ $('firstPairDialog').showModal();$('firstPairPort').focus();
+}
+function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
 async function switchRoute(id,route){
  if(loading)return;loading=true;render();
  message('正在保存当前连接地址…');
@@ -309,6 +321,36 @@ $('load').addEventListener('click',()=>load());
 $('token').addEventListener('input',()=>{loaded=false;devices=[];groups=[];selected=null;clearShot();render();});
 $('newDevice').addEventListener('click',()=>openModal());
 $('newGroup').addEventListener('click',()=>openGroup());
+$('closeFirstPair').addEventListener('click',closeFirstPair);
+$('cancelFirstPair').addEventListener('click',closeFirstPair);
+$('firstPairDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('firstPairDialog').addEventListener('close',()=>{
+ pairingDeviceId=null;pairingSerial=null;
+ $('firstPairForm').reset();$('firstPairMessage').hidden=true;
+});
+$('firstPairDialog').addEventListener('click',ev=>{
+ if(ev.target===$('firstPairDialog')&&!loading)closeFirstPair();
+});
+$('firstPairForm').addEventListener('submit',async ev=>{
+ ev.preventDefault();
+ if(loading||!pairingDeviceId||!pairingSerial)return;
+ const id=pairingDeviceId;
+ loading=true;$('submitFirstPair').disabled=true;render();
+ try{
+  const response=await(await api('/api/devices/'+encodeURIComponent(id)+'/pair',{
+   method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({
+    port:Number($('firstPairPort').value),
+    code:$('firstPairCode').value.trim(),
+    selected_serial:pairingSerial
+   })
+  })).json();
+  $('firstPairCode').value='';
+  modalMessage(response.message+'。请关闭弹窗，再手动点击「连接」；不会自动重试。','ok','firstPairMessage');
+ }catch(e){
+  modalMessage(e.message,'error','firstPairMessage');
+ }finally{loading=false;$('submitFirstPair').disabled=false;render();}
+});
 $('deleteGroup').addEventListener('click',async()=>{
  if(loading||!editingGroup)return;
  const name=editingGroup;
