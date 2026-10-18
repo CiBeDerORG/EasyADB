@@ -792,7 +792,9 @@ class MultiView{
     card.stopTimer=null;
     if(card.closed||card.state!=='stopping')return;
     card.reconnectRequested=false;
-    mark('WebRTC 停止确认超时；服务端资源未确认释放，请检查 NAS 日志',true);
+    card.lastFailure='WebRTC 停止确认超时；服务端资源未确认释放，请检查 NAS 日志';
+    card.stateEl.textContent=card.lastFailure;
+    card.stateEl.className='status error';
     this.status(card.name+'：停止确认超时，页面已移除旧画面；不代表服务端资源已释放，不会自动重连。',true);
     this.end(card,false);
    },40000);
