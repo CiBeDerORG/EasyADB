@@ -186,6 +186,7 @@ class LiveVideo:
         self.profile = profile
         self.display_source = display_source  # None keeps the original primary screen.
         self.screen_off = screen_off is True and display_source is None
+        self._wake_requested = False  # a wake during startup cancels deferred off
         # Opaque ID for this user-started session. Used for lifecycle messages
         # and future control-channel binding; it never selects an ADB target.
         self.session_id = secrets.token_hex(12)
@@ -366,7 +367,7 @@ class LiveVideo:
                 self.stop_event.set()
                 raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
 
-    def set_display_power(self, on):
+    def set_display_power(self, on, skip_if_wake=False):
         """scrcpy v5 control type 10 + boolean: affects physical panel, not encoding.
 
         No implicit ADB connect, no POWER toggle and no new media/control session.
@@ -375,6 +376,8 @@ class LiveVideo:
         if type(on) is not bool:
             raise InvalidTouch("无效的屏幕电源参数")
         with self._touch_lock:
+            if skip_if_wake and self._wake_requested:
+                return False
             if (self.stop_event.is_set() or self.finished.is_set()
                     or not self.control_sock or not self.touch_size or self.display_source):
                 raise InvalidTouch("当前主屏投屏控制通道不可用")
@@ -384,14 +387,25 @@ class LiveVideo:
             except (OSError, socket.timeout) as exc:
                 self.stop_event.set()
                 raise VideoProbeError("屏幕电源指令发送失败，本轮投屏需重新开始") from exc
+            return True
 
     def wake_display(self):
-        """Explicit user action: restore panel power, then request Android WAKEUP.
+        """One user-clicked wake, including startup before first encoded frame.
 
-        WAKEUP (224) is idempotent; unlike POWER it cannot accidentally sleep an
-        already awake phone. Both operations target this session's fixed serial.
+        WAKEUP (224) is idempotent; POWER would inadvertently sleep an already
+        awake phone. The wake flag suppresses deferred startup screen-off.
         """
-        self.set_display_power(True)
+        with self._touch_lock:
+            if self.stop_event.is_set() or self.finished.is_set() or self.display_source:
+                raise InvalidTouch("当前主屏会话不可唤醒")
+            self._wake_requested = True
+            if self.control_sock and self.touch_size:
+                try:
+                    self.control_sock.sendall(bytes((10, 1)))
+                    self._control_attempted = True
+                except (OSError, socket.timeout) as exc:
+                    self.stop_event.set()
+                    raise VideoProbeError("物理屏幕开启指令发送失败") from exc
         _run_adb(self.serial, "shell", "input", "keyevent", "224", timeout=7)
 
     def send_text(self, payload):
@@ -652,11 +666,10 @@ class LiveVideo:
                             self._ready_at = time.monotonic()
                             self._phase = "已生成 MP4 初始化段"
                         if self.screen_off:
-                            # Stream is established before darkening the physical panel.
-                            # This scrcpy control message keeps the encoder running.
-                            self.set_display_power(False)
-                            self._emit(("screen_power_notice", {"on": False,
-                                "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
+                            # Wake clicked before first frame wins over deferred off.
+                            if self.set_display_power(False, skip_if_wake=True):
+                                self._emit(("screen_power_notice", {"on": False,
+                                    "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
                         self._emit(("init", {"mime": mime, "width": width, "height": height,
                                              "profile": self.profile, "requested": dict(self.settings),
                                              "codec": "h264", "control_available": True,
