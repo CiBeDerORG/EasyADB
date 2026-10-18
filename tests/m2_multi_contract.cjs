@@ -72,6 +72,21 @@ assert.match(page,/newDevice'\)\.disabled=loading\|\|!loaded/);
 assert.match(page,/newGroup'\)\.disabled=loading\|\|!loaded/);
 assert.doesNotMatch(page,/请先停止全部同屏，再/,'no global session lock for CRUD');
 assert.match(page,/multiView\.isBusyFor\(id\)/,'mutations guard their own device only');
+assert.match(page,/id="bulkSelectAll"/);
+assert.match(page,/id="bulkConnect"/);
+assert.match(page,/id="bulkDelete"/);
+assert.match(page,/const managementSelected=new Set\(\)/);
+assert.match(page,/managementCheck\.checked=managementSelected\.has\(d\.id\)/);
+assert.match(page,/managementSelected\.clear\(\);render\(\)/,'auth change clears bulk selection');
+assert.match(page,/candidates=picked\.filter\(d=>!\(multiView&&multiView\.isBusyFor\(d\.id\)\)\)/,'batch skips busy devices');
+assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deletion requires confirmation');
+assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
+assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
+assert.match(page,/action\(label\+'：'\+ip\+':'\+d\.port,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
+assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
+assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
+assert.match(page,/d\.name\+\(d\.model\?'（'\+d\.model\+'）':''\)/);
+
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
@@ -117,10 +132,13 @@ assert.equal(picker.children[0].children[2].hidden,true,'hide probe actions only
 assert.equal(picker.children[0].children[3].hidden,true,'hide probe log only');
 assert.match(page,/\.multi-choice>\.buttons\[hidden\],\.multi-choice>\.multi-probe-log\[hidden\]/);
 const latency0=picker.children[0].children.at(-1).children[0];
-assert.equal(latency0.checked,false,'low latency stays off by default');
+assert.equal(latency0.checked,true,'low latency defaults enabled for every device');
+assert.equal(multi.getChoice('id-2').low_latency,true,'B retains its own default');
+latency0.checked=false;latency0.fire('change');
+assert.equal(multi.getChoice('id-1').low_latency,false,'A can opt out independently');
+assert.equal(multi.getChoice('id-2').low_latency,true,'A opting out does not alter B');
 latency0.checked=true;latency0.fire('change');
 assert.equal(multi.getChoice('id-1').low_latency,true);
-assert.equal(multi.getChoice('id-2').low_latency,false);
 // The three fields can be changed independently, per device, including 3 Mbps.
 const setQuality=(i,key,value)=>{
  const field=quality(i,key);field.value=String(value);field.fire('change');

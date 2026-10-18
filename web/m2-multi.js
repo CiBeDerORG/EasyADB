@@ -30,7 +30,7 @@ const choice=(options,value)=>{
  select.value=String(value);return select;
 };
 const defaults=()=>({profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24,
- low_latency:false});
+ low_latency:true});
 const qualityPayload=v=>v.profile==='custom'
  ?{profile:'custom',quality:{max_size:v.max_size,video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
  :{profile:v.profile};

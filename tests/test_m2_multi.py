@@ -183,6 +183,24 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "开启此设备画面" in multi_js and "关闭此设备画面" in multi_js
         assert ".multi-live-status.playing" in html
         assert "getManagementBusy:()=>loading" in html
+        # Batch-management selection is independent of the at-most-four
+        # live-session picker, and destructive actions require confirmation.
+        for marker in ('id="bulkSelectAll"', 'id="bulkConnect"',
+                       'id="bulkDelete"', 'id="bulkCount"'):
+            assert marker in html
+        assert "const managementSelected=new Set()" in html
+        assert "managementCheck.checked=managementSelected.has(d.id)" in html
+        assert "multiView.selected" not in html
+        assert "const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)))" in html
+        assert "if(!confirm('将从列表永久删除以下 " in html
+        assert "managementSelected.clear();render();" in html
+        # Route selection acts directly on the displayed IP; no separate
+        # selected/switch label or automatic ADB connect on clicking route.
+        assert "action(label+'：'+ip+':'+d.port,()=>switchRoute(d.id,route),'address-target')" in html
+        assert "target.setAttribute('aria-pressed',String(chosen))" in html
+        assert "⇄ 切换" not in html and "✓ 当前选择" not in html
+        assert "d.name+(d.model?'（'+d.model+'）':'')" in html
+        assert "low_latency:true" in multi_js
 
 
 def test_new_device_and_group_do_not_interrupt_another_live_session(monkeypatch, tmp_path):
