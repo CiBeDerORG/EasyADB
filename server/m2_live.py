@@ -291,6 +291,12 @@ class LiveVideo:
 
     def stop(self):
         self.stop_event.set()
+        # The WebRTC sender may be awaiting track.recv() even when the phone
+        # stopped producing packets. Unblock it BEFORE pc.close() awaits sender
+        # shutdown; waiting until _run.finally (after ADB cleanup) can deadlock
+        # the manual stop path and leave a black card saying "stopping".
+        if self.webrtc_track is not None:
+            self.webrtc_track.stop()
         with self._resource_lock:
             sock = self.video_sock
             adb_proc = self.adb_proc
