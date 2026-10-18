@@ -23,10 +23,11 @@ class MSEPlayer {
     this._appendCalls=0;
     this._completedUpdates=0;
     this._lastUpdateAt=null;
+    this._playPending=false;
     this._onSourceOpen=null;
     this._onUpdateEnd=null;
     this._onSourceError=null;
-    this._onPlaying=()=>{if(!this.closed){this._waitingAtEdge=false;this.onState('playing');}};
+    this._onPlaying=()=>{if(!this.closed){this._waitingAtEdge=false;this._playPending=false;this.onState('playing');}};
     this._onVideoError=()=>{if(!this.closed)this.onError('浏览器视频解码失败，请尝试基础档或更新浏览器。');};
     // A still Android screen may provide fewer frames than moving content.
     // A video at the buffered edge is allowed to wait: recover only AFTER a
@@ -177,10 +178,21 @@ class MSEPlayer {
     return data;
   }
   _play(){
-    if(this.closed||!this.sourceBuffer)return;
-    const result=this.video.play();
-    if(result&&typeof result.catch==='function'){
-      result.catch(()=>{if(!this.closed)this.onState('autoplay-blocked');});
+    // Calling play() after every fMP4 update causes redundant promises and
+    // media pipeline work. One request is enough until it resolves/rejects.
+    if(this.closed||!this.sourceBuffer||!this.video.paused||this._playPending)return;
+    this._playPending=true;
+    try{
+      const result=this.video.play();
+      if(result&&typeof result.then==='function'){
+        result.then(()=>{this._playPending=false;},()=>{
+          this._playPending=false;
+          if(!this.closed)this.onState('autoplay-blocked');
+        });
+      }else this._playPending=false;
+    }catch(error){
+      this._playPending=false;
+      if(!this.closed)this.onState('autoplay-blocked');
     }
   }
   resume(){if(!this.closed)this._play();}
@@ -198,7 +210,7 @@ class MSEPlayer {
       if(this._onSourceError)sb.removeEventListener('error',this._onSourceError);
       try{if(sb.updating)sb.abort();}catch{}
     }
-    this.queue=[];this.pendingBytes=0;
+    this.queue=[];this.pendingBytes=0;this._playPending=false;
     try{this.video.pause();this.video.removeAttribute('src');this.video.load();}catch{}
     if(this.objectUrl)URL.revokeObjectURL(this.objectUrl);
     this.mediaSource=null;this.sourceBuffer=null;this.objectUrl=null;
