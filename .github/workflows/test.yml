@@ -1,8 +1,7 @@
 name: M2 tests
-# Run once by explicit user request after the full development batch is ready.
-# Ordinary commits/pull requests MUST NOT automatically start a Runner.
 on:
-  workflow_dispatch:
+  push:
+    branches: [feat/m2-web-control]
 permissions:
   contents: read
 jobs:
