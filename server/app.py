@@ -207,6 +207,12 @@ def m2_metrics_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-multi.js")
+def m2_multi_script():
+    return FileResponse(ROOT / "web" / "m2-multi.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 def pair_at(ip, port, code):
     dest = address(ip, port)
     if not re.fullmatch(r"\d{6}", code):
