@@ -83,6 +83,70 @@ def parse_init_segments(blob):
             raise VideoProbeError("视频 MP4 初始化段过大")
 
 
+# FFmpeg writes the byte stream in arbitrary pipe read boundaries: one MP4
+# media fragment may span multiple reads (and one read may contain many).
+# Coalesce complete moof+mdat pairs so the browser normally appends once per
+# encoded frame, not once for each OS pipe read. Never wait to combine frames.
+MAX_MP4_FRAGMENT_BYTES = MAX_FRAME_BYTES + 2 * MAX_INIT_BYTES
+
+
+class Fmp4FragmentAssembler:
+    def __init__(self):
+        self.buffer = bytearray()
+        self.prefix = []
+        self.prefix_bytes = 0
+        self.awaiting_mdat = False
+
+    def feed(self, data):
+        """Return complete ordered fragments. Input may split ANY box byte."""
+        if data:
+            self.buffer.extend(data)
+        if len(self.buffer) > MAX_MP4_FRAGMENT_BYTES:
+            raise VideoProbeError("MP4 媒体分片过大")
+        completed = []
+        while len(self.buffer) >= 8:
+            size, name = struct.unpack_from(">I4s", self.buffer)
+            header_size = 8
+            if size == 1:
+                if len(self.buffer) < 16:
+                    break
+                size = struct.unpack_from(">Q", self.buffer, 8)[0]
+                header_size = 16
+            if size < header_size or size > MAX_MP4_FRAGMENT_BYTES:
+                raise VideoProbeError("MP4 媒体盒尺寸无效")
+            if len(self.buffer) < size:
+                break
+            box = bytes(self.buffer[:size])
+            del self.buffer[:size]
+            if name == b"moof":
+                if self.awaiting_mdat:
+                    raise VideoProbeError("MP4 分片缺少 mdat")
+                self.awaiting_mdat = True
+                self.prefix.append(box)
+                self.prefix_bytes += len(box)
+            elif name == b"mdat":
+                if not self.awaiting_mdat:
+                    raise VideoProbeError("MP4 媒体数据缺少 moof")
+                completed.append(b"".join((*self.prefix, box)))
+                self.prefix.clear()
+                self.prefix_bytes = 0
+                self.awaiting_mdat = False
+            elif name in (b"styp", b"free", b"sidx", b"emsg", b"prft"):
+                # Optional pre-fragment metadata belongs with the next frame.
+                self.prefix.append(box)
+                self.prefix_bytes += len(box)
+            elif name == b"mfra":
+                # Trailing FFmpeg index only appears when the stream closes;
+                # no live video sample depends on it.
+                if self.awaiting_mdat:
+                    raise VideoProbeError("MP4 结束索引前缺少 mdat")
+            else:
+                raise VideoProbeError("MP4 视频流含不支持的媒体盒")
+            if self.prefix_bytes > MAX_MP4_FRAGMENT_BYTES:
+                raise VideoProbeError("MP4 媒体分片前缀过大")
+        return completed
+
+
 def _socket_read(sock, amount, stop, timeout=1.0):
     """Cancel-aware exact reads for continuous sessions, unlike bounded probe."""
     out = bytearray()
@@ -127,6 +191,7 @@ class LiveVideo:
         self._phone_last = None
         self._mux_chunks = 0
         self._mux_last = None
+        self._media_fragments = 0
         self._ready_at = None
 
     def _phase_set(self, phase):
@@ -143,6 +208,10 @@ class LiveVideo:
             self._mux_chunks += 1
             self._mux_last = time.monotonic()
 
+    def _record_media_fragments(self, count):
+        with self._metric_lock:
+            self._media_fragments += count
+
     def diagnostics(self):
         """Safe stage/age counters for an explicitly opened stream only."""
         now = time.monotonic()
@@ -154,6 +223,7 @@ class LiveVideo:
                 "phone_idle_ms": (round((now - self._phone_last) * 1000)
                                   if self._phone_last is not None else None),
                 "mux_chunks": self._mux_chunks,
+                "media_fragments": self._media_fragments,
                 "mux_idle_ms": (round((now - self._mux_last) * 1000)
                                 if self._mux_last is not None else None),
                 "init_ready_ms": (round((self._ready_at - self._born) * 1000)
@@ -315,6 +385,7 @@ class LiveVideo:
                 feeder = threading.Thread(target=feed, daemon=True, name="easyadb-m2-feeder")
                 feeder.start()
                 init_buffer = bytearray()
+                fragmenter = Fmp4FragmentAssembler()
                 has_init = False
                 init_started = time.monotonic()
                 while not self.stop_event.is_set():
@@ -353,13 +424,20 @@ class LiveVideo:
                                              "codec": "h264", "device": name.decode("utf-8", "replace")}))
                         self._emit(("bytes", init))
                         remainder = bytes(init_buffer[end:])
-                        if remainder:
-                            self._emit(("bytes", remainder))
                         init_buffer.clear()
+                        fragments = fragmenter.feed(remainder)
+                        for fragment in fragments:
+                            self._emit(("bytes", fragment))
+                        if fragments:
+                            self._record_media_fragments(len(fragments))
                         has_init = True
                         self._phase_set("持续传输")
                     else:
-                        self._emit(("bytes", data))
+                        fragments = fragmenter.feed(data)
+                        for fragment in fragments:
+                            self._emit(("bytes", fragment))
+                        if fragments:
+                            self._record_media_fragments(len(fragments))
         except StreamStopped:
             pass
         except VideoProbeError as exc:
