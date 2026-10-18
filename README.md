@@ -80,6 +80,14 @@ sudo sh scripts/build-with-mihomo.sh
 
 ---
 
+### 如果基础镜像成功，但 apt 报 `Temporary failure resolving 'mihomo'`
+
+这是 BuildKit 的 Dockerfile `RUN` 沙箱不能自动继承 `proxy-net` 的 Docker DNS，不代表 Mihomo 代理密码错误。脚本现在在执行 `docker buildx build` 时动态查询 Mihomo 的 `proxy-net` IPv4，注入临时参数 `--add-host "mihomo:<当前IP>"`，只对本次构建步骤创建名称映射，不修改 `.env`、`daemon.json` 或 FNOS Host 网络，也不会把 IP 固定写入镜像配置。这个参数来自 Docker 官方 Buildx 接口。
+
+需要更新 EasyADB 开发分支后继续执行原来的 `sudo sh scripts/build-with-mihomo.sh`。无需重新下载已缓存的 BuildKit/Python 镜像；如果后续出现连接超时而非域名错误，再检查 FNOS 的 Docker 桥接网络之间是否允许 TCP 访问 Mihomo 的 7890 端口。直接 `docker compose up --build` 不经过此脚本，不会自动添加该主机名映射。
+
+---
+
 ### 如果已经导入 BuildKit，但拉取 Python 基础镜像时 `auth.docker.io` 超时
 
 Docker Hub 的匿名令牌请求可能由宿主机的 Buildx CLI 发起，不完全由 BuildKit 容器处理。主构建脚本现已同时设置三处代理：
