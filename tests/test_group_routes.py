@@ -62,7 +62,7 @@ def test_explicit_route_selection_is_persistent_and_never_connects_automatically
         assert added["selected_route"] == "mesh"
         assert added["selected_serial"] == mesh
         assert not calls
-        assert choose(client, id_, "lan").status_code == 401
+        assert client.put(f"/api/devices/{id_}/route", json={"route": "lan"}).status_code == 401
         assert choose(client, id_, "invalid").status_code == 400
         assert choose(client, "missing", "mesh").status_code == 404
         selected = choose(client, id_, "lan").json()
