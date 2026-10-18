@@ -173,7 +173,12 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
-        assert "左侧「选择」同时用于批量管理与批量投屏" in html
+        assert "左侧「选择」用于全部批量操作" in html
+        assert 'class="panel access-panel"' not in html
+        assert html.index('<h2>设备管理</h2>') < html.index('id="token"') < html.index('id="load"')
+        assert '批量检查状态' in html and '批量停止投屏' in html
+        assert "if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port)" in html
+        assert "/temp-address" in html
         multi_js=client.get("/m2-multi.js").text
         assert "liveState(id)" in multi_js
         assert "startFor(id)" in multi_js and "stopFor(id)" in multi_js
