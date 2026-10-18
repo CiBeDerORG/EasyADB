@@ -127,6 +127,9 @@ def test_finished_old_worker_may_be_retired_but_active_worker_stays_exclusive():
     assert registry.reserve("device-A", old)
     assert not registry.reserve("device-A", new)
     old.finished.set()
+    # A terminated worker is not reusable until all owned resources are clean.
+    assert not registry.reserve("device-A", new)
+    old.cleanup_complete = True
     assert registry.reserve("device-A", new)
     registry.release("device-A", old)
     assert registry.sessions["device-A"] is new
