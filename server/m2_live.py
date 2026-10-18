@@ -149,12 +149,17 @@ class Fmp4FragmentAssembler:
         return completed
 
 
-def _socket_read(sock, amount, stop, timeout=1.0):
+def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
     """Cancel-aware exact reads for continuous sessions, unlike bounded probe."""
     out = bytearray()
     while len(out) < amount:
         if stop.is_set():
             raise StreamStopped()
+        # Existing local child state, NOT a new adb command or background poll.
+        # Covers a dead scrcpy/adb shell process even if the forwarded TCP
+        # connection does not promptly deliver FIN/EOF.
+        if adb_proc is not None and adb_proc.poll() is not None:
+            raise VideoProbeError("本轮 ADB/scrcpy 视频进程已退出")
         sock.settimeout(timeout)
         try:
             block = sock.recv(amount - len(out))
@@ -384,14 +389,14 @@ class LiveVideo:
                     "手机画面尺寸发生变化；首版请停止后重新开始投屏")
             if not 0 < length <= MAX_FRAME_BYTES:
                 raise VideoProbeError("scrcpy H.264 媒体包大小异常")
-            payload = _socket_read(video, length, self.stop_event)
+            payload = _socket_read(video, length, self.stop_event, adb_proc=self.adb_proc)
             if not pts & (1 << 62):
                 self._record_phone_packet()
             if pts & (1 << 62):
                 first_config = True
             elif not first_config and not (pts & (1 << 61)):
                 # Wait for codec initialization and a safe random-access frame.
-                header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
                 continue
             if first_config or (pts & (1 << 61)):
                 try:
@@ -399,7 +404,7 @@ class LiveVideo:
                     mux.stdin.flush()
                 except (OSError, BrokenPipeError, ValueError) as exc:
                     raise VideoProbeError("FFmpeg 已停止接收 H.264 数据") from exc
-            header = _socket_read(video, HEADER_BYTES, self.stop_event)
+            header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
         raise StreamStopped()
 
     def _run(self):
@@ -461,15 +466,15 @@ class LiveVideo:
                         control.close()
                         raise StreamStopped()
                     self.control_sock = control
-                name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event).split(b"\0", 1)[0]
-                codec = _socket_read(video, 4, self.stop_event)
+                name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event, adb_proc=self.adb_proc).split(b"\0", 1)[0]
+                codec = _socket_read(video, 4, self.stop_event, adb_proc=self.adb_proc)
                 if codec != b"h264":
                     raise VideoProbeError("scrcpy 未输出预期 H.264 编码")
-                header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
                 flags, width, height = struct.unpack(">III", header)
                 if not flags & 0x80000000 or not 0 < width <= 8192 or not 0 < height <= 8192:
                     raise VideoProbeError("scrcpy 视频初始化尺寸无效")
-                first_header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                first_header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
                 with self._touch_lock:
                     self.touch_size = (width, height)
                 self._phase_set("等待 FFmpeg 初始化段")
@@ -512,6 +517,8 @@ class LiveVideo:
                 has_init = False
                 init_started = time.monotonic()
                 while not self.stop_event.is_set():
+                    if adb_proc.poll() is not None:
+                        raise VideoProbeError("本轮 ADB/scrcpy 视频进程已退出")
                     if not has_init and time.monotonic() - init_started > 25:
                         raise VideoProbeError("FFmpeg 25 秒内未生成 MP4 初始化段，请检查编码器或屏幕状态")
                     # Avoid indefinitely blocking on a quiet/failed encoder,
