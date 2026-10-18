@@ -1,21 +1,21 @@
-# EasyADB · M1 多设备连接管理
+# EasyADB · M2 Web 实时控制（开发中）
 
-**M1 支持多设备档案、分组、截图与手动连接地址切换。** 分组可以设置内网 IP 前缀（如 `192.168.10.*`），设备手动登记的组网 IP `10.10.30.206` 自动派生内网 IP `192.168.10.206`。在设备卡片上点击组网/内网 IP 右侧的「⇄ 切换」，系统将**当前选择持久化至 SQLite**；后续连接、状态检查、截图仅使用所选地址，连接失败**不会自动换另一条线路**。切换只保存选择，需再点击「连接」才会执行 `adb connect`。已完全移除后台定时 ADB 检测、自动重连和浏览器定时刷新，旧数据库原本的自动重连设置不再生效。截图仍为手动刷新，不包含实时投屏、触控、脚本或 Agent。详见 [M1 文档](docs/M1.md)。
+**M2 以已完成的 M1 为基础，当前阶段正在实施 M2-00 技术验证，尚未实现实时投屏或远程控制。** 原多设备管理、组网/内网 IP 手动切换、按设备连接、首次配对和手动截图保持不变；不能自动切换线路或自动重连。首批新增「M2 能力预检」：用户手动连接设备后，点击按钮显式获取当前所选地址的 Android SDK、ABI、机型、屏幕信息。只读查询、不安装 scrcpy、不产生视频流，结果明确为 `stream_verified=false`。完整技术路线和验收清单见 [M2 开发记录](docs/M2.md)，已完成 M1 功能见 [M1 文档](docs/M1.md)。
 
 ## FNOS / Linux Docker 启动
 
-初次安装可用 `cp .env.example .env` 创建配置并填写随机 `EASYADB_TOKEN`、绑定 IP 和 Mihomo 认证代理；**已部署用户切勿覆盖现有 `.env`**。从旧版 MVP 升级到 M1 时，需要先手动拿到新版部署脚本：
+初次安装可用 `cp .env.example .env` 创建配置并填写随机 `EASYADB_TOKEN`、绑定 IP 和 Mihomo 认证代理；**已部署用户切勿覆盖现有 `.env`**。首次从 M1 / MVP 升级到 M2 时，需要先以原 Git 登录用户（不要对 git 使用 sudo）手动切到 M2，防止旧 M1 自动更新脚本再次切回 M1：
 
 ```sh
 cd /vol3/1000/software/EasyADB
 git fetch origin
-git switch --track origin/feat/m1-multi-device
-# 如果本地已存在分支，改用 git switch feat/m1-multi-device
-git pull --ff-only origin feat/m1-multi-device
+git switch --track origin/feat/m2-web-control
+# 如果本地已存在分支，改用 git switch feat/m2-web-control
+git pull --ff-only origin feat/m2-web-control
 sudo sh scripts/build-with-mihomo.sh
 ```
 
-此后仅需反复执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份执行 `git fetch origin`、切换至 `feat/m1-multi-device`、`git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 覆盖部署。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，原样保留。
+首次切换后仅需反复执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份执行 `git fetch origin`、切换至 `feat/m2-web-control`、`git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 覆盖部署。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，原样保留。
 
 ### 两种部署模式（默认 Mihomo；可显式关闭）
 
@@ -40,13 +40,13 @@ sudo sh scripts/build-with-mihomo.sh --no-proxy
 ```sh
 cd /vol3/1000/software/EasyADB
 git fetch origin
-git pull --ff-only origin feat/m1-multi-device
+git pull --ff-only origin feat/m2-web-control
 sudo sh scripts/build-with-mihomo.sh --no-proxy
 ```
 
 之后每次直接执行带 `--no-proxy` 的命令即可；自动 Git 更新后会透传这一参数，不会重新落回 Mihomo 模式。无效参数和 `--help` 均在 Git/Docker 操作前处理。
 
-M1 页面按分组折叠展示（未分组单独展示）；「＋ 添加分组」或分组「设置」可填写可选内网 IP 前缀，设备添加弹窗只需填写组网 IP、端口等。设备卡片在每个可用 IP 后有切换按钮；选中地址保存到数据库，并且只有点击「连接」才会发起该地址的 ADB 连接。修改分组前缀会动态更新派生内网 IP，若移除前缀则自动恢复选择组网 IP（但不进行连接）。
+继承的 M1 页面按分组折叠展示（未分组单独展示）；「＋ 添加分组」或分组「设置」可填写可选内网 IP 前缀，设备添加弹窗只需填写组网 IP、端口等。设备卡片在每个可用 IP 后有切换按钮；选中地址保存到数据库，并且只有点击「连接」才会发起该地址的 ADB 连接。修改分组前缀会动态更新派生内网 IP，若移除前缀则自动恢复选择组网 IP（但不进行连接）。
 
 浏览器访问 `http://<NAS-IP>:8765`。如果保留 `EASYADB_BIND_IP=127.0.0.1`，需在 NAS 本机打开 `http://127.0.0.1:8765` 或使用 SSH 隧道。页面的「访问密钥」填写 `.env` 中的 `EASYADB_TOKEN`。**不要将管理端口直接暴露到公网。**
 
@@ -54,12 +54,13 @@ M1 页面按分组折叠展示（未分组单独展示）；「＋ 添加分组�
 2. 首次连接在「＋ 添加设备」弹窗中展开「第一次连接？先配对无线调试」，填写手机 IPv4、**配对弹窗端口**及六位配对码。
 3. 在同一弹窗中填写名称、分组，以及手机无线调试主页显示的**连接端口**，保存设备。
 4. 在所属分组的设备卡片上点击「连接」「查看」；连接成功后右侧可手动「刷新截图」。
+5. M2-00 可在已连接的设备旁点击「M2 能力预检」，显式读取基础设备信息；预检并非实时视频或 scrcpy 兼容性证明。
 
 注意：配对端口和连接端口不是同一个。ADB 授权密钥持久化于 `./data/adb`，请勿提交或分享。手机系统无线调试关闭、端口改变后，应使用实际新端口重新连接。
 
 ## 通过现有 Mihomo 加速构建（proxy-net，含首次 BuildKit 引导）
 
-**M1 分支首次检出后，每次只需一个命令（自动拉取最新 M1）：**
+**M2 分支首次检出后，每次只需一个命令（自动拉取最新 M2）：**
 
 ```sh
 sudo sh scripts/build-with-mihomo.sh
@@ -109,7 +110,7 @@ EASYADB_BUILD_PROXY=http://用户名:URL编码后的密码@mihomo:7890
 更新代码后在项目目录执行：
 
 ```sh
-git pull --ff-only origin feat/m1-multi-device
+git pull --ff-only origin feat/m2-web-control
 sudo sh scripts/build-with-mihomo.sh
 ```
 
@@ -138,7 +139,7 @@ Docker Hub 的匿名令牌请求可能由宿主机的 Buildx CLI 发起，不完
 更新并重新运行：
 
 ```sh
-git pull --ff-only origin feat/m1-multi-device
+git pull --ff-only origin feat/m2-web-control
 sudo sh scripts/build-with-mihomo.sh
 ```
 
