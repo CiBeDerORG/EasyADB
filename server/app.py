@@ -24,6 +24,7 @@ from .store import DeviceStore
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
+from .m2_quality import resolve_live_quality
 from .m2_touch import InvalidTouch
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
@@ -452,8 +453,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现；当前只支持 MSE。"})
             return
         profile = initial.get("profile")
-        if profile not in ("baseline", "native"):
-            await websocket.send_json({"type": "error", "message": "视频档位无效"})
+        try:
+            if profile != "custom" and "quality" in initial:
+                raise ValueError("预设档位不可覆盖视频参数")
+            quality_settings = resolve_live_quality(profile, initial.get("quality"))
+        except ValueError as exc:
+            # Reject malformed, oversized/unsupported or arbitrary options
+            # BEFORE any ADB call, device lookup or new scrcpy worker.
+            await websocket.send_json({"type": "error", "message": str(exc)})
             return
         device = store.get(device_id)
         serial = selected_address(device) if device else None
@@ -473,7 +480,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 error = "当前选择的 IP 已改变，请重新开启投屏"
             else:
-                candidate = LiveVideo(serial, profile=profile)
+                # Keep the original two-argument constructor path for legacy
+                # presets, while custom parameters are explicit and validated.
+                candidate = (LiveVideo(serial, profile=profile, quality=quality_settings)
+                             if profile == "custom" else LiveVideo(serial, profile=profile))
                 if not live_registry.reserve(device_id, candidate):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
@@ -670,7 +680,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if kind == "init":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
-                    "player": "mse", "format": "fmp4", **payload
+                    "player": "mse", "format": "fmp4",
+                    "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
