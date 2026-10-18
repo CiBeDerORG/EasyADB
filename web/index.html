@@ -112,8 +112,22 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="m2LiveTraffic" class="status" role="status" hidden></div>
   <div id="m2LiveDiag" class="status" role="status" hidden></div>
   <p class="hint">当前播放引擎：MSE（WebCodecs 接口已预留，尚未实现、不可选择）。</p>
-  <label for="liveProfile">实时画面档位（需手动开始）</label><select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d"><option value="baseline">基础 · 最大边1600 / 8 Mbps / 30 FPS</option><option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option></select>
-  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。触摸控制必须单独点击「启用鼠标控制」，默认仅观看；当前支持单指点击/拖动、明确提交的 ASCII 文字和固定 Android 导航键；不支持中文输入法、音频或录制。</p>
+  <label for="liveProfile">实时画面画质（停止后才能调整）</label>
+  <select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d">
+   <option value="baseline">基础（默认）· 最大边1600 / 8 Mbps / 30 FPS</option>
+   <option value="economy">省流 · 最大边960 / 3 Mbps / 24 FPS</option>
+   <option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option>
+   <option value="custom">自定义（手动设置上限）</option>
+  </select>
+  <div id="liveCustomQuality" hidden>
+   <div class="buttons" style="align-items:end">
+    <div><label for="liveQualitySize">分辨率最大边</label><select id="liveQualitySize"><option value="960">960</option><option value="1280">1280</option><option value="1600" selected>1600</option><option value="0">不限制（原生）</option></select></div>
+    <div><label for="liveQualityBitrate">目标码率</label><select id="liveQualityBitrate"><option value="2000000">2 Mbps</option><option value="4000000">4 Mbps</option><option value="8000000" selected>8 Mbps</option><option value="12000000">12 Mbps</option><option value="16000000">16 Mbps</option></select></div>
+    <div><label for="liveQualityFps">最高帧率</label><select id="liveQualityFps"><option value="15">15 FPS</option><option value="24">24 FPS</option><option value="30" selected>30 FPS</option></select></div>
+   </div>
+   <p class="hint">以上是向手机编码器请求的上限，不保证实际编码分辨率、实时帧率或网络吞吐恒定达到该数值。</p>
+  </div>
+  <p class="hint">实时画质只在本轮手动开始时生效；调整档位不会中途热切换，也不会修改已有视频实验档位。 「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。触摸控制必须单独点击「启用鼠标控制」，默认仅观看；当前支持单指点击/拖动、明确提交的 ASCII 文字和固定 Android 导航键；不支持中文输入法、音频或录制。</p>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -175,7 +189,7 @@ let liveWS=null,livePlayer=null,liveDeviceId=null,liveReceivedError=false;
 let liveWsOpenedAt=0,liveLastBytesAt=0,liveFirstBytesAt=0,liveVideoFrameAt=0,liveVideoFrames=0,liveAdbCheckMs=null;
 let liveFrameCallbackId=null,liveTraffic=null,liveState='idle',liveSessionId=null;
 let liveTouch=null,liveTouchAvailable=false,liveTouchEnabled=false,liveTouchPending=false,liveTouchSize=null;
-let liveInputPending=null,liveInputSentText=null;
+let liveInputPending=null,liveInputSentText=null,liveQualitySummary='';
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -281,6 +295,9 @@ function render(){
  $('liveTextSend').disabled=!inputReady||!$('liveTextInput').value.length;
  for(const button of document.querySelectorAll('#liveNavButtons button[data-nav]'))button.disabled=!inputReady;
  $('liveProfile').disabled=loading||!!liveWS;
+ const isCustom=$('liveProfile').value==='custom';
+ $('liveCustomQuality').hidden=!isCustom;
+ for(const id of ['liveQualitySize','liveQualityBitrate','liveQualityFps'])$(id).disabled=loading||!!liveWS||!isCustom;
  $('m2Preflight').disabled=loading||!d||d.status!=='connected';
  $('m2VideoBaseline').disabled=loading||!d||d.status!=='connected';
  $('m2VideoNative').disabled=loading||!d||d.status!=='connected';
@@ -546,7 +563,7 @@ function stopLive(){
  liveWS=null;liveDeviceId=null;
  liveState='idle';liveSessionId=null;
  if(ws&&liveTraffic)updateLiveTraffic(true);
- liveInputPending=null;liveInputSentText=null;
+ liveInputPending=null;liveInputSentText=null;liveQualitySummary='';
  $('liveTextInput').value='';$('m2KeyInfo').hidden=true;$('m2KeyInfo').textContent='';
  const video=$('liveVideo');
  if(liveFrameCallbackId!==null&&typeof video.cancelVideoFrameCallback==='function'){
@@ -570,6 +587,12 @@ function startLive(){
  if(!caps.mse){liveStatus('当前浏览器缺少 MSE 支持，无法播放实时画面。','error');return;}
  clearShot();
  const id=d.id, serial=d.selected_serial, playerMode=EasyADBPlayers.active;
+ const qualityProfile=$('liveProfile').value;
+ const quality=qualityProfile==='custom'?{
+  max_size:Number($('liveQualitySize').value),
+  video_bit_rate:Number($('liveQualityBitrate').value),
+  max_fps:Number($('liveQualityFps').value)
+ }:null;
  const video=$('liveVideo');
  liveReceivedError=false;
  liveWsOpenedAt=0;liveLastBytesAt=0;liveFirstBytesAt=0;
@@ -589,7 +612,7 @@ function startLive(){
     if(state==='ready'){video.hidden=false;$('shot').hidden=true;$('placeholder').hidden=true;liveStatus('MSE 缓冲区已就绪，等待首帧解码…');}
     if(state==='playing'&&liveState!=='stopping'){
      liveSessionState('streaming');
-     liveStatus('实时画面播放中 · MSE / H.264','ok');
+     liveStatus('实时画面播放中 · MSE / H.264'+liveQualitySummary,'ok');
     }
     if(state==='autoplay-blocked')liveStatus('视频已接收，请点击画面以允许浏览器播放。');
    },
@@ -618,7 +641,8 @@ function startLive(){
   wsOpened=true;
   liveWsOpenedAt=performance.now();
   ws.send(JSON.stringify({
-   token:$('token').value.trim(),profile:$('liveProfile').value,
+   token:$('token').value.trim(),profile:qualityProfile,
+   ...(quality?{quality}:{}),
    selected_serial:serial,player:playerMode
   }));
  };
@@ -713,7 +737,14 @@ function startLive(){
        ws.send(JSON.stringify({...payload,session_id:liveSessionId}));
       }
      });
-     liveStatus('已获取视频信息：'+msg.width+'×'+msg.height+' · '+msg.mime);
+     const requested=msg.requested;
+     liveQualitySummary=(requested&&Number.isInteger(requested.max_size)&&
+       Number.isInteger(requested.video_bit_rate)&&Number.isInteger(requested.max_fps))
+       ?' · 实际编码 '+msg.width+'×'+msg.height+
+        ' / 请求上限 '+(requested.max_size===0?'原生':requested.max_size)+
+        ' / '+(requested.video_bit_rate/1000000)+' Mbps / ≤'+requested.max_fps+' FPS'
+       :' · 实际编码 '+msg.width+'×'+msg.height;
+     liveStatus('已获取视频信息'+liveQualitySummary+' · '+msg.mime);
      livePlayer.initialize(msg);
     }catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
    }else if(msg.type==='error'){
@@ -781,6 +812,7 @@ function sendLiveInput(kind,payload){
   return false;
  }
 }
+$('liveProfile').addEventListener('change',render);
 $('liveTextInput').addEventListener('input',render);
 $('liveTextForm').addEventListener('submit',event=>{
  event.preventDefault();
