@@ -299,6 +299,7 @@ class MultiView{
   const fitScreen=(width,height)=>{
    if(!(Number.isInteger(width)&&Number.isInteger(height)&&width>0&&height>0))return;
    screen.style.aspectRatio=width+' / '+height;
+   screen.setAttribute('data-orientation',width>height?'landscape':'portrait');
    screen.style.width='100%';
    box.style.width=(width+26)+'px';
   };
@@ -521,7 +522,7 @@ class MultiView{
     }
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
-     this.updatePicker();
+     refresh();this.updatePicker();
     }else if(m.type==='screen_power_notice'){
      mark(m.message||'已发送显示屏电源指令');
     }else if(m.type==='wake_accepted'){
