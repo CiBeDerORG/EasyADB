@@ -284,6 +284,8 @@ class LiveVideo:
         with self._touch_lock:
             if self.stop_event.is_set() or self.finished.is_set() or not self.control_sock or not self.touch_size:
                 raise InvalidTouch("当前投屏控制通道尚未就绪")
+            if not isinstance(payload, dict) or payload.get("session_id") != self.session_id:
+                raise InvalidTouch("触摸请求不属于当前视频会话")
             packet, next_pressed = encode_touch(payload, self.touch_size, self.touch_pressed)
             try:
                 self.control_sock.sendall(packet)
