@@ -336,6 +336,23 @@ function elem(tag,className,text){
 function action(label,handler,cls='secondary'){
  const b=elem('button',cls,label);b.type='button';b.addEventListener('click',handler);return b;
 }
+// Browser requests are async, while FastAPI's sync ADB endpoints execute in
+// separate server threadpool workers. Bound this batch to four concurrent
+// devices: a slow/offline phone must never block the other selected phones.
+async function runDeviceBatch(items,task,onProgress,parallelism=4){
+ const results=new Array(items.length);let next=0,completed=0;
+ const workers=Array.from({length:Math.min(parallelism,items.length)},async()=>{
+  while(next<items.length){
+   const index=next++; // claimed before the first await: one worker per device
+   try{results[index]={status:'fulfilled',value:await task(items[index])};}
+   catch(error){results[index]={status:'rejected',reason:error};}
+   completed++;
+   onProgress?.(completed,items.length,items[index],results[index]);
+  }
+ });
+ await Promise.all(workers);
+ return results;
+}
 function select(id){selected=id;render();}
 function render(){
  // Build a fresh set of per-device quality controls in the hidden staging
@@ -607,16 +624,24 @@ $('bulkConnect').addEventListener('click',async()=>{
  const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
- loading=true;render();let success=0;const failed=[];
- for(const d of candidates){
-  message('批量连接中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
-  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：已启动投屏，跳过');continue;}
-  try{
-   await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'});
-   success++;
-  }catch(e){failed.push(d.name+'：'+e.message);}
+ loading=true;render();
+ message('批量连接：'+candidates.length+' 台设备并发执行（最多同时 4 台）…');
+ let results;
+ try{
+  results=await runDeviceBatch(candidates,async d=>{
+   if(multiView&&multiView.isBusyFor(d.id))throw Error('已启动投屏，跳过');
+   // This existing per-device POST is a sync FastAPI endpoint, served by
+   // separate backend threads; DeviceManager locks ONLY this device's ID.
+   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
+  },(done,total)=>message('批量连接中：已完成 '+done+' / '+total+' 台（最多 4 台并发）'));
+ }finally{
+  await load(true);loading=false;render();
  }
- await load(true);loading=false;render();
+ let success=0;const failed=[];
+ results.forEach((result,i)=>{
+  if(result.status==='fulfilled')success++;
+  else failed.push(candidates[i].name+'：'+(result.reason?.message||'连接失败'));
+ });
  message('批量连接完成：成功 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
   (failed.length?'；'+failed.join('；'):'')+'。未自动切换线路。',failed.length?'error':'ok');
 });
