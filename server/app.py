@@ -41,11 +41,7 @@ manager = DeviceManager(store, adb)
 @asynccontextmanager
 async def lifespan(_app):
     store.initialize()
-    manager.start()
-    try:
-        yield
-    finally:
-        manager.stop()
+    yield
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -67,7 +63,11 @@ class PairTarget(Target):
 class DeviceInput(Target):
     name: str
     group_name: str = ""
-    auto_reconnect: bool = True
+
+
+
+class RouteInput(BaseModel):
+    route: str
 
 
 class GroupInput(BaseModel):
@@ -118,7 +118,6 @@ def clean_input(payload):
     return {
         "name": name, "group_name": group,
         "ip": serial.rsplit(":", 1)[0], "port": payload.port,
-        "auto_reconnect": payload.auto_reconnect,
     }
 
 
@@ -244,7 +243,7 @@ def update_device(device_id: str, payload: DeviceInput):
         raise HTTPException(409, str(exc)) from None
     if not updated:
         raise HTTPException(404, "找不到该设备")
-    if (original["ip"], original["port"], original["group_name"], original["lan_ip"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"]):
+    if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
         manager.clear(device_id)
     return manager.snapshot(updated)
 
@@ -257,6 +256,23 @@ def delete_device(device_id: str):
     manager.clear(device_id)
     # Deliberately don't adb disconnect: other clients may be using the target.
     return {"deleted": True}
+
+
+@app.put("/api/devices/{device_id}/route", dependencies=[Depends(authorize)])
+def select_device_route(device_id: str, payload: RouteInput):
+    # Use the same lock as connect, refresh and screenshot. Switching changes
+    # persisted preference only; no hidden adb connect or automatic fallback.
+    with manager._device_lock(device_id):
+        if payload.route not in ("mesh", "lan"):
+            raise HTTPException(400, "请选择组网 IP 或内网 IP")
+        try:
+            result = store.select_route(device_id, payload.route)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        if not result:
+            raise HTTPException(404, "找不到该设备")
+        manager.clear(device_id)
+        return manager.snapshot(result)
 
 
 @app.post("/api/devices/{device_id}/connect", dependencies=[Depends(authorize)])
