@@ -4,25 +4,33 @@
 
 ## FNOS / Linux Docker 启动
 
+初次安装可用 `cp .env.example .env` 创建配置并填写随机 `EASYADB_TOKEN`、绑定 IP 和 Mihomo 认证代理；**已部署用户切勿覆盖现有 `.env`**。从旧版 MVP 升级到 M1 时，需要先手动拿到新版部署脚本：
+
 ```sh
-cp .env.example .env
-# 编辑 .env：设置随机 EASYADB_TOKEN 和 Web 监听 IP。
-# 使用现有 proxy-net / Mihomo 构建，不使用 Host 网络：
+cd /vol3/1000/software/EasyADB
+git fetch origin
+git switch --track origin/feat/m1-multi-device
+# 如果本地已存在分支，改用 git switch feat/m1-multi-device
+git pull --ff-only origin feat/m1-multi-device
 sudo sh scripts/build-with-mihomo.sh
 ```
 
+此后仅需反复执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份执行 `git fetch origin`、切换至 `feat/m1-multi-device`、`git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 覆盖部署。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，原样保留。
+
+M1 页面设备按分组展示（分组可折叠，未分组单独展示）；点击设备列表标题栏「＋ 添加设备」弹出表单，编辑也使用同一弹窗，可选择已有分组或新建。
+
 浏览器访问 `http://<NAS-IP>:8765`。如果保留 `EASYADB_BIND_IP=127.0.0.1`，需在 NAS 本机打开 `http://127.0.0.1:8765` 或使用 SSH 隧道。页面的「访问密钥」填写 `.env` 中的 `EASYADB_TOKEN`。**不要将管理端口直接暴露到公网。**
 
-1. 手机进入「开发者选项 → 无线调试」，保证运行 EasyADB 的主机能通过现有网络访问手机的 IP 与端口。
-2. 首次连接先打开「使用配对码配对设备」。在 Web 页面填写手机 IPv4、**配对弹窗端口**及六位配对码，点击「执行配对」。
-3. 回到手机无线调试主页，把显示的**连接端口**填入页面，点击「连接并截图」。
-4. 连接成功后可手动点击「刷新截图」。
+1. 手机进入「开发者选项 → 无线调试」，保证 EasyADB 能通过现有网络访问手机 IP 和端口。
+2. 首次连接在「＋ 添加设备」弹窗中展开「第一次连接？先配对无线调试」，填写手机 IPv4、**配对弹窗端口**及六位配对码。
+3. 在同一弹窗中填写名称、分组，以及手机无线调试主页显示的**连接端口**，保存设备。
+4. 在所属分组的设备卡片上点击「连接」「查看」；连接成功后右侧可手动「刷新截图」。
 
 注意：配对端口和连接端口不是同一个。ADB 授权密钥持久化于 `./data/adb`，请勿提交或分享。手机系统无线调试关闭、端口改变后，应使用实际新端口重新连接。
 
 ## 通过现有 Mihomo 加速构建（proxy-net，含首次 BuildKit 引导）
 
-**只需运行一个命令：**
+**M1 分支首次检出后，每次只需一个命令（自动拉取最新 M1）：**
 
 ```sh
 sudo sh scripts/build-with-mihomo.sh
@@ -72,7 +80,7 @@ EASYADB_BUILD_PROXY=http://用户名:URL编码后的密码@mihomo:7890
 更新代码后在项目目录执行：
 
 ```sh
-git pull origin feat/adb-connect-preview
+git pull --ff-only origin feat/m1-multi-device
 sudo sh scripts/build-with-mihomo.sh
 ```
 
@@ -101,7 +109,7 @@ Docker Hub 的匿名令牌请求可能由宿主机的 Buildx CLI 发起，不完
 更新并重新运行：
 
 ```sh
-git pull --ff-only origin feat/adb-connect-preview
+git pull --ff-only origin feat/m1-multi-device
 sudo sh scripts/build-with-mihomo.sh
 ```
 
@@ -114,7 +122,7 @@ docker compose logs --tail=100 easyadb
 docker compose exec easyadb adb version
 ```
 
-如果通过 EasyTier 访问异地手机，请先检查子网代理/回程路由、手机所在 LAN 与防火墙。EasyTier 节点在线不代表 ADB 端口一定可达。此最小版本一次仅展示一台手机。
+如果通过 EasyTier 访问异地手机，请先检查子网代理/回程路由、手机所在 LAN 与防火墙。EasyTier 节点在线不代表 ADB 端口一定可达。M1 可保存并管理多台手机；当前截图区一次展示一台选中的手机。
 
 离线模拟测试（需有 Python、FastAPI、httpx 和 pytest）：
 
