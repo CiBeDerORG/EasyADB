@@ -89,6 +89,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2LiveInfo" class="status" role="status" aria-live="polite" hidden></div>
+  <div id="m2LiveDiag" class="status" role="status" hidden></div>
   <p class="hint">当前播放引擎：MSE（WebCodecs 接口已预留，尚未实现、不可选择）。</p>
   <label for="liveProfile">实时画面档位（需手动开始）</label><select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d"><option value="baseline">基础 · 最大边1600 / 8 Mbps / 30 FPS</option><option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option></select>
   <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。首版仅视频，无触屏/音频/录制。</p>
@@ -148,6 +149,8 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
 let liveWS=null,livePlayer=null,liveDeviceId=null,liveReceivedError=false;
+let liveWsOpenedAt=0,liveLastBytesAt=0,liveFirstBytesAt=0,liveVideoFrameAt=0,liveVideoFrames=0,liveAdbCheckMs=null;
+let liveFrameCallbackId=null;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -162,6 +165,7 @@ function clearShot(){
  $('m2PreflightInfo').hidden=true;$('m2PreflightInfo').textContent='';
  $('m2VideoInfo').hidden=true;$('m2VideoInfo').textContent='';
  $('m2LiveInfo').hidden=true;$('m2LiveInfo').textContent='';
+ $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
  if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
@@ -439,8 +443,38 @@ $('m2Preflight').addEventListener('click',async()=>{
 function liveStatus(text,kind=''){
  const el=$('m2LiveInfo');el.hidden=false;el.textContent=text;el.className='status '+kind;
 }
+// Session-only diagnostics: ages measure activity, not phone-screen content.
+function liveDiagnostic(diag){
+ const video=$('liveVideo');
+ const elapsed=age=>age===null||age===undefined?'尚未收到':(age/1000).toFixed(1)+'s';
+ const browserAge=liveLastBytesAt?performance.now()-liveLastBytesAt:null;
+ const frameAge=liveVideoFrameAt?performance.now()-liveVideoFrameAt:null;
+ let buffer='未建立';
+ try{
+  if(video.buffered&&video.buffered.length){
+   const last=video.buffered.length-1;
+   buffer=(video.buffered.end(last)-video.currentTime).toFixed(2)+'s';
+  }
+ }catch{buffer='读取失败';}
+ const info=$('m2LiveDiag');
+ info.hidden=false;
+ info.textContent='投屏诊断｜阶段：'+diag.stage+
+  '｜ADB 检查：'+(liveAdbCheckMs===null?'—':liveAdbCheckMs+'ms')+
+  '｜会话：'+elapsed(diag.elapsed_ms)+
+  '｜手机编码包：'+diag.phone_packets+' / 距今 '+elapsed(diag.phone_idle_ms)+
+  '｜FNOS MP4 输出：'+diag.mux_chunks+' / 距今 '+elapsed(diag.mux_idle_ms)+
+  '｜浏览器收包：'+elapsed(browserAge)+
+  '｜实际渲染：'+(liveVideoFrameAt?liveVideoFrames+' 帧 / 距今 '+elapsed(frameAge):'尚无渲染帧或浏览器不支持计数')+
+  '｜视频缓冲余量：'+buffer+
+  '｜readyState：'+video.readyState;
+}
 function stopLive(){
  const ws=liveWS;liveWS=null;liveDeviceId=null;
+ const video=$('liveVideo');
+ if(liveFrameCallbackId!==null&&typeof video.cancelVideoFrameCallback==='function'){
+  try{video.cancelVideoFrameCallback(liveFrameCallbackId);}catch{}
+ }
+ liveFrameCallbackId=null;
  if(ws){
   try{if(ws.readyState===WebSocket.OPEN)ws.send('stop');ws.close();}catch{}
   ws.onmessage=null;ws.onclose=null;ws.onerror=null;
@@ -460,6 +494,9 @@ function startLive(){
  const id=d.id, serial=d.selected_serial, playerMode=EasyADBPlayers.active;
  const video=$('liveVideo');
  liveReceivedError=false;
+ liveWsOpenedAt=0;liveLastBytesAt=0;liveFirstBytesAt=0;
+ liveVideoFrameAt=0;liveVideoFrames=0;liveAdbCheckMs=null;
+ $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
  try{
   livePlayer=EasyADBPlayers.create(playerMode,video,{
    onState:state=>{
@@ -474,11 +511,21 @@ function startLive(){
  const scheme=location.protocol==='https:'?'wss:':'ws:';
  const ws=new WebSocket(scheme+'//'+location.host+'/api/devices/'+encodeURIComponent(id)+'/m2/live');
  ws.binaryType='arraybuffer';liveWS=ws;liveDeviceId=id;
+ if(typeof video.requestVideoFrameCallback==='function'){
+  const countFrame=()=>{
+   if(liveWS!==ws)return;
+   liveVideoFrames++;
+   liveVideoFrameAt=performance.now();
+   liveFrameCallbackId=video.requestVideoFrameCallback(countFrame);
+  };
+  liveFrameCallbackId=video.requestVideoFrameCallback(countFrame);
+ }
  let wsOpened=false, receivedStarting=false;
  liveStatus('正在验证会话并启动手机端视频编码…');render();
  ws.onopen=()=>{
   if(liveWS!==ws)return;
   wsOpened=true;
+  liveWsOpenedAt=performance.now();
   ws.send(JSON.stringify({
    token:$('token').value.trim(),profile:$('liveProfile').value,
    selected_serial:serial,player:playerMode
@@ -488,7 +535,10 @@ function startLive(){
   if(liveWS!==ws)return;
   if(typeof e.data==='string'){
    let msg;try{msg=JSON.parse(e.data);}catch{liveReceivedError=true;liveStatus('视频服务端返回了无效消息。','error');stopLive();return;}
-   if(msg.type==='starting'){receivedStarting=true;liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…');}
+   if(msg.type==='starting'){
+    receivedStarting=true;liveAdbCheckMs=msg.adb_check_ms;
+    liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…（ADB 检查 '+liveAdbCheckMs+'ms）');
+   }else if(msg.type==='diagnostic'){liveDiagnostic(msg);}
    else if(msg.type==='init'){
     try{
      if(msg.player!==playerMode){throw Error('视频服务端播放器协议不匹配');}
@@ -498,6 +548,8 @@ function startLive(){
    }else if(msg.type==='error'){liveReceivedError=true;liveStatus(msg.message||'实时视频已失败','error');stopLive();}
    return;
   }
+  liveLastBytesAt=performance.now();
+  if(!liveFirstBytesAt)liveFirstBytesAt=liveLastBytesAt;
   try{livePlayer.append(new Uint8Array(e.data));}
   catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
  };
