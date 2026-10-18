@@ -29,8 +29,10 @@ jobs:
           node --check /tmp/easyadb-web.js
           node --check web/m2-player.js
           node --check web/m2-traffic.js
+          node --check web/m2-touch.js
           node tests/m2_player_contract.cjs
           node tests/m2_traffic_meter.cjs
+          node tests/m2_touch_contract.cjs
           grep -Fq 'sh scripts/update-m2.sh' scripts/build-with-mihomo.sh
           grep -Fxq 'TARGET_BRANCH=feat/m2-web-control' scripts/update-m2.sh
           test ! -e scripts/update-m1.sh
