@@ -21,13 +21,12 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
 .device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
-.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
-.group-header{display:flex;align-items:center;padding-right:9px}
-.group-header>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 13px;font-weight:700;list-style:none;flex:1;min-width:0}
-.group-edit{padding:5px 8px;font-size:12px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
-.group-header>summary::-webkit-details-marker{display:none}
-.group-header>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
-.device-group:not([open]) .group-header>summary:before{transform:rotate(-90deg)}
+.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden;position:relative}
+.device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
+.group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
+.device-group>summary::-webkit-details-marker{display:none}
+.device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
+.device-group:not([open])>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
 .group-items{display:grid;gap:9px;padding:0 10px 10px}
 .group-items .item{background:#101a2a}
@@ -151,13 +150,12 @@ function render(){
   const g=grouped.get(key),section=elem('details','device-group');
   section.open=groupOpen.has(key)?groupOpen.get(key):true;
   section.addEventListener('toggle',()=>groupOpen.set(key,section.open));
-  const header=elem('div','group-header'),summary=elem('summary');
+  const summary=elem('summary');
   summary.append(elem('span','',g.title));
   if(g.ip_prefix)summary.append(elem('span','group-prefix',g.ip_prefix));
   summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
-  header.append(summary);
-  if(key!=='ungrouped')header.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
-  section.append(header);
+  section.append(summary);
+  if(key!=='ungrouped')section.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
   const wrapper=elem('div','group-items');
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
@@ -189,8 +187,8 @@ function render(){
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
  try{
-  const data=await(await api('/api/devices')).json();
-  devices=data;loaded=true;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
+  const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
+  devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
  }catch(e){if(!quiet)message(e.message,'error');}
 }
@@ -209,7 +207,7 @@ function openModal(id=null){
  reset();const d=id?devices.find(x=>x.id===id):null;
  if(id&&!d)return;
  const options=$('groupNames');options.replaceChildren();
- for(const name of [...new Set(devices.map(x=>x.group_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN'))){
+ for(const name of groups.map(x=>x.name).sort((a,b)=>a.localeCompare(b,'zh-CN'))){
   const opt=document.createElement('option');opt.value=name;options.append(opt);
  }
  if(d){
@@ -220,6 +218,17 @@ function openModal(id=null){
  $('deviceDialog').showModal();$('name').focus();
 }
 function edit(id){openModal(id);}
+function openGroup(name=null){
+ if(loading||!loaded)return;
+ const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
+ editingGroup=g?g.name:null;
+ $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
+ $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
+ $('saveGroup').textContent=g?'保存修改':'保存分组';
+ if(g){$('groupName').value=g.name;$('groupPrefix').value=g.ip_prefix||'';}
+ $('groupDialog').showModal();$('groupName').focus();
+}
+function closeGroup(){if(!loading)$('groupDialog').close();}
 async function runConnect(id){
  if(loading)return;select(id);loading=true;render();message('正在连接所选设备…');
  try{
@@ -236,8 +245,23 @@ async function remove(id){
  catch(e){message(e.message,'error');}finally{loading=false;render();}
 }
 $('load').addEventListener('click',()=>load());
-$('token').addEventListener('input',()=>{loaded=false;devices=[];selected=null;clearShot();render();});
+$('token').addEventListener('input',()=>{loaded=false;devices=[];groups=[];selected=null;clearShot();render();});
 $('newDevice').addEventListener('click',()=>openModal());
+$('newGroup').addEventListener('click',()=>openGroup());
+$('closeGroup').addEventListener('click',closeGroup);
+$('cancelGroup').addEventListener('click',closeGroup);
+$('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('groupDialog').addEventListener('close',()=>{editingGroup=null;});
+$('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
+$('groupForm').addEventListener('submit',async ev=>{
+ ev.preventDefault();if(loading)return;loading=true;render();
+ const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
+ try{
+  const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
+  await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  $('groupDialog').close();clearShot();await load(true);message('分组设置已保存','ok');
+ }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+});
 $('closeDialog').addEventListener('click',closeModal);
 $('cancelDialog').addEventListener('click',closeModal);
 $('deviceDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
