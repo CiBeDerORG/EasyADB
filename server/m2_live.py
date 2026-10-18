@@ -25,6 +25,16 @@ MAX_QUEUE_ITEMS = 48
 MAX_QUEUE_WAIT = 3.0
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 
+# Shared by production and the FFmpeg -> MSE integration smoke test.
+# -c:v copy retains the phone's original H.264 encoded video.
+FFMPEG_MSE_ARGS = (
+    "-hide_banner", "-loglevel", "error", "-nostdin",
+    "-f", "h264", "-r", "30", "-i", "pipe:0",
+    "-map", "0:v:0", "-an", "-c:v", "copy",
+    "-movflags", "+empty_moov+default_base_moof+frag_every_frame",
+    "-f", "mp4", "pipe:1",
+)
+
 
 class StreamStopped(Exception):
     pass
@@ -223,13 +233,9 @@ class LiveVideo:
                 first_header = _socket_read(video, HEADER_BYTES, self.stop_event)
 
                 # No transcoding; only repack existing H264 bytes into fMP4.
-                mux = subprocess.Popen([
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-                    "-f", "h264", "-r", "30", "-i", "pipe:0",
-                    "-map", "0:v:0", "-an", "-c:v", "copy",
-                    "-movflags", "+empty_moov+default_base_moof+frag_every_frame",
-                    "-f", "mp4", "pipe:1",
-                ], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                mux = subprocess.Popen(
+                    ["ffmpeg", *FFMPEG_MSE_ARGS],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                    stderr=mux_log, bufsize=0)
                 with self._resource_lock:
                     self.ffmpeg_proc = mux
