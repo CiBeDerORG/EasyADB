@@ -199,7 +199,12 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "action(label+'：'+ip+':'+d.port,()=>switchRoute(d.id,route),'address-target')" in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html
         assert "⇄ 切换" not in html and "✓ 当前选择" not in html
-        assert "d.name+(d.model?'（'+d.model+'）':'')" in html
+        assert "title.append(elem('span','item-name',d.name))" in html
+        assert "if(d.model)title.append(elem('span','device-model','（'+d.model+'）'))" in html
+        assert "if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version))" in html
+        assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
+        assert ".device-android{" in html
+        assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         assert "low_latency:true" in multi_js
 
 

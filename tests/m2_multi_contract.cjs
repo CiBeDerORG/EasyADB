@@ -85,7 +85,11 @@ assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch delete
 assert.match(page,/action\(label\+'：'\+ip\+':'\+d\.port,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
-assert.match(page,/d\.name\+\(d\.model\?'（'\+d\.model\+'）':''\)/);
+assert.match(page,/title\.append\(elem\('span','item-name',d\.name\)\)/);
+assert.match(page,/if\(d\.model\)title\.append\(elem\('span','device-model','（'\+d\.model\+'）'\)\)/);
+assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-android','Android '\+d\.android_version\)\)/);
+assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
+assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));

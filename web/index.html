@@ -59,7 +59,12 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .management-bar label,.management-check{margin:0;display:inline-flex;align-items:center;gap:7px;color:#c5d9f6;cursor:pointer}
 .management-bar input,.management-check input{width:17px;height:17px;flex:none}
 .management-check{padding-top:2px;flex:none}.item-top .item-info{flex:1;min-width:0}
-.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
+.device-title{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:6px;min-width:0;margin-bottom:4px}
+.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}
+.device-model{font-size:12px;color:#aab8cd;overflow-wrap:anywhere}
+.device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
+.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
 .pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
 .pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
@@ -267,7 +272,11 @@ function render(){
    });
    managementLabel.append(managementCheck,elem('span','','选择'));
    const primary=elem('div','device-primary');
-   info.append(elem('div','item-name',d.name+(d.model?'（'+d.model+'）':'')));
+   const title=elem('div','device-title');
+   title.append(elem('span','item-name',d.name));
+   if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
+   if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
+   info.append(title);
    const addAddress=(label,route,ip)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row');
     const target=action(label+'：'+ip+':'+d.port,()=>switchRoute(d.id,route),'address-target');
@@ -288,7 +297,6 @@ function render(){
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
    top.append(managementLabel,info,elem('span','pill '+d.status,labels[d.status]||'待检查'));primary.append(top);
    if(d.status==='connected')primary.append(elem('div','muted','ADB 已连接：'+d.active_serial));
-   if(d.android_version)primary.append(elem('div','muted','Android '+d.android_version));
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
