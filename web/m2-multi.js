@@ -161,7 +161,7 @@ class MultiView{
      const stat=card.metrics.sample(video,performance.now(),{
       receiveMbps:traffic.mbps,queueBytes:pd.queueBytes
      });
-     stats.textContent=root.EasyADBMetrics.format(stat)+
+     stats.textContent=root.EasyADBMetrics.format(stat)+'｜提示：'+root.EasyADBMetrics.advice(stat)+
        '｜本路累计 '+root.EasyADBTraffic.size(traffic.totalBytes)+
        '｜本路本地进程 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+
        fmt(m.proc_rss_mib)+' MiB（仅 FFmpeg/ADB shell）';
