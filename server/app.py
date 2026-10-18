@@ -202,6 +202,19 @@ def update_group(group_name: str, payload: GroupInput):
     return result
 
 
+@app.delete("/api/groups/{group_name}", dependencies=[Depends(authorize)])
+def delete_group(group_name: str):
+    # Clear the cached route after the DB transaction has safely moved all
+    # members to the ungrouped category; never disconnect or delete a device.
+    result = store.delete_group(group_name)
+    if result is None:
+        raise HTTPException(404, "找不到该分组")
+    for device_id in result["device_ids"]:
+        manager.clear(device_id)
+    return {"deleted": True, "moved_count": result["moved_count"]}
+
+
+
 @app.post("/api/devices", status_code=201, dependencies=[Depends(authorize)])
 def create_device(payload: DeviceInput):
     data = clean_input(payload)
