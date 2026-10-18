@@ -766,7 +766,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             transceiver.setCodecPreferences(h264)
                             @pc.on("connectionstatechange")
                             async def on_peer_state():
-                                if pc.connectionState in ("failed", "closed"):
+                                # Closing our own PC is an expected part of a
+                                # manual stop, never a second teardown trigger.
+                                if not requested_stop.is_set() and pc.connectionState in ("failed", "closed"):
                                     requested_stop.set()
                                     await asyncio.to_thread(stream.stop)
                             await asyncio.wait_for(pc.setRemoteDescription(
@@ -1001,16 +1003,22 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
+        # Also suppress pc.close() connectionstatechange callbacks from trying
+        # to initiate a second teardown while the first cleanup is in progress.
+        requested_stop.set()
         if watchdog:
             watchdog.cancel()
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             await asyncio.to_thread(stream.stop)
+            peer_closed = True
             if pc is not None:
                 try:
                     await asyncio.wait_for(pc.close(), 10)
                 except (RuntimeError, OSError, asyncio.TimeoutError):
-                    pass
+                    # A peer that did not close is not an acknowledged clean
+                    # stop: keep this device's registry slot reserved.
+                    peer_closed = False
             if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
                 # SDP failure never launched ADB or allocated a worker resource.
                 stream.cleanup_complete = True
@@ -1021,6 +1029,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
             await asyncio.to_thread(stream.join, 20)
+            if not peer_closed and VIDEO_ENGINE == "webrtc":
+                stream.cleanup_complete = False
             if live_registry.is_cleaned(stream):
                 # Ended(cleanup_complete=true) only after all session-owned
                 # video/control/ADB resources were verifiably released.
