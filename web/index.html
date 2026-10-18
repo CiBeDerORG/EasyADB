@@ -22,10 +22,12 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
 .device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
 .device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
-.device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 13px;font-weight:700;list-style:none}
-.device-group>summary::-webkit-details-marker{display:none}
-.device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
-.device-group:not([open])>summary:before{transform:rotate(-90deg)}
+.group-header{display:flex;align-items:center;padding-right:9px}
+.group-header>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 13px;font-weight:700;list-style:none;flex:1;min-width:0}
+.group-edit{padding:5px 8px;font-size:12px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
+.group-header>summary::-webkit-details-marker{display:none}
+.group-header>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
+.device-group:not([open]) .group-header>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
 .group-items{display:grid;gap:9px;padding:0 10px 10px}
 .group-items .item{background:#101a2a}
@@ -65,7 +67,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
   </section>
   <section class="panel">
-   <div class="heading"><h2>设备列表</h2><div class="buttons" style="margin:0"><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
+   <div class="heading"><h2>设备列表</h2><div class="buttons" style="margin:0"><button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
    <div class="muted" id="count">尚未加载</div><div class="device-list" id="devices" style="margin-top:12px"></div>
   </section>
   <!-- Add/edit form is an accessible native modal, not a permanent sidebar. -->
@@ -84,7 +86,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <form id="form">
    <label for="name">设备名称</label><input id="name" required maxlength="64" placeholder="例如：小米 11">
    <label for="group">设备分组（可选）</label><input id="group" maxlength="64" list="groupNames" placeholder="选择已有分组，或输入新分组"><datalist id="groupNames"></datalist>
-   <div class="two"><div><label for="ip">手机 IPv4</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
+   <div class="two"><div><label for="ip">组网 IP（IPv4）</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
    <div><label for="port">ADB 连接端口</label><input id="port" required type="number" min="1" max="65535" placeholder="动态端口"></div></div>
    <label class="check"><input type="checkbox" id="auto" checked>断线后自动尝试连接（每轮检测）</label>
    <div class="status error modal-status" id="formMessage" role="alert" hidden></div>
@@ -99,10 +101,20 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   </details>
  </div>
 </dialog>
+<dialog class="device-dialog" id="groupDialog" aria-labelledby="groupFormTitle">
+ <div class="modal-head"><h2 id="groupFormTitle">添加分组</h2><button class="secondary" type="button" id="closeGroup" aria-label="关闭分组弹窗">×</button></div>
+ <div class="modal-body"><form id="groupForm">
+  <label for="groupName">分组名称</label><input id="groupName" required maxlength="64" placeholder="家里 OpenWrt">
+  <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
+  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。优先内网 IP，失败后回退组网 IP；留空仅使用组网 IP。</p>
+  <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
+  <div class="modal-actions"><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
+ </form></div>
+</dialog>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],selected=null,editing=null,loading=false,loaded=false,shotUrl=null;
+let devices=[],groups=[],selected=null,editing=null,editingGroup=null,loading=false,loaded=false,shotUrl=null;
 const groupOpen=new Map();
 const labels={connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
