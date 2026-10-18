@@ -723,9 +723,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         last_browser_ack = time.monotonic()
                         continue
                     if kind == "wake":
-                        if set(message) != {"type", "session_id"} or not touch_ready.is_set():
+                        if set(message) != {"type", "session_id"}:
                             await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
-                                                       "message": "当前画面控制通道尚未就绪"})
+                                                       "message": "唤醒请求字段无效"})
                             continue
                         if experiment:
                             await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
