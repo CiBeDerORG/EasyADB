@@ -26,7 +26,7 @@ from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
 from .m2_quality import resolve_live_quality
 from .m2_touch import InvalidTouch
-from .display_lab import DisplayLab, LabError, display_ids
+from .display_lab import DisplayLab, LabError
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -283,6 +283,8 @@ def create_group(payload: GroupInput):
 def update_group(group_name: str, payload: GroupInput):
     name, prefix = clean_group(payload)
     old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
+    if any(display_lab.has_pending(id) for id in old_members):
+        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
     try:
         result = store.update_group(group_name, name, prefix)
     except sqlite3.IntegrityError:
@@ -301,6 +303,9 @@ def update_group(group_name: str, payload: GroupInput):
 def delete_group(group_name: str):
     # Clear the cached route after the DB transaction has safely moved all
     # members to the ungrouped category; never disconnect or delete a device.
+    if any(display_lab.has_pending(d["id"]) for d in store.list()
+           if d["group_name"] == group_name):
+        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
     result = store.delete_group(group_name)
     if result is None:
         raise HTTPException(404, "找不到该分组")
@@ -656,6 +661,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
+        if experiment:
+            display_lab._log(device_id, "A1" if experiment["mode"] == "new" else
+                             "A2" if experiment["mode"] == "new_settings" else "B3",
+                             serial, "启动实验视频：" + str(experiment))
         await asyncio.wait_for(websocket.send_json({
             "type": "starting", "session_id": stream.session_id,
             "selected_serial": serial, "adb_check_ms": adb_check_ms
@@ -844,6 +853,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 if payload.get("control_available"):
                     touch_ready.set()
             elif kind == "lab_notice":
+                display_lab._log(device_id, "虚拟屏幕结果", serial, payload.get("message", "无"))
                 await asyncio.wait_for(websocket.send_json({
                     "type": "lab_notice", "session_id": stream.session_id, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
