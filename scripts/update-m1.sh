@@ -6,8 +6,9 @@ set -eu
 TARGET_BRANCH=feat/m1-multi-device
 
 git_as_owner() {
-  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    sudo -H -u "$SUDO_USER" git "$@"
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
+    # SUDO_UID also works if the login name is entirely numeric.
+    sudo -H -u "#${SUDO_UID}" git "$@"
   else
     git "$@"
   fi
