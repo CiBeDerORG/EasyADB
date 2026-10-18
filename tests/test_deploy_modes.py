@@ -19,8 +19,8 @@ def setup_fake_deploy(tmp_path):
     shutil.copyfile(DIRECT_COMPOSE, project / "compose.no-proxy.yaml")
     # This deliberately invalid entry must NEVER be read in direct mode.
     (project / ".env").write_text("EASYADB_BUILD_PROXY=not-a-valid-Mihomo-URL\n")
-    (scripts / "update-m1.sh").write_text(
-        '#!/bin/sh\nprintf "update-m1\\n" >> "$EASYADB_TEST_LOG"\n'
+    (scripts / "update-m2.sh").write_text(
+        '#!/bin/sh\nprintf "update-m2\\n" >> "$EASYADB_TEST_LOG"\n'
     )
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -58,7 +58,7 @@ def test_no_proxy_mode_survives_auto_update_and_skips_mihomo(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     calls = (tmp_path / "calls.log").read_text().splitlines()
     assert calls == [
-        "update-m1",
+        "update-m2",
         "compose version",
         "build --progress=plain --tag easyadb:local .",
         "compose -f compose.no-proxy.yaml up -d --no-build",
@@ -72,7 +72,7 @@ def test_no_proxy_direct_reentry_has_no_extra_update(tmp_path):
     env["EASYADB_UPDATED"] = "1"
     result = invoke(project, env, "--no-proxy")
     assert result.returncode == 0, result.stderr
-    assert "update-m1" not in (tmp_path / "calls.log").read_text()
+    assert "update-m2" not in (tmp_path / "calls.log").read_text()
 
 
 def test_unsupported_options_and_help_never_touch_git_or_docker(tmp_path):
@@ -144,7 +144,7 @@ exit 74
     result = invoke(project, env)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = (tmp_path / "calls.log").read_text().splitlines()
-    assert calls[0] == "update-m1"
+    assert calls[0] == "update-m2"
     assert "network inspect proxy-net" in calls
     assert "buildx version" in calls
     assert "image inspect moby/buildkit:buildx-stable-1" in calls
