@@ -1,5 +1,6 @@
-"""M1 regression tests use a fake ADB transport; no Android device is required."""
+"""M1: CRUD, persisted manual route and no background ADB work."""
 import importlib
+import sqlite3
 import subprocess
 
 from fastapi.testclient import TestClient
@@ -16,8 +17,7 @@ def setup_app(monkeypatch, tmp_path):
     module = importlib.import_module("server.app")
     module.store = DeviceStore(str(tmp_path / "devices.sqlite3"))
     module.manager = DeviceManager(module.store, module.adb)
-    online = set()
-    calls = []
+    online, calls = set(), []
 
     def run(args, **kwargs):
         calls.append(args)
@@ -26,13 +26,12 @@ def setup_app(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, "connected\n", "")
         if "get-state" in args:
             serial = args[2]
-            return subprocess.CompletedProcess(
-                args, 0 if serial in online else 1,
-                "device\n" if serial in online else "", ""
-            )
+            success = serial in online
+            return subprocess.CompletedProcess(args, 0 if success else 1,
+                                               "device\n" if success else "", "")
         if "getprop" in args:
-            value = "Test Model\n" if args[-1] == "ro.product.model" else "14\n"
-            return subprocess.CompletedProcess(args, 0, value, "")
+            return subprocess.CompletedProcess(args, 0,
+                        "Test Model\n" if args[-1] == "ro.product.model" else "14\n", "")
         if "screencap" in args:
             return subprocess.CompletedProcess(args, 0, PNG + args[2].encode(), b"")
         raise AssertionError(args)
@@ -41,84 +40,77 @@ def setup_app(monkeypatch, tmp_path):
     return module, online, calls
 
 
-def device(ip, port, name, auto=False, group=""):
-    return {"name": name, "group_name": group, "ip": ip,
-            "port": port, "auto_reconnect": auto}
+def device(ip, port, name, group=""):
+    return {"name": name, "group_name": group, "ip": ip, "port": port}
 
 
-def test_multi_device_crud_and_scoped_screenshots(monkeypatch, tmp_path):
-    module, online, calls = setup_app(monkeypatch, tmp_path)
-    with TestClient(module.app) as client:
-        module.manager.stop()  # deterministic explicit probes in this test
+def test_multi_device_crud_and_manual_connection(monkeypatch, tmp_path):
+    mod, online, calls = setup_app(monkeypatch, tmp_path)
+    with TestClient(mod.app) as client:
+        assert not calls, "Starting the service must not check or reconnect ADB devices"
         assert client.get("/api/devices").status_code == 401
-        invalid = client.post("/api/devices", headers=AUTH,
-                              json=device("not-an-ip", 5555, "invalid"))
-        assert invalid.status_code == 400
-        empty_name = client.post("/api/devices", headers=AUTH,
-                                 json=device("192.168.1.3", 5555, "  "))
-        assert empty_name.status_code == 400
-
+        assert client.post("/api/devices", headers=AUTH,
+                           json=device("invalid", 5555, "Broken")).status_code == 400
+        assert client.post("/api/devices", headers=AUTH,
+                           json=device("10.0.0.3", 5555, "  ")).status_code == 400
         a = client.post("/api/devices", headers=AUTH,
-                        json=device("192.168.1.11", 37123, "Phone A", group="Home"))
+                        json=device("10.0.0.11", 5555, "Phone A", "Home"))
         b = client.post("/api/devices", headers=AUTH,
-                        json=device("192.168.1.12", 37124, "Phone B"))
+                        json=device("10.0.0.12", 5556, "Phone B"))
         assert a.status_code == b.status_code == 201
         aid, bid = a.json()["id"], b.json()["id"]
-        assert aid != bid
-        assert len(client.get("/api/devices", headers=AUTH).json()) == 2
+        assert a.json()["selected_route"] == "mesh"
+        assert a.json()["selected_serial"] == "10.0.0.11:5555"
+        assert "auto_reconnect" not in a.json()
+        assert not calls, "CRUD and list must not send ADB commands"
         assert client.post("/api/devices", headers=AUTH,
-                           json=device("192.168.1.11", 37123, "Duplicate")).status_code == 409
+                           json=device("10.0.0.11", 5555, "Dup")).status_code == 409
         assert client.get(f"/api/devices/{aid}/screenshot", headers=AUTH).status_code == 409
 
         assert client.post(f"/api/devices/{aid}/connect", headers=AUTH).json()["status"] == "connected"
         assert client.post(f"/api/devices/{bid}/connect", headers=AUTH).json()["status"] == "connected"
-        imga = client.get(f"/api/devices/{aid}/screenshot", headers=AUTH)
-        imgb = client.get(f"/api/devices/{bid}/screenshot", headers=AUTH)
-        assert imga.content == PNG + b"192.168.1.11:37123"
-        assert imgb.content == PNG + b"192.168.1.12:37124"
-        assert imga.content != imgb.content
-        assert any(call[1:3] == ["-s", "192.168.1.11:37123"] for call in calls)
-        assert any(call[1:3] == ["-s", "192.168.1.12:37124"] for call in calls)
+        assert client.get(f"/api/devices/{aid}/screenshot", headers=AUTH).content == PNG + b"10.0.0.11:5555"
+        assert client.get(f"/api/devices/{bid}/screenshot", headers=AUTH).content == PNG + b"10.0.0.12:5556"
+        assert [c[2] for c in calls if c[1] == "connect"] == ["10.0.0.11:5555", "10.0.0.12:5556"]
 
-        # Editing preserves the logical ID, but a new endpoint clears cached metadata.
-        edit = client.put(f"/api/devices/{aid}", headers=AUTH,
-                          json=device("192.168.1.11", 40000, "Renamed", group="Office"))
-        assert edit.status_code == 200
-        assert edit.json()["id"] == aid
-        assert edit.json()["model"] is None
-        assert edit.json()["status"] == "checking"
+        updated = client.put(f"/api/devices/{aid}", headers=AUTH,
+                             json=device("10.0.0.11", 6000, "Renamed", "Home"))
+        assert updated.status_code == 200
+        assert updated.json()["id"] == aid
+        assert updated.json()["status"] == "idle"
+        assert client.get(f"/api/devices/{aid}/screenshot", headers=AUTH).status_code == 409
         assert client.put(f"/api/devices/{bid}", headers=AUTH,
-                          json=device("192.168.1.11", 40000, "Collision")).status_code == 409
-        assert client.delete(f"/api/devices/{bid}", headers=AUTH).json()["deleted"] is True
+                          json=device("10.0.0.11", 6000, "Collision")).status_code == 409
+        assert client.delete(f"/api/devices/{bid}", headers=AUTH).json() == {"deleted": True}
         assert client.get(f"/api/devices/{bid}/screenshot", headers=AUTH).status_code == 404
         assert len(client.get("/api/devices", headers=AUTH).json()) == 1
 
-    # Opening a new store against the same path simulates service restart.
     reopened = DeviceStore(str(tmp_path / "devices.sqlite3"))
-    assert [(x["id"], x["name"], x["port"]) for x in reopened.list()] == [
-        (aid, "Renamed", 40000)
+    reopened.initialize()
+    assert [(d["id"], d["name"], d["port"]) for d in reopened.list()] == [
+        (aid, "Renamed", 6000)
     ]
 
 
-def test_auto_reconnect_and_disabled_option(monkeypatch, tmp_path):
-    module, online, calls = setup_app(monkeypatch, tmp_path)
-    with TestClient(module.app) as client:
-        module.manager.stop()
-        a = client.post("/api/devices", headers=AUTH,
-                        json=device("10.1.1.2", 5555, "Auto", auto=True)).json()
-        b = client.post("/api/devices", headers=AUTH,
-                        json=device("10.1.1.3", 5556, "Manual", auto=False)).json()
-        results = client.post("/api/devices/refresh", headers=AUTH).json()
-        assert {d["id"]: d["status"] for d in results} == {
-            a["id"]: "connected", b["id"]: "disconnected"
-        }
-        assert "10.1.1.2:5555" in online
-        assert "10.1.1.3:5556" not in online
-        assert sum(call[1:2] == ["connect"] for call in calls) == 1
-        online.clear()  # network dropped
-        refreshed = client.post(f'/api/devices/{a["id"]}/refresh', headers=AUTH).json()
-        assert refreshed["status"] == "connected"
-        assert refreshed["model"] == "Test Model"
-        assert refreshed["android_version"] == "14"
-        assert refreshed["last_seen"] is not None
-        assert sum(call[1:2] == ["connect"] for call in calls) == 2
+def test_old_auto_reconnect_data_is_ignored(monkeypatch, tmp_path):
+    dbfile = tmp_path / "devices.sqlite3"
+    store = DeviceStore(str(dbfile))
+    store.initialize()
+    with sqlite3.connect(dbfile) as db:
+        db.execute("""INSERT INTO devices
+                   (id,name,group_name,ip,port,auto_reconnect)
+                   VALUES ('old','Previously Auto','','10.10.30.206',5555,1)""")
+    mod, online, calls = setup_app(monkeypatch, tmp_path)
+    with TestClient(mod.app) as client:
+        assert not calls, "A legacy auto_reconnect=1 must NEVER restart polling"
+        d = client.get("/api/devices", headers=AUTH).json()[0]
+        assert d["selected_route"] == "mesh"
+        assert d["selected_serial"] == "10.10.30.206:5555"
+        assert d["status"] == "idle"
+        assert "auto_reconnect" not in d
+        assert not calls
+        checked = client.post("/api/devices/refresh", headers=AUTH).json()
+        assert checked[0]["status"] == "disconnected"
+        assert not any(c[1] == "connect" for c in calls), "Explicit status checking must not reconnect"
+        assert client.post("/api/devices/old/connect", headers=AUTH).json()["status"] == "connected"
+        assert [c[2] for c in calls if c[1] == "connect"] == ["10.10.30.206:5555"]
