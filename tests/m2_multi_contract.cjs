@@ -77,6 +77,14 @@ assert.match(page,/newGroup'\)\.disabled=loading\|\|!loaded/);
 assert.doesNotMatch(page,/请先停止全部同屏，再/,'no global session lock for CRUD');
 assert.match(page,/multiView\.isBusyFor\(id\)/,'mutations guard their own device only');
 assert.match(page,/id="bulkSelectAll"/);
+const toolbar=page.match(/<div class="management-bar"[^>]*>[\s\S]*?<\/div>/)?.[0];
+assert(toolbar,'batch buttons share the management toolbar');
+const order=['bulkSelectAll','bulkConnect','bulkDelete','multiStart','multiStop','refreshAll']
+ .map(id=>toolbar.indexOf('id="'+id+'"'));
+assert(order.every(index=>index>=0)&&order.every((index,i)=>!i||index>order[i-1]),
+ 'the three projection/check buttons follow batch delete');
+assert.equal((page.match(/id="multiStart"/g)||[]).length,1);
+assert.equal((page.match(/id="multiStop"/g)||[]).length,1);
 assert.match(page,/id="bulkConnect"/);
 assert.match(page,/id="bulkDelete"/);
 assert.match(page,/const managementSelected=new Set\(\)/);
@@ -162,6 +170,20 @@ assert.match(liveStatus(1),/未开启/);
 select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
 assert.match(startButton.textContent,/待新增 1/);
+// Neither the select-all control nor devices with failed/disconnected ADB
+// may inflate the stream count.
+batchSelected.add('bulkSelectAll');
+batchSelected.add('id-2');batchSelected.add('id-3');
+devices[1].status='disconnected';devices[1].active_serial=null;
+devices[2].status='error';devices[2].connect_failed=true;devices[2].active_serial=null;
+multi.updatePicker();
+assert.match(startButton.textContent,/待新增 1 台/,'exclude select-all and unavailable ADB');
+assert.equal(startButton.disabled,false,'one ready device is launchable');
+batchSelected.delete('bulkSelectAll');batchSelected.delete('id-2');batchSelected.delete('id-3');
+devices[1].status='connected';devices[1].active_serial=devices[1].selected_serial;
+devices[2].status='connected';devices[2].connect_failed=false;devices[2].active_serial=devices[2].selected_serial;
+multi.updatePicker();
+assert.match(startButton.textContent,/待新增 1 台/);
 assert.equal(batchSelected.has('id-2'),false);
 assert.equal(multi.getChoice('id-1').profile,'custom');
 assert.equal(quality(0,'max_size').value,'960');

@@ -83,9 +83,13 @@ class MultiView{
   }catch(error){this.recordCheck(key,'检测失败：'+error.message);}
   finally{this.checking.delete(key);this.updatePicker();}
  }
+ isAdbReady(d){
+  return d.status==='connected'&&d.connect_failed!==true&&
+   Boolean(d.selected_serial)&&d.active_serial===d.selected_serial;
+ }
  updatePicker(notify=true){
   const devices=this.getDevices()||[];
-  const ids=new Set(devices.filter(d=>d.status==='connected'&&d.active_serial===d.selected_serial).map(d=>d.id));
+  const ids=new Set(devices.filter(d=>this.isAdbReady(d)).map(d=>d.id));
   for(const id of this.selected)if(!ids.has(id)&&!this.cards.has(id))this.selected.delete(id);
   this.picker.replaceChildren();
   for(const d of devices){
@@ -156,15 +160,18 @@ class MultiView{
   // Existing cards, including pending stop/cleanup, retain their server slots.
   // Start may append ONLY newly checked devices, up to the remaining capacity.
   const picked=this.getBatchSelection?this.getBatchSelection():this.selected;
-  const available=[...picked].filter(id=>ids.has(id)&&!this.cards.has(id));
+  // Count saved devices only; select-all is a checkbox, never a stream target.
+  // Ignore disconnected/failed ADB and existing/queued sessions.
+  const selectedDevices=devices.filter(d=>picked.has(d.id));
+  const available=selectedDevices.filter(d=>this.isAdbReady(d)&&!this.isBusyFor(d.id));
   const remaining=MAX_DEVICES-this.cards.size;
   this.startButton.disabled=this.opening||this.getManagementBusy?.()||available.length<1||
-   available.length>remaining||available.some(id=>this.checking.has(id));
-  const selectedRunning=[...picked].filter(id=>this.isBusyFor(id));
+   available.length>remaining||available.some(d=>this.checking.has(d.id));
+  const selectedRunning=selectedDevices.filter(d=>this.isBusyFor(d.id));
   this.stopButton.disabled=selectedRunning.length===0;
   this.stopButton.textContent='批量停止投屏（'+selectedRunning.length+' 台）';
   this.startButton.textContent=(this.cards.size?'批量追加投屏':'批量投屏')+
-   '（待新增 '+available.length+' / 剩余 '+remaining+' 台）';
+   '（待新增 '+available.length+' 台 / 剩余 '+remaining+' 路）';
   this.grid.setAttribute('data-count',String(this.cards.size));
   if(notify)this.onChange();
  }
@@ -209,9 +216,8 @@ class MultiView{
  start(){
   const ds=this.getDevices()||[];
   const picked=this.getBatchSelection?this.getBatchSelection():this.selected;
-  const connected=new Set(ds.filter(d=>d.status==='connected'&&d.active_serial===d.selected_serial).map(d=>d.id));
-  const additions=[...picked].filter(id=>connected.has(id)&&!this.isBusyFor(id))
-   .map(id=>ds.find(d=>d.id===id));
+  // Displayed count and the actual launch queue share one ADB predicate.
+  const additions=ds.filter(d=>picked.has(d.id)&&this.isAdbReady(d)&&!this.isBusyFor(d.id));
   if(!additions.length)return false;
   return this._startDevices(additions);
  }
@@ -219,8 +225,7 @@ class MultiView{
   if(this.opening||this.getManagementBusy?.())return false;
   if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
      additions.length>MAX_DEVICES-this.cards.size||
-     additions.some(d=>!d||this.isBusyFor(d.id)||d.status!=='connected'||
-      !d.selected_serial||d.active_serial!==d.selected_serial||this.checking.has(d.id))){
+     additions.some(d=>!d||this.isBusyFor(d.id)||!this.isAdbReady(d)||this.checking.has(d.id))){
    this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多四路）。',true);
    this.updatePicker();return false;
   }

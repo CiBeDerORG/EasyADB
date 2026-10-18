@@ -140,11 +140,8 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
     <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载设备</button></div></div>
     <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p></div>
    <div class="buttons" style="margin:0">
-    <button type="button" id="multiStart" disabled>批量投屏</button>
-    <button type="button" class="danger" id="multiStop" disabled>批量停止投屏</button>
     <button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button>
     <button id="newDevice" type="button" disabled>＋ 添加设备</button>
-    <button class="secondary" id="refreshAll" disabled>批量检查状态</button>
    </div>
   </div>
   <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
@@ -154,6 +151,9 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <span class="muted" id="bulkCount" role="status" aria-live="polite">已选 0 台</span>
    <button type="button" class="secondary" id="bulkConnect" disabled>批量连接</button>
    <button type="button" class="danger" id="bulkDelete" disabled>批量删除</button>
+    <button type="button" id="multiStart" disabled>批量投屏</button>
+    <button type="button" class="danger" id="multiStop" disabled>批量停止投屏</button>
+    <button class="secondary" id="refreshAll" disabled>批量检查状态</button>
   </div>
   <div class="device-list" id="devices" style="margin-top:12px"></div>
   <div id="multiPicker" hidden aria-hidden="true"></div>
@@ -357,8 +357,11 @@ function render(){
  $('newGroup').disabled=loading||!loaded;
  const candidates=devices.filter(d=>managementSelected.has(d.id));
  const eligible=candidates.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
- $('bulkCount').textContent='已选 '+candidates.length+' 台'+
-  (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量操作':'');
+ const adbReady=candidates.filter(d=>d.status==='connected'&&d.connect_failed!==true&&
+  Boolean(d.selected_serial)&&d.active_serial===d.selected_serial);
+ $('bulkCount').textContent='已选设备 '+candidates.length+' 台 · ADB 可用 '+adbReady.length+' 台'+
+  (candidates.length-adbReady.length?' · 未连接/连接失败 '+(candidates.length-adbReady.length)+' 台':'')+
+  (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量管理':'');
  $('bulkConnect').disabled=loading||!loaded||!eligible.length;
  $('bulkDelete').disabled=loading||!loaded||!eligible.length;
  const all=$('bulkSelectAll');
