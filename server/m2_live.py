@@ -19,7 +19,7 @@ from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
 from .m2_quality import resolve_live_quality
 from .m2_video_probe import (
-    DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, PROFILES, SERVER_FILE,
+    DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
 )
 
