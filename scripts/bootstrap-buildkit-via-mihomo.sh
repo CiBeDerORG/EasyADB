@@ -48,11 +48,22 @@ esac
 echo "[1/5] Checking Mihomo proxy from FNOS host ($HOST_PROXY) ..."
 HTTP_CODE="$(curl -sS --connect-timeout 8 --max-time 25 --noproxy '' \
   --proxy "$HOST_PROXY" -o /dev/null -w '%{http_code}' https://registry-1.docker.io/v2/)" || {
-    echo 'ERROR: cannot reach Docker Hub through Mihomo. Check mixed-port: 7890, allow-lan: true and bind-address: "*".' >&2
+    case "$HTTP_CODE" in
+      407)
+        echo 'ERROR: HTTP 407 Proxy Authentication Required: Mihomo (or its upstream) requires proxy credentials.' >&2
+        echo 'The external-controller-cors trusted Web origins (port 7012) do NOT configure mixed-port 7890 authentication.' >&2
+        echo 'Check authentication / skip-auth-prefixes in the active Mihomo configuration.' >&2
+        echo 'If intentionally allowing passwordless access for trusted proxy-net, add its actual CIDR to skip-auth-prefixes, then reload Mihomo.' >&2
+        ;;
+      *)
+        echo "ERROR: cannot reach Docker Hub through Mihomo (curl HTTP $HTTP_CODE). Check proxy reachability and the active upstream node." >&2
+        ;;
+    esac
     exit 1
   }
 case "$HTTP_CODE" in
   200|401) echo "Docker Registry is reachable (HTTP $HTTP_CODE)." ;;
+  407) echo 'ERROR: HTTP 407: Mihomo (or its upstream) requires proxy authentication.' >&2; exit 1 ;;
   *) echo "ERROR: unexpected Docker Registry HTTP $HTTP_CODE via Mihomo." >&2; exit 1 ;;
 esac
 
