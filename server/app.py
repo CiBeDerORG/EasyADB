@@ -181,6 +181,12 @@ def m2_player_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-traffic.js")
+def m2_traffic_script():
+    return FileResponse(ROOT / "web" / "m2-traffic.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 def pair_at(ip, port, code):
     dest = address(ip, port)
     if not re.fullmatch(r"\d{6}", code):
@@ -451,13 +457,19 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 stream.stop()
 
         receiver = asyncio.create_task(receive_commands())
+        # Transport payload-only accounting for THIS authenticated live session.
+        # Excludes HTTP and network protocol framing/headers.
+        ws_video_bytes = 0
+        ws_video_chunks = 0
         next_diagnostic = 0.0
         while True:
             # Diagnostics exist only during this explicitly opened WebSocket;
             # metadata only; no extra ADB work or phone-screen bytes in logs.
             now = time.monotonic()
             if now >= next_diagnostic and not stream.finished.is_set():
-                await websocket.send_json({"type": "diagnostic", **stream.diagnostics()})
+                await websocket.send_json({"type": "diagnostic", **stream.diagnostics(),
+                                           "ws_video_bytes": ws_video_bytes,
+                                           "ws_video_chunks": ws_video_chunks})
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
                 break
@@ -473,6 +485,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 await websocket.send_json({"type": "init", "player": "mse", "format": "fmp4", **payload})
             elif kind == "bytes":
                 await websocket.send_bytes(payload)
+                ws_video_bytes += len(payload)
+                ws_video_chunks += 1
             elif kind == "error":
                 await websocket.send_json({"type": "error", "message": payload})
                 break
