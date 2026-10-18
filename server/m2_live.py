@@ -18,6 +18,7 @@ from pathlib import Path
 from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
 from .m2_quality import resolve_live_quality
+from .m2_resources import ProcessMeter
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
@@ -200,6 +201,7 @@ class LiveVideo:
         self.adb_proc = None
         self.ffmpeg_proc = None
         self._resource_lock = threading.Lock()
+        self._resource_meter = ProcessMeter()
         # Session-local, read-only telemetry. No ADB polling, videos or tokens.
         self._born = time.monotonic()
         self._metric_lock = threading.Lock()
@@ -232,8 +234,12 @@ class LiveVideo:
     def diagnostics(self):
         """Safe stage/age counters for an explicitly opened stream only."""
         now = time.monotonic()
+        with self._resource_lock:
+            pids = [getattr(p, "pid", None) for p in (self.adb_proc, self.ffmpeg_proc)]
+        resources = self._resource_meter.sample(pids, now)
         with self._metric_lock:
             return {
+                **resources,
                 "stage": self._phase,
                 "elapsed_ms": round((now - self._born) * 1000),
                 "phone_packets": self._phone_packets,
