@@ -679,6 +679,10 @@ function startLive(){
     status.textContent='远程控制已关闭，当前仅观看画面。';
     render();
    }else if(msg.type==='touch_error'){
+    if(msg.code==='adb_disconnected'){
+     liveReceivedError=true;liveStatus(msg.message||'当前 ADB 连接已断开，请手动重新连接。','error');
+     stopLive();load(true);return;
+    }
     const status=$('m2TouchInfo');status.hidden=false;status.className='status error';
     status.textContent=msg.message||'触摸控制未执行，请检查当前视频及设备状态。';
     liveTouchPending=false;render();
@@ -690,6 +694,10 @@ function startLive(){
      liveInputPending=null;liveInputSentText=null;render();
     }
    }else if(msg.type==='input_error'){
+    if(msg.code==='adb_disconnected'){
+     liveReceivedError=true;liveStatus(msg.message||'当前 ADB 连接已断开，请手动重新连接。','error');
+     stopLive();load(true);return;
+    }
     liveInputPending=null;liveInputSentText=null;
     const status=$('m2KeyInfo');status.hidden=false;status.className='status error';
     status.textContent=msg.message||'当前输入无法执行';render();
@@ -708,7 +716,12 @@ function startLive(){
      liveStatus('已获取视频信息：'+msg.width+'×'+msg.height+' · '+msg.mime);
      livePlayer.initialize(msg);
     }catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
-   }else if(msg.type==='error'){liveReceivedError=true;liveStatus(msg.message||'实时视频已失败','error');stopLive();}
+   }else if(msg.type==='error'){
+    liveReceivedError=true;liveStatus(msg.message||'实时视频已失败','error');
+    const adbOffline=msg.code==='adb_disconnected';
+    stopLive();
+    if(adbOffline)load(true); // GET saved status only; never reconnects ADB.
+   }
    return;
   }
   liveLastBytesAt=performance.now();
