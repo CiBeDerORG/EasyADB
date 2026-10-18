@@ -29,9 +29,17 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 # -c:v copy retains the phone's original H.264 encoded video.
 FFMPEG_MSE_ARGS = (
     "-hide_banner", "-loglevel", "error", "-nostdin",
+    # scrcpy intentionally uses variable frame rate: unchanged screens are
+    # normally repeated only every ~100ms (device/encoder-dependent). Without
+    # this FFmpeg stamps every arrival at a fixed 1/30s, so the MSE timeline
+    # advances much faster than actual wall time and repeatedly starves.
+    # Raw Annex B loses scrcpy's original packet PTS; FFmpeg input arrival
+    # timestamps are a bounded interim approximation until a PTS-aware muxer.
+    "-use_wallclock_as_timestamps", "1",
     "-f", "h264", "-r", "30", "-i", "pipe:0",
     "-map", "0:v:0", "-an", "-c:v", "copy",
     "-movflags", "+empty_moov+default_base_moof+frag_every_frame",
+    "-flush_packets", "1",
     "-f", "mp4", "pipe:1",
 )
 
