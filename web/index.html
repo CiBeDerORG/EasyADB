@@ -476,6 +476,7 @@ function liveDiagnostic(diag){
  info.textContent='投屏诊断｜阶段：'+diag.stage+
   '｜ADB 检查：'+(liveAdbCheckMs===null?'—':liveAdbCheckMs+'ms')+
   '｜会话：'+elapsed(diag.elapsed_ms)+
+  '｜MP4 初始化耗时：'+elapsed(diag.init_ready_ms)+
   '｜手机编码包：'+diag.phone_packets+' / 距今 '+elapsed(diag.phone_idle_ms)+
   '｜FNOS MP4 读取：'+diag.mux_chunks+' / 完整媒体分片：'+(diag.media_fragments??'—')+' / 距今 '+elapsed(diag.mux_idle_ms)+
   '｜浏览器收包：'+elapsed(browserAge)+
