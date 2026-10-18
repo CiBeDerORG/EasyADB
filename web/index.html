@@ -50,6 +50,9 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .address-row.selected{background:#213956;border:1px solid #5475a5;border-radius:7px;padding:5px 7px}
 .address-switch{font-size:11px;padding:4px 8px;white-space:nowrap}
 .address-switch.selected{background:#24533e;color:#b5f1d0;border:1px solid #397656}
+.address-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.first-pair{font-size:11px;padding:4px 8px;white-space:nowrap;background:#42659b}
+.pairing-destination{font-weight:700;color:#b5cffd;overflow-wrap:anywhere}
 .pill.idle{background:#314359}
 .screen{display:flex;justify-content:center;align-items:center;min-height:410px;background:#0a101b;border:1px dashed #475d7a;border-radius:11px;overflow:hidden}
 .screen img{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
@@ -109,15 +112,33 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  <div class="modal-body"><form id="groupForm">
   <label for="groupName">分组名称</label><input id="groupName" required maxlength="64" placeholder="家里 OpenWrt">
   <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
-  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。优先内网 IP，失败后回退组网 IP；留空仅使用组网 IP。</p>
+  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。连接地址由用户手动选择，失败不会自动回退；留空仅使用组网 IP。</p>
   <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
   <div class="modal-actions"><button class="danger" id="deleteGroup" type="button" style="margin-right:auto" hidden>删除分组</button><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
  </form></div>
 </dialog>
+<dialog class="device-dialog" id="firstPairDialog" aria-labelledby="firstPairTitle">
+ <div class="modal-head"><h2 id="firstPairTitle">首次连接 · 无线 ADB 配对</h2><button class="secondary" id="closeFirstPair" type="button" aria-label="关闭首次连接弹窗">×</button></div>
+ <div class="modal-body">
+  <p class="hint">在手机上打开「开发者选项 → 无线调试 → 使用配对码配对设备」，保持配对窗口开启，再填写下面的信息。</p>
+  <form id="firstPairForm">
+   <label for="firstPairIp">当前选择的配对目标 IP</label>
+   <input id="firstPairIp" readonly aria-readonly="true">
+   <p class="hint">此地址由已保存的「当前选择」决定，不能在配对弹窗中更换线路。</p>
+   <div class="two">
+    <div><label for="firstPairPort">配对端口（不是设备连接端口）</label><input id="firstPairPort" type="number" min="1" max="65535" required placeholder="手机配对窗口显示的端口"></div>
+    <div><label for="firstPairCode">六位配对码</label><input id="firstPairCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required placeholder="123456"></div>
+   </div>
+   <div id="firstPairMessage" class="status modal-status" role="status" aria-live="polite" hidden></div>
+   <div class="modal-actions"><button class="secondary" id="cancelFirstPair" type="button">取消</button><button id="submitFirstPair" type="submit">执行配对</button></div>
+  </form>
+  <p class="hint">配对成功后关闭弹窗，仍需手动点击设备「连接」。不会自动重试或切换 IP。</p>
+ </div>
+</dialog>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],groups=[],selected=null,editing=null,editingGroup=null,loading=false,loaded=false,shotUrl=null;
+let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,loading=false,loaded=false,shotUrl=null;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -171,7 +192,17 @@ function render(){
                         'secondary address-switch'+(chosen?' selected':''));
     change.disabled=loading||chosen;
     change.setAttribute('aria-label','将'+d.name+'的当前连接设为'+label+' '+ip+':'+d.port);
-    row.append(change);info.append(row);
+    const controls=elem('div','address-controls');
+    controls.append(change);
+    // Only a failed explicit "连接" attempt exposes first-time pairing;
+    // a mere status check or an idle device must not show the button.
+    if(chosen&&d.connect_failed){
+     const pairButton=action('首次连接',()=>openFirstPair(d.id),'first-pair');
+     pairButton.disabled=loading;
+     pairButton.setAttribute('aria-label','为'+d.name+'当前选择的'+label+'进行首次无线配对');
+     controls.append(pairButton);
+    }
+    row.append(controls);info.append(row);
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
