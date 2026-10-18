@@ -635,7 +635,8 @@ class LiveVideo:
 
 
 class LiveRegistry:
-    """One user-opened session per logical device, no autonomous startup."""
+    """At most four explicit sessions, one per logical device; no auto startup."""
+    MAX_LIVE_SESSIONS = 4
     def __init__(self):
         self.lock = threading.Lock()
         self.sessions = {}
@@ -650,6 +651,10 @@ class LiveRegistry:
                 if finished is None or not finished.is_set() or not getattr(old, "cleanup_complete", True):
                     return False
                 self.sessions.pop(device_id, None)
+            # Also bound directly-authenticated WS requests, not only UI.
+            # Dirty worker slots count until they are verifiably cleaned.
+            if len(self.sessions) >= self.MAX_LIVE_SESSIONS:
+                return False
             self.sessions[device_id] = session
             return True
 
