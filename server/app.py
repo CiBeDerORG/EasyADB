@@ -597,6 +597,12 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             # BEFORE any ADB call, device lookup or new scrcpy worker.
             await websocket.send_json({"type": "error", "message": str(exc)})
             return
+        # This is a per-session physical-panel option, never a persisted ADB
+        # device mutation. Reject truthy strings/numbers instead of coercing.
+        screen_off = initial.get("screen_off", False)
+        if type(screen_off) is not bool:
+            await websocket.send_json({"type": "error", "message": "息屏选项必须为布尔值"})
+            return
         experiment = initial.get("display_experiment")
         if experiment is not None:
             if not isinstance(experiment, dict) or set(experiment) not in (
@@ -611,6 +617,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     or (mode != "display" and target is not None)):
                 await websocket.send_json({"type": "error", "message": "不支持的实验显示源"})
                 return
+        if experiment is not None and screen_off:
+            await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
+            return
         device = store.get(device_id)
         serial = selected_address(device) if device else None
         if not serial or serial != initial.get("selected_serial") or manager.serial_for(device) != serial:
@@ -638,13 +647,18 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             error = "指定 Display ID 不存在，请重新扫描显示器"
                     except LabError as exc:
                         error = str(exc)
-                # Keep existing constructor signatures for all normal playback tests.
-                candidate = None if error else (
-                    LiveVideo(serial, profile=profile, quality=quality_settings,
-                              display_source=experiment) if profile == "custom" and experiment else
-                    LiveVideo(serial, profile=profile, display_source=experiment) if experiment else
-                    LiveVideo(serial, profile=profile, quality=quality_settings) if profile == "custom" else
-                    LiveVideo(serial, profile=profile))
+                # Preserve legacy constructor paths when screen-off is not selected
+                # (existing M2 tests and clients still use the original shape).
+                candidate = None
+                if not error:
+                    options = {}
+                    if profile == "custom":
+                        options["quality"] = quality_settings
+                    if experiment:
+                        options["display_source"] = experiment
+                    if screen_off:
+                        options["screen_off"] = True
+                    candidate = LiveVideo(serial, profile=profile, **options)
                 if candidate is None:
                     pass
                 elif not live_registry.reserve(device_id, candidate):
@@ -691,7 +705,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
                         "control_enable", "control_disable", "touch", "input_text", "nav_key",
-                        "heartbeat"
+                        "wake", "heartbeat"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -707,6 +721,33 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         if set(message) != {"type", "session_id"}:
                             break
                         last_browser_ack = time.monotonic()
+                        continue
+                    if kind == "wake":
+                        if set(message) != {"type", "session_id"} or not touch_ready.is_set():
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": "当前画面控制通道尚未就绪"})
+                            continue
+                        if experiment:
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": "副屏实验不支持此主屏唤醒指令"})
+                            continue
+                        try:
+                            await asyncio.to_thread(stream.wake_display)
+                            await websocket.send_json({"type": "wake_accepted",
+                                                       "session_id": stream.session_id,
+                                                       "message": "已发送物理屏幕开启及 Android WAKEUP；请以设备状态为准"})
+                        except InvalidTouch as exc:
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": str(exc)})
+                        except VideoProbeError as exc:
+                            offline = await confirm_live_adb_loss(device_id, serial)
+                            await websocket.send_json({
+                                "type": "wake_error", "session_id": stream.session_id,
+                                "code": "adb_disconnected" if offline else "wake_failed",
+                                "message": ("ADB 已断开，请手动连接" if offline else str(exc))
+                            })
+                            if offline or stream.stop_event.is_set():
+                                break
                         continue
                     if kind == "control_enable":
                         if set(message) != {"type", "session_id"} or not touch_ready.is_set():
@@ -852,6 +893,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
+            elif kind == "screen_power_notice":
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "screen_power_notice", "session_id": stream.session_id, **payload
+                }), LIVE_WS_SEND_TIMEOUT)
             elif kind == "lab_notice":
                 display_lab._log(device_id, "虚拟屏幕结果", serial, payload.get("message", "无"))
                 await asyncio.wait_for(websocket.send_json({
