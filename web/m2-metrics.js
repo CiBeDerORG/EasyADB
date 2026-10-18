@@ -41,6 +41,8 @@ class QualityMeter{
    fps,dropPct,bufferAhead,renderedFrames:total,droppedFrames:drops,
    playbackAgeMs:Number.isFinite(extra.frameAgeMs)?extra.frameAgeMs:null,
    receiveMbps:Number.isFinite(extra.receiveMbps)?extra.receiveMbps:null,
+   procCpuPct:Number.isFinite(extra.procCpuPct)?extra.procCpuPct:null,
+   procRssMib:Number.isFinite(extra.procRssMib)?extra.procRssMib:null,
    queueBytes:Number.isFinite(extra.queueBytes)?extra.queueBytes:null,
    elapsedSeconds:Math.max(0,(now-this.started)/1000),totalBytes:this.totalBytes
   };
@@ -58,6 +60,7 @@ class QualityMeter{
   return {profile,device,seconds:Math.max(0,(this.lastAt-this.started)/1000),
    totalBytes:this.totalBytes,avgFps:avg('fps'),avgDropPct:avg('dropPct'),
    avgReceiveMbps:avg('receiveMbps'),avgBufferSeconds:avg('bufferAhead'),
+   avgCpuPct:avg('procCpuPct'),avgRssMib:avg('procRssMib'),
    maxQueueBytes:Math.max(0,...this.samples.map(x=>x.queueBytes||0))};
  }
 }
