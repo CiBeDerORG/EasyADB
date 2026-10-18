@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+# Always update the source before using the Mihomo build configuration.
+# Re-exec after Git switch/pull so this running shell uses the UPDATED script.
+cd "$(dirname "$0")/.."
+if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
+  sh scripts/update-m1.sh
+  EASYADB_UPDATED=1
+  export EASYADB_UPDATED
+  exec sh scripts/build-with-mihomo.sh
+fi
+
 # FNOS / Linux: build and run EasyADB without host networking.
 # Both the dedicated BuildKit container and EasyADB runtime join proxy-net.
 # BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
