@@ -139,6 +139,10 @@ def test_http_nas_player_uses_mse_adapter_and_reserves_webcodecs_interface():
     assert 'id="liveStop"' in html and '<script src="/m2-player.js"></script>' in html
     assert "EasyADBPlayers.create(playerMode,video" in html
     assert 'id="m2LiveDiag"' in html
+    assert 'id="m2LiveTraffic"' in html
+    assert '<script src="/m2-traffic.js"></script>' in html
+    assert "liveTraffic.record(e.data.byteLength)" in html
+    assert "if(ws&&liveTraffic)updateLiveTraffic(true)" in html
     assert "else if(msg.type==='diagnostic'){liveDiagnostic(msg);}" in html
     assert "requestVideoFrameCallback" in html
     assert "adb_check_ms" in html
@@ -161,6 +165,17 @@ def test_js_adapter_is_served_as_javascript_without_auth(monkeypatch, tmp_path):
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/javascript")
         assert "EasyADBPlayers" in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+
+def test_session_traffic_meter_script_is_served_without_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    with TestClient(mod.app) as client:
+        response = client.get("/m2-traffic.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/javascript")
+        assert "EasyADBTraffic" in response.text
         assert response.headers["cache-control"] == "no-store"
 
 
