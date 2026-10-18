@@ -200,6 +200,12 @@ def m2_player_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-webrtc.js")
+def m2_webrtc_script():
+    return FileResponse(ROOT / "web" / "m2-webrtc.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/m2-traffic.js")
 def m2_traffic_script():
     return FileResponse(ROOT / "web" / "m2-traffic.js", media_type="application/javascript",
