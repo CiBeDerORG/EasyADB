@@ -179,8 +179,13 @@ def test_keyboard_ui_is_explicit_and_never_global_key_capture():
     root = Path(__file__).resolve().parents[1]
     html = (root / "web" / "index.html").read_text()
     multi = (root / "web" / "m2-multi.js").read_text()
-    assert "make('form','multi-text')" in multi
-    assert "make('input')" in multi and "make('button','','发送文字')" in multi
+    assert "make('form','multi-text-panel')" in multi
+    assert "const input=make('input'),submit=make('button','','发送')" in multi
+    assert "const textButton=icon('fab-text'" in multi
+    assert "const main=make('button','fab-main'" in multi
+    assert "card.menuOpen=true" in multi and "root.setTimeout" in multi
+    assert "for(const b of nav.slice(0,3))b.hidden=!card.enabled" in multi
+    assert "logPanel.hidden=false" in multi and "logPanel.hidden=true" in multi
     assert "['recents','最近任务']" in multi
     assert "m.type==='input_accepted'" in multi
     assert "this.sendInput(card,'input_text',{text:value})" in multi

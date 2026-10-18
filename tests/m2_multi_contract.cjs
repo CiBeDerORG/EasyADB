@@ -249,6 +249,10 @@ assert.equal(ca.lowLatency,true,'local player setting is pinned to device A only
 assert.match(ca.qualityLine.textContent,/自定义/);
 assert.equal(ca.screen.style.aspectRatio,'720 / 1280');
 assert.equal(ca.screen.style.width,'min(100%, 40.5000vh)');
+ca.fitScreen(1280,720);
+assert.equal(ca.screen.style.aspectRatio,'1280 / 720','landscape stream uses source dimensions');
+assert.equal(ca.screen.style.width,'min(100%, 128.0000vh)');
+ca.fitScreen(720,1280);
 assert.equal(ca.logPanel.hidden,true,'diagnostics start hidden inside video');
 assert.equal(ca.menuOpen,false);
 assert.equal(ca.nav.slice(0,3).every(b=>b.hidden),true,'navigation hidden before remote control');
