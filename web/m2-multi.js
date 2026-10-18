@@ -153,7 +153,8 @@ class MultiView{
     }else if(m.type==='diagnostic'){
      if(card.session&&m.session_id===card.session&&card.state!=='stopping'&&
         ws.readyState===WebSocket.OPEN){
-      ws.send(JSON.stringify({type:'heartbeat',session_id:card.session}));
+      try{ws.send(JSON.stringify({type:'heartbeat',session_id:card.session}));}
+      catch{mark('心跳发送失败，本路已停止',true);this.end(card,false);return;}
      }
      const traffic=card.meter.sample(performance.now());
      const pd=card.player.diagnostics();
@@ -161,7 +162,9 @@ class MultiView{
       receiveMbps:traffic.mbps,queueBytes:pd.queueBytes
      });
      stats.textContent=root.EasyADBMetrics.format(stat)+
-       '｜本路累计 '+root.EasyADBTraffic.size(traffic.totalBytes);
+       '｜本路累计 '+root.EasyADBTraffic.size(traffic.totalBytes)+
+       '｜本路本地进程 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+
+       fmt(m.proc_rss_mib)+' MiB（仅 FFmpeg/ADB shell）';
     }else if(m.type==='init'){
      card.ready=m.control_available===true;
      card.size={width:m.width,height:m.height};
