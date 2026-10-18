@@ -149,3 +149,76 @@ def test_existing_m1_database_migrates_without_data_loss(tmp_path):
     assert store.update_group("Existing", "Existing", "192.168.10.*")
     assert store.get("keep-id")["lan_ip"] == "192.168.10.206"
     assert internal_ip("192.168.10.*", "10.10.30.206") == "192.168.10.206"
+
+
+
+def test_delete_group_moves_members_without_deleting_devices(monkeypatch, tmp_path):
+    mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
+    with TestClient(mod.app) as client:
+        mod.manager.stop()
+        assert client.delete("/api/groups/Home").status_code == 401
+        assert client.delete("/api/groups/DoesNotExist", headers=AUTH).status_code == 404
+
+        assert client.post("/api/groups", headers=AUTH, json={
+            "name": "Home", "ip_prefix": "192.168.10.*"
+        }).status_code == 201
+        assert client.post("/api/groups", headers=AUTH, json={
+            "name": "Other", "ip_prefix": "192.168.11.*"
+        }).status_code == 201
+        a = client.post("/api/devices", headers=AUTH, json=dev()).json()
+        b = client.post("/api/devices", headers=AUTH, json=dev(
+            ip="10.10.30.207", group="Home")).json()
+        other = client.post("/api/devices", headers=AUTH, json=dev(
+            ip="10.10.30.208", group="Other")).json()
+        assert client.post(f'/api/devices/{a["id"]}/connect', headers=AUTH).json()[
+            "active_route"] == "lan"
+        assert client.get(f'/api/devices/{a["id"]}/screenshot', headers=AUTH).status_code == 200
+        calls_before = len(calls)
+
+        deleted = client.delete("/api/groups/Home", headers=AUTH)
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": True, "moved_count": 2}
+        # Deleting a group does not itself issue adb disconnect or any other ADB command.
+        assert len(calls) == calls_before
+        assert client.delete("/api/groups/Home", headers=AUTH).status_code == 404
+        assert client.get("/api/groups", headers=AUTH).json() == [
+            {"name": "Other", "ip_prefix": "192.168.11.*"}
+        ]
+        records = {d["id"]: d for d in client.get("/api/devices", headers=AUTH).json()}
+        assert len(records) == 3
+        for original in (a, b):
+            moved = records[original["id"]]
+            assert moved["group_name"] == ""
+            assert moved["lan_ip"] is None
+            assert moved["mesh_ip"] == original["mesh_ip"]
+            assert moved["port"] == original["port"]
+            assert moved["status"] == "checking"
+            assert moved["active_serial"] is None
+        assert records[other["id"]]["group_name"] == "Other"
+        assert records[other["id"]]["lan_ip"] == "192.168.11.208"
+        # The old LAN connection remains in ADB for other clients, but EasyADB
+        # must no longer use it until a fresh probe picks the remaining mesh route.
+        assert client.get(f'/api/devices/{a["id"]}/screenshot', headers=AUTH).status_code == 409
+        mesh_route = client.post(f'/api/devices/{a["id"]}/connect', headers=AUTH).json()
+        assert mesh_route["active_route"] == "mesh"
+        assert mesh_route["active_serial"] == "10.10.30.206:5555"
+        assert client.get(f'/api/devices/{a["id"]}/screenshot', headers=AUTH).content == (
+            PNG + b"10.10.30.206:5555"
+        )
+        # Restart/migration should not resurrect the deleted group from old members.
+        reloaded = DeviceStore(str(tmp_path / "devices.sqlite3"))
+        reloaded.initialize()
+        assert reloaded.list_groups() == [{"name": "Other", "ip_prefix": "192.168.11.*"}]
+
+
+def test_delete_empty_group(monkeypatch, tmp_path):
+    mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
+    with TestClient(mod.app) as client:
+        mod.manager.stop()
+        assert client.post("/api/groups", headers=AUTH, json={
+            "name": "Empty", "ip_prefix": "192.168.20.*"
+        }).status_code == 201
+        r = client.delete("/api/groups/Empty", headers=AUTH)
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True, "moved_count": 0}
+        assert client.get("/api/groups", headers=AUTH).json() == []
