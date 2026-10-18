@@ -45,9 +45,7 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/m2-webrtc.js'),'u
  let rx=0;await p.pollStats(n=>rx+=n);
  assert.equal(rx,1234);assert.equal(p.diagnostics().webrtcFrames,8);
  await p.pollStats(n=>rx+=n);assert.equal(rx,1234,'stats must be deltas, not double-counted');
- assert.equal(typeof Peer.last.close(), 'undefined','native close has no Promise');
- // Restore the active state to emulate a browser that was still connected.
- Peer.last.connectionState='connected';Peer.last.closeCount=0;
+ // The mock close() returns undefined, exactly like native RTCPeerConnection.close().
  assert.doesNotThrow(()=>p.destroy(),'native synchronous close must never interrupt card cleanup');
  assert.equal(Peer.last.closeCount,1,'peer closed exactly once');
  assert.equal(Peer.last.ontrack,null);
