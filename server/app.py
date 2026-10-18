@@ -26,6 +26,7 @@ from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
 from .m2_quality import resolve_live_quality
 from .m2_touch import InvalidTouch
+from .display_lab import DisplayLab, LabError, display_ids
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -48,6 +49,7 @@ def adb(*args, timeout=15, input_text=None):
 
 manager = DeviceManager(store, adb)
 live_registry = LiveRegistry()
+display_lab = DisplayLab(adb, DB_PATH + '.display-lab.json')
 
 # Only active, user-started WebSocket sessions have a watchdog. The client
 # acknowledges existing diagnostic events rather than running a hidden timer.
@@ -212,6 +214,12 @@ def m2_metrics_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/display-lab.js")
+def display_lab_script():
+    return FileResponse(ROOT / "web" / "display-lab.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/m2-multi.js")
 def m2_multi_script():
     return FileResponse(ROOT / "web" / "m2-multi.js", media_type="application/javascript",
@@ -322,6 +330,8 @@ def refresh_devices():
 
 @app.put("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def update_device(device_id: str, payload: DeviceInput):
+    if display_lab.has_pending(device_id):
+        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
     original = get_device(device_id)
     data = clean_input(payload)
     try:
@@ -340,6 +350,8 @@ def update_device(device_id: str, payload: DeviceInput):
 
 @app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
+    if display_lab.has_pending(device_id):
+        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
     get_device(device_id)
     if not store.delete(device_id):
         raise HTTPException(404, "找不到该设备")
@@ -354,6 +366,8 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
     # Reject while a server-side live slot is owned (including cleanup).
     with manager._device_lock(device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "请先恢复该设备的副屏实验，再修改线路")
         original = get_device(device_id)
         with live_registry.lock:
             session = live_registry.sessions.get(device_id)
@@ -384,6 +398,8 @@ def select_device_route(device_id: str, payload: RouteInput):
     # Use the same lock as connect, refresh and screenshot. Switching changes
     # persisted preference only; no hidden adb connect or automatic fallback.
     with manager._device_lock(device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "请先恢复该设备的副屏实验，再切换线路")
         if payload.route not in ("mesh", "lan", "temp"):
             raise HTTPException(400, "请选择组网 IP、内网 IP 或临时 IP")
         try:
@@ -440,6 +456,73 @@ def m2_video_probe(device_id: str, payload: VideoProbeInput):
             return probe_video(serial, profile=payload.profile)
         except VideoProbeError as exc:
             raise HTTPException(502, str(exc)) from None
+
+
+
+def lab_connected_serial(device_id):
+    device = get_device(device_id)
+    serial = selected_address(device)
+    if not serial or manager.serial_for(device) != serial or not is_connected(serial):
+        raise HTTPException(409, "请先手动连接当前选定的 ADB 地址")
+    return serial
+
+
+@app.get("/api/devices/{device_id}/display-lab/state", dependencies=[Depends(authorize)])
+def display_lab_state(device_id: str):
+    get_device(device_id)
+    return display_lab.state(device_id)
+
+
+@app.post("/api/devices/{device_id}/display-lab/environment", dependencies=[Depends(authorize)])
+def display_lab_environment(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        try:
+            result = display_lab.environment(device_id, serial)
+            display_lab._log(device_id, "环境检测", serial, "检测到显示器 " + str(result["display_ids"]))
+            return result
+        except LabError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/scan", dependencies=[Depends(authorize)])
+def display_lab_scan(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        try:
+            result = display_lab.scan(serial)
+            display_lab._log(device_id, "B2", serial, "检测到显示器 " + str(result["display_ids"]))
+            return result
+        except LabError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/overlay", dependencies=[Depends(authorize)])
+def display_lab_overlay(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        with live_registry.lock:
+            running = live_registry.sessions.get(device_id)
+            if running is not None and not live_registry.is_cleaned(running):
+                raise HTTPException(409, "先停止此设备已有的实时画面，再模拟副屏")
+        try:
+            return display_lab.enable_overlay(device_id, serial)
+        except LabError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/restore", dependencies=[Depends(authorize)])
+def display_lab_restore(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        with live_registry.lock:
+            running = live_registry.sessions.get(device_id)
+            if running is not None and not live_registry.is_cleaned(running):
+                raise HTTPException(409, "请先停止当前副屏预览，再恢复设置")
+        try:
+            return display_lab.restore(device_id, serial)
+        except LabError as exc:
+            raise HTTPException(409, str(exc)) from None
 
 
 async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
@@ -509,6 +592,20 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             # BEFORE any ADB call, device lookup or new scrcpy worker.
             await websocket.send_json({"type": "error", "message": str(exc)})
             return
+        experiment = initial.get("display_experiment")
+        if experiment is not None:
+            if not isinstance(experiment, dict) or set(experiment) not in (
+                {"mode"}, {"mode", "display_id"}
+            ):
+                await websocket.send_json({"type": "error", "message": "显示源实验参数无效"})
+                return
+            mode = experiment.get("mode")
+            target = experiment.get("display_id")
+            if (mode not in ("new", "new_settings", "display")
+                    or (mode == "display" and (type(target) is not int or not 1 <= target <= 255))
+                    or (mode != "display" and target is not None)):
+                await websocket.send_json({"type": "error", "message": "不支持的实验显示源"})
+                return
         device = store.get(device_id)
         serial = selected_address(device) if device else None
         if not serial or serial != initial.get("selected_serial") or manager.serial_for(device) != serial:
@@ -527,21 +624,39 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 error = "当前选择的 IP 已改变，请重新开启投屏"
             else:
-                # Keep the original two-argument constructor path for legacy
-                # presets, while custom parameters are explicit and validated.
-                candidate = (LiveVideo(serial, profile=profile, quality=quality_settings)
-                             if profile == "custom" else LiveVideo(serial, profile=profile))
-                if not live_registry.reserve(device_id, candidate):
+                if experiment and experiment["mode"] in ("new", "new_settings") and display_lab.has_pending(device_id):
+                    error = "请先恢复系统副屏模拟设置，再创建 scrcpy 虚拟屏幕"
+                elif experiment and experiment["mode"] == "display":
+                    try:
+                        found = display_lab.scan(serial)["display_ids"]
+                        if experiment["display_id"] not in found:
+                            error = "指定 Display ID 不存在，请重新扫描显示器"
+                    except LabError as exc:
+                        error = str(exc)
+                # Keep existing constructor signatures for all normal playback tests.
+                candidate = None if error else (
+                    LiveVideo(serial, profile=profile, quality=quality_settings,
+                              display_source=experiment) if profile == "custom" and experiment else
+                    LiveVideo(serial, profile=profile, display_source=experiment) if experiment else
+                    LiveVideo(serial, profile=profile, quality=quality_settings) if profile == "custom" else
+                    LiveVideo(serial, profile=profile))
+                if candidate is None:
+                    pass
+                elif not live_registry.reserve(device_id, candidate):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
                     try:
                         stream.start()
                     except (RuntimeError, OSError):
-                        # An unstarted candidate must not pin the device slot.
                         live_registry.release(device_id, candidate)
                         stream = None
                         error = "视频会话未能启动，请稍后重试"
+                # Original reserve/start path is handled above.
+                if False:
+                    pass
+                #
+
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
@@ -732,6 +847,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
+            elif kind == "lab_notice":
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "lab_notice", "session_id": stream.session_id, **payload
+                }), LIVE_WS_SEND_TIMEOUT)
             elif kind == "bytes":
                 await asyncio.wait_for(websocket.send_bytes(payload), LIVE_WS_SEND_TIMEOUT)
                 ws_video_bytes += len(payload)
