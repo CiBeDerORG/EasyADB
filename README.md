@@ -80,6 +80,25 @@ sudo sh scripts/build-with-mihomo.sh
 
 ---
 
+### 如果已经导入 BuildKit，但拉取 Python 基础镜像时 `auth.docker.io` 超时
+
+Docker Hub 的匿名令牌请求可能由宿主机的 Buildx CLI 发起，不完全由 BuildKit 容器处理。主构建脚本现已同时设置三处代理：
+
+- FNOS 宿主机的 Buildx CLI：使用 Mihomo 在宿主机可访问的桥接 IP，并保留 `.env` 中认证信息；
+- `proxy-net` 中的 BuildKit 容器：使用 `mihomo:7890`；
+- Dockerfile 的 apt/curl/pip 下载：通过构建代理参数使用 `mihomo:7890`。
+
+如果错误日志中出现 `Driver Options: ... env.HTTPS_PROXY=...`，说明旧版 `buildx inspect --bootstrap` 曾将代理密码直接打印到终端。请更换 Mihomo 的代理密码，再修改项目本地 `.env`；新主脚本不再输出该 inspect 内容，若项目专属构建器仍保存旧密码，会自动重新创建它。**不要粘贴完整 `docker buildx inspect easyadb-proxy` 或 `docker inspect buildx_buildkit_easyadb-proxy0` 输出，它们可能包含代理凭据。**
+
+更新并重新运行：
+
+```sh
+git pull --ff-only origin feat/adb-connect-preview
+sudo sh scripts/build-with-mihomo.sh
+```
+
+---
+ 
 ## 检查
 
 ```sh
