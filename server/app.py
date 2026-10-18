@@ -464,8 +464,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
-        await websocket.send_json({"type": "starting", "session_id": stream.session_id,
-                                   "selected_serial": serial, "adb_check_ms": adb_check_ms})
+        await asyncio.wait_for(websocket.send_json({
+            "type": "starting", "session_id": stream.session_id,
+            "selected_serial": serial, "adb_check_ms": adb_check_ms
+        }), LIVE_WS_SEND_TIMEOUT)
 
         last_browser_ack = time.monotonic()
 
@@ -612,7 +614,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 break
             current = store.get(device_id)
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
-                await websocket.send_json({"type": "error", "message": "设备连接地址已变更，投屏已停止"})
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "error", "message": "设备连接地址已变更，投屏已停止"
+                }), LIVE_WS_SEND_TIMEOUT)
                 break
             try:
                 kind, payload = await asyncio.to_thread(stream.events.get, True, 0.35)
@@ -630,7 +634,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 ws_video_bytes += len(payload)
                 ws_video_chunks += 1
             elif kind == "error":
-                await websocket.send_json({"type": "error", "message": payload})
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "error", "message": payload
+                }), LIVE_WS_SEND_TIMEOUT)
                 break
             elif kind == "end":
                 break
@@ -652,23 +658,25 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 live_registry.release(device_id, stream)
                 if manual_stop:
                     try:
-                        await websocket.send_json({"type": "ended",
-                                                   "session_id": stream.session_id,
-                                                   "reason": "manual",
-                                                   "cleanup_complete": True})
-                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        await asyncio.wait_for(websocket.send_json({
+                            "type": "ended", "session_id": stream.session_id,
+                            "reason": "manual", "cleanup_complete": True
+                        }), LIVE_WS_SEND_TIMEOUT)
+                    except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
                         pass
             elif manual_stop:
                 # Fail closed: registry continues to reserve a worker whose
                 # cleanup has not finished. reserve() retires it once finished.
                 try:
-                    await websocket.send_json({"type": "error",
-                                               "message": "视频会话尚未完全清理，设备会话保持占用；不会同时启动第二路视频"})
-                except (WebSocketDisconnect, RuntimeError, OSError):
+                    await asyncio.wait_for(websocket.send_json({
+                        "type": "error",
+                        "message": "视频会话尚未完全清理，设备会话保持占用；不会同时启动第二路视频"
+                    }), LIVE_WS_SEND_TIMEOUT)
+                except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
                     pass
         try:
-            await websocket.close()
-        except RuntimeError:
+            await asyncio.wait_for(websocket.close(), LIVE_WS_SEND_TIMEOUT)
+        except (RuntimeError, OSError, asyncio.TimeoutError):
             pass
 
 
