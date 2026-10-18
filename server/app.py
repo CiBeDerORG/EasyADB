@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from .devices import DeviceManager, selected_address
 from .store import DeviceStore
+from .m2_preflight import inspect_device
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -320,6 +321,17 @@ def refresh_device(device_id: str):
     if result is None:
         raise HTTPException(404, "找不到该设备")
     return result
+
+
+@app.post("/api/devices/{device_id}/m2/preflight", dependencies=[Depends(authorize)])
+def m2_device_preflight(device_id: str):
+    """User-initiated M2-00 capability check; no connect or scrcpy process."""
+    with manager._device_lock(device_id):
+        device = get_device(device_id)
+        serial = selected_address(device)
+        if not serial or manager.serial_for(device) != serial or not is_connected(serial):
+            raise HTTPException(409, "请先手动连接当前选择的设备，再执行 M2 预检")
+        return inspect_device(serial, adb)
 
 
 @app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
