@@ -1,5 +1,4 @@
 """SQLite device records and group-scoped, derived LAN address mapping."""
-import ipaddress
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -42,11 +41,19 @@ class DeviceStore:
                     ip TEXT NOT NULL,
                     port INTEGER NOT NULL,
                     auto_reconnect INTEGER NOT NULL DEFAULT 0,
+                    selected_route TEXT NOT NULL DEFAULT 'mesh',
                     model TEXT,
                     android_version TEXT,
                     UNIQUE (ip, port)
                 )
             """)
+            # Non-destructive migration of existing M1 databases. The old
+            # auto_reconnect column is intentionally left dormant: it is never
+            # read and no timer or auto-connect is started.
+            if "selected_route" not in {
+                row["name"] for row in db.execute("PRAGMA table_info(devices)")
+            }:
+                db.execute("ALTER TABLE devices ADD COLUMN selected_route TEXT NOT NULL DEFAULT 'mesh'")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS group_configs (
                     name TEXT PRIMARY KEY,
@@ -62,11 +69,14 @@ class DeviceStore:
         if row is None:
             return None
         result = dict(row)
-        if "auto_reconnect" in result:
-            result["auto_reconnect"] = bool(result["auto_reconnect"])
+        # Legacy auto_reconnect records remain on disk solely for backwards
+        # compatibility and have no behavioral or API effect.
+        result.pop("auto_reconnect", None)
         if "ip" in result:
             result["lan_ip"] = internal_ip(result.pop("ip_prefix", None), result["ip"])
             result["mesh_ip"] = result["ip"]
+            if result["selected_route"] == "lan" and not result["lan_ip"]:
+                result["selected_route"] = "mesh"
         return result
 
     @staticmethod
@@ -129,6 +139,11 @@ class DeviceStore:
                 db.execute("DELETE FROM group_configs WHERE name=?", (old_name,))
             else:
                 db.execute("UPDATE group_configs SET ip_prefix=? WHERE name=?", (prefix, name))
+            # A removed LAN mapping must never remain selected; changing a
+            # valid prefix keeps LAN selected and derives the NEW address.
+            db.execute("""UPDATE devices SET selected_route='mesh'
+                          WHERE group_name=? AND selected_route='lan' AND ? IS NULL""",
+                       (name, prefix))
             self._check_routes(db)
         return self.get_group(name)
 
@@ -147,7 +162,7 @@ class DeviceStore:
             members = [row["id"] for row in db.execute(
                 "SELECT id FROM devices WHERE group_name=? ORDER BY id", (name,)
             )]
-            db.execute("UPDATE devices SET group_name='' WHERE group_name=?", (name,))
+            db.execute("UPDATE devices SET group_name='',selected_route='mesh' WHERE group_name=?", (name,))
             db.execute("DELETE FROM group_configs WHERE name=?", (name,))
             self._check_routes(db)
             return {"deleted": True, "moved_count": len(members), "device_ids": members}
@@ -160,10 +175,10 @@ class DeviceStore:
                            (values["group_name"],))
             db.execute(
                 """INSERT INTO devices
-                   (id,name,group_name,ip,port,auto_reconnect)
-                   VALUES (?,?,?,?,?,?)""",
+                   (id,name,group_name,ip,port,selected_route)
+                   VALUES (?,?,?,?,?,'mesh')""",
                 (device_id, values["name"], values["group_name"], values["ip"],
-                 values["port"], int(values["auto_reconnect"]))
+                 values["port"])
             )
             self._check_routes(db)
         return self.get(device_id)
@@ -175,17 +190,36 @@ class DeviceStore:
                            (values["group_name"],))
             cursor = db.execute(
                 """UPDATE devices
-                   SET name=?,group_name=?,ip=?,port=?,auto_reconnect=?,
+                   SET name=?,group_name=?,ip=?,port=?,
+                       selected_route=CASE WHEN ?=0 THEN 'mesh' ELSE selected_route END,
                        model=CASE WHEN ip<>? OR port<>? THEN NULL ELSE model END,
                        android_version=CASE WHEN ip<>? OR port<>? THEN NULL ELSE android_version END
                    WHERE id=?""",
                 (values["name"], values["group_name"], values["ip"],
-                 values["port"], int(values["auto_reconnect"]),
+                 values["port"], int(bool(values["group_name"] and self._prefix_in_db(db, values["group_name"]))),
                  values["ip"], values["port"], values["ip"], values["port"], device_id)
             )
             if cursor.rowcount == 0:
                 return None
             self._check_routes(db)
+        return self.get(device_id)
+
+    @staticmethod
+    def _prefix_in_db(db, group_name):
+        row = db.execute("SELECT ip_prefix FROM group_configs WHERE name=?", (group_name,)).fetchone()
+        return row["ip_prefix"] if row else None
+
+    def select_route(self, device_id, route):
+        """Persist the selected address, never issue an ADB operation."""
+        if route not in ("mesh", "lan"):
+            raise ValueError("请选择组网 IP 或内网 IP")
+        with self.connection() as db:
+            row = db.execute(self._query() + " WHERE d.id=?", (device_id,)).fetchone()
+            if not row:
+                return None
+            if route == "lan" and not internal_ip(row["ip_prefix"], row["ip"]):
+                raise ValueError("该设备所属分组没有配置有效的内网 IP")
+            db.execute("UPDATE devices SET selected_route=? WHERE id=?", (route, device_id))
         return self.get(device_id)
 
     def set_metadata(self, device_id, model, android_version):
