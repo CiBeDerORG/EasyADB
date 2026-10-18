@@ -204,7 +204,9 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     assert "const busy=this.opening||this.getManagementBusy?.()" in multi
     assert "this.isBusyFor(d.id)||this.checking.has(d.id)" in multi
     assert "const picked=this.getBatchSelection?this.getBatchSelection():this.selected" in multi
-    assert "const additions=[...picked].filter(id=>connected.has(id)&&!this.isBusyFor(id))" in multi
+    assert "const additions=ds.filter(d=>picked.has(d.id)&&this.isAdbReady(d)&&!this.isBusyFor(d.id))" in multi
+    assert "const selectedDevices=devices.filter(d=>picked.has(d.id))" in multi
+    assert "const available=selectedDevices.filter(d=>this.isAdbReady(d)&&!this.isBusyFor(d.id))" in multi
     assert "this.launchQueue=batch" in multi
     assert "runPreflight:async id" in page
     assert "runVideoProbe:async(id,profile)" in page
