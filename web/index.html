@@ -20,7 +20,24 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .check input{width:17px;height:17px;flex:none}
 .status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
-.device-list{display:grid;gap:9px;max-height:570px;overflow-y:auto}
+.device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
+.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
+.device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 13px;font-weight:700;list-style:none}
+.device-group>summary::-webkit-details-marker{display:none}
+.device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
+.device-group:not([open])>summary:before{transform:rotate(-90deg)}
+.group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
+.group-items{display:grid;gap:9px;padding:0 10px 10px}
+.group-items .item{background:#101a2a}
+[hidden]{display:none!important}
+dialog.device-dialog{padding:0;color:#eef3fb;background:#172233;border:1px solid #405777;border-radius:16px;width:min(540px,calc(100% - 26px));max-height:min(92vh,820px);box-shadow:0 20px 70px #0009;overflow-y:auto}
+dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #34445e;padding:18px 20px}
+.modal-body{padding:7px 20px 20px}
+.modal-head button{padding:5px 10px;font-size:20px;line-height:1.2}
+.modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
+.modal-status{min-height:0;margin-top:12px}
+.modal-status:empty{display:none}
 .item{border:1px solid #40536f;border-radius:10px;padding:12px;background:#101a2a}
 .item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px}
 .item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
@@ -48,26 +65,10 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
   </section>
   <section class="panel">
-   <div class="heading"><h2>已保存的设备</h2><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div>
+   <div class="heading"><h2>设备列表</h2><div class="buttons" style="margin:0"><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
    <div class="muted" id="count">尚未加载</div><div class="device-list" id="devices" style="margin-top:12px"></div>
   </section>
-  <section class="panel">
-   <div class="heading"><h2 id="formTitle">添加设备</h2><button class="secondary" id="newDevice" type="button">新建设备</button></div>
-   <form id="form">
-    <label for="name">设备名称</label><input id="name" required maxlength="64" placeholder="例如：小米 11">
-    <label for="group">设备分组（可选）</label><input id="group" maxlength="64" placeholder="例如：家里 OpenWrt">
-    <div class="two"><div><label for="ip">手机 IPv4</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
-    <div><label for="port">ADB 连接端口</label><input id="port" required type="number" min="1" max="65535" placeholder="动态端口"></div></div>
-    <label class="check"><input type="checkbox" id="auto" checked>断线后自动尝试连接（每轮检测）</label>
-    <div class="buttons"><button id="save" type="submit">保存设备</button><button class="secondary" id="reset" type="button">清空表单</button></div>
-   </form>
-   <details><summary>首次使用？先配对无线调试</summary>
-   <p class="hint">打开手机的「无线调试 → 使用配对码配对设备」，这里填写配对弹窗里的端口和六位配对码。配对成功后，设备列表使用无线调试主页显示的<strong>连接端口</strong>。</p>
-   <div class="two"><div><label for="pairIp">手机 IPv4</label><input id="pairIp" placeholder="192.168.31.100"></div><div><label for="pairPort">配对端口</label><input id="pairPort" type="number" min="1" max="65535"></div></div>
-   <label for="pairCode">六位配对码</label><input id="pairCode" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456">
-   <div class="buttons"><button class="secondary" id="pair" type="button">执行配对</button></div>
-   </details>
-  </section>
+  <!-- Add/edit form is an accessible native modal, not a permanent sidebar. -->
  </div>
  <section class="panel">
   <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
@@ -77,10 +78,32 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <p class="hint">截图按需获取；切换设备会清除旧画面，避免显示另一台手机的截图。所有设备的操作通过稳定设备 ID 定位。</p>
  </section>
 </div>
+<dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
+ <div class="modal-head"><h2 id="formTitle">添加设备</h2><button class="secondary" type="button" id="closeDialog" aria-label="关闭弹窗">×</button></div>
+ <div class="modal-body">
+  <form id="form">
+   <label for="name">设备名称</label><input id="name" required maxlength="64" placeholder="例如：小米 11">
+   <label for="group">设备分组（可选）</label><input id="group" maxlength="64" list="groupNames" placeholder="选择已有分组，或输入新分组"><datalist id="groupNames"></datalist>
+   <div class="two"><div><label for="ip">手机 IPv4</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
+   <div><label for="port">ADB 连接端口</label><input id="port" required type="number" min="1" max="65535" placeholder="动态端口"></div></div>
+   <label class="check"><input type="checkbox" id="auto" checked>断线后自动尝试连接（每轮检测）</label>
+   <div class="status error modal-status" id="formMessage" role="alert" hidden></div>
+   <div class="modal-actions"><button class="secondary" id="cancelDialog" type="button">取消</button><button id="save" type="submit">保存设备</button></div>
+  </form>
+  <details><summary>第一次连接？先配对无线调试</summary>
+   <p class="hint">手机无线调试 → 使用配对码配对设备。这里使用<strong>配对弹窗端口</strong>；设备记录应填写无线调试主页的连接端口。</p>
+   <div class="two"><div><label for="pairIp">手机 IPv4</label><input id="pairIp" placeholder="192.168.31.100"></div><div><label for="pairPort">配对端口</label><input id="pairPort" type="number" min="1" max="65535"></div></div>
+   <label for="pairCode">六位配对码</label><input id="pairCode" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456">
+   <div class="buttons"><button class="secondary" id="pair" type="button">执行配对</button></div>
+   <div class="status modal-status" id="pairMessage" role="status" aria-live="polite" hidden></div>
+  </details>
+ </div>
+</dialog>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],selected=null,editing=null,loading=false,shotUrl=null;
+let devices=[],selected=null,editing=null,loading=false,loaded=false,shotUrl=null;
+const groupOpen=new Map();
 const labels={connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
 async function api(path,options={}){
@@ -104,46 +127,86 @@ function select(id){
 }
 function render(){
  const list=$('devices');list.replaceChildren();
- $('count').textContent=devices.length+' 台设备';
+ const grouped=new Map();
  for(const d of devices){
-  const item=elem('div','item'+(d.id===selected?' active':''));
-  const top=elem('div','item-top');
-  const text=elem('div');text.append(elem('div','item-name',d.name),elem('div','muted',(d.group_name?d.group_name+' · ':'')+d.ip+':'+d.port));
-  const pill=elem('span','pill '+d.status,labels[d.status]||'待检查');top.append(text,pill);item.append(top);
-  if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
-  if(d.last_error && d.status!=='connected')item.append(elem('div','muted',d.last_error));
-  const actions=elem('div','item-actions');
-  actions.append(action('查看',()=>select(d.id)),action('连接',()=>runConnect(d.id)));
-  actions.append(action('编辑',()=>edit(d.id)));
-  actions.append(action('删除',()=>remove(d.id),'danger'));
-  item.append(actions);list.append(item);
+  const key=d.group_name?'named:'+d.group_name:'ungrouped';
+  if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',items:[]});
+  grouped.get(key).items.push(d);
  }
- if(!devices.length)list.append(elem('p','hint','暂无设备。先在下方保存第一台手机。'));
+ const keys=[...grouped.keys()].sort((a,b)=>a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
+ $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
+ for(const key of keys){
+  const group=grouped.get(key);
+  const section=elem('details','device-group');
+  section.open=groupOpen.has(key)?groupOpen.get(key):true;
+  section.addEventListener('toggle',()=>groupOpen.set(key,section.open));
+  const summary=elem('summary');
+  summary.append(elem('span','',group.title));
+  const online=group.items.filter(d=>d.status==='connected').length;
+  summary.append(elem('span','group-count',online+' / '+group.items.length+' 已连接'));
+  section.append(summary);
+  const wrapper=elem('div','group-items');
+  for(const d of group.items){
+   const item=elem('div','item'+(d.id===selected?' active':''));
+   const top=elem('div','item-top');
+   const info=elem('div');
+   info.append(elem('div','item-name',d.name),elem('div','muted',d.ip+':'+d.port));
+   const pill=elem('span','pill '+d.status,labels[d.status]||'待检查');
+   top.append(info,pill);item.append(top);
+   if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
+   if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
+   const actions=elem('div','item-actions');
+   actions.append(action('查看',()=>select(d.id)),action('连接',()=>runConnect(d.id)));
+   actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
+   item.append(actions);wrapper.append(item);
+  }
+  section.append(wrapper);list.append(section);
+ }
+ if(!devices.length)list.append(elem('p','hint','暂无设备。点击「添加设备」保存第一台手机。'));
  const d=devices.find(x=>x.id===selected);
  $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
  $('previewInfo').textContent=d?(d.ip+':'+d.port+' · '+(labels[d.status]||'待检查')):'从左侧列表选择设备';
  $('connect').disabled=loading||!d;
  $('shotButton').disabled=loading||!d||d.status!=='connected';
- $('refreshAll').disabled=loading;
+ $('refreshAll').disabled=loading||!loaded;
+ $('newDevice').disabled=loading||!loaded;
 }
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
  try{
   const data=await(await api('/api/devices')).json();
-  devices=data;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
+  devices=data;loaded=true;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
  }catch(e){if(!quiet)message(e.message,'error');}
 }
 function reset(){
  editing=null;$('form').reset();$('auto').checked=true;$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
+ $('formMessage').hidden=true;$('formMessage').textContent='';
+ $('pairMessage').hidden=true;$('pairMessage').textContent='';
+ $('pairCode').value='';$('pairPort').value='';$('pairIp').value='';
 }
-function edit(id){
- const d=devices.find(x=>x.id===id);if(!d)return;editing=id;
- $('name').value=d.name;$('group').value=d.group_name;$('ip').value=d.ip;$('port').value=d.port;$('auto').checked=d.auto_reconnect;
- $('formTitle').textContent='编辑设备';$('save').textContent='保存修改';$('name').focus();
+function modalMessage(text,kind='error',id='formMessage'){
+ const el=$(id);el.hidden=false;el.textContent=text;el.className='status modal-status '+kind;
 }
+function closeModal(){if(loading)return;$('deviceDialog').close();}
+function openModal(id=null){
+ if(loading||!loaded)return;
+ reset();const d=id?devices.find(x=>x.id===id):null;
+ if(id&&!d)return;
+ const options=$('groupNames');options.replaceChildren();
+ for(const name of [...new Set(devices.map(x=>x.group_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN'))){
+  const opt=document.createElement('option');opt.value=name;options.append(opt);
+ }
+ if(d){
+  editing=id;$('name').value=d.name;$('group').value=d.group_name;
+  $('ip').value=d.ip;$('port').value=d.port;$('auto').checked=d.auto_reconnect;
+  $('formTitle').textContent='编辑设备';$('save').textContent='保存修改';$('pairIp').value=d.ip;
+ }
+ $('deviceDialog').showModal();$('name').focus();
+}
+function edit(id){openModal(id);}
 async function runConnect(id){
- if(loading)return;selected=id;loading=true;render();message('正在连接所选设备…');
+ if(loading)return;select(id);loading=true;render();message('正在连接所选设备…');
  try{
   const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
   devices=devices.map(x=>x.id===id?d:x);message(d.name+' 已连接','ok');
@@ -154,19 +217,27 @@ async function runConnect(id){
 async function remove(id){
  const d=devices.find(x=>x.id===id);if(!d||loading||!confirm('从列表删除「'+d.name+'」？不会清除手机端 ADB 配对授权。'))return;
  loading=true;render();
- try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id){selected=null;clearShot();}if(editing===id)reset();await load(true);message('设备已从列表删除','ok');}
+ try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id){selected=null;clearShot();}if(editing===id && !$('deviceDialog').open)reset();await load(true);message('设备已从列表删除','ok');}
  catch(e){message(e.message,'error');}finally{loading=false;render();}
 }
 $('load').addEventListener('click',()=>load());
-$('newDevice').addEventListener('click',reset);$('reset').addEventListener('click',reset);
+$('token').addEventListener('input',()=>{loaded=false;devices=[];selected=null;clearShot();render();});
+$('newDevice').addEventListener('click',()=>openModal());
+$('closeDialog').addEventListener('click',closeModal);
+$('cancelDialog').addEventListener('click',closeModal);
+$('deviceDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('deviceDialog').addEventListener('close',reset);
+$('deviceDialog').addEventListener('click',ev=>{
+ if(ev.target===$('deviceDialog')&&!loading)closeModal();
+});
 $('form').addEventListener('submit',async ev=>{
  ev.preventDefault();if(loading)return;loading=true;render();
  const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value),auto_reconnect:$('auto').checked};
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
   const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
-  selected=d.id;clearShot();reset();await load(true);message('设备已保存','ok');
- }catch(e){message(e.message,'error');}finally{loading=false;render();}
+  selected=d.id;clearShot();$('deviceDialog').close();await load(true);message('设备已保存','ok');
+ }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
 $('refreshAll').addEventListener('click',async()=>{
  if(loading)return;loading=true;render();message('正在逐台检查 ADB 状态…');
@@ -186,8 +257,8 @@ $('pair').addEventListener('click',async()=>{
  if(loading)return;loading=true;render();message('正在配对…');
  try{
   const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
-  $('pairCode').value='';message((await r.json()).message,'ok');
- }catch(e){message(e.message,'error');}finally{loading=false;render();}
+  $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
+ }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
 });
 // This timer only re-renders the monitor's cached states; it does not send ADB
 // commands and does not launch additional connection polling loops.
