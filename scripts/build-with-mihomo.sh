@@ -1,17 +1,54 @@
 #!/bin/sh
 set -eu
 
-# Always update the source before using the Mihomo build configuration.
-# Re-exec after Git switch/pull so this running shell uses the UPDATED script.
+# Default: preserve the existing authenticated Mihomo/BuildKit path.
+# --no-proxy: use Docker's own networking (e.g. OpenWrt transparent proxy),
+# without reading EASYADB_BUILD_PROXY or requiring mihomo/proxy-net.
+case "$#" in
+  0) MODE=mihomo ;;
+  1)
+    case "$1" in
+      --no-proxy) MODE=direct ;;
+      --help|-h)
+        echo "Usage: sudo sh scripts/build-with-mihomo.sh [--no-proxy]"
+        echo "  (default)   Existing Mihomo/proxy-net authenticated Buildx workflow"
+        echo "  --no-proxy  Docker's normal build/network; no Mihomo or proxy-net required"
+        exit 0 ;;
+      *) echo "ERROR: unsupported option: $1" >&2; exit 2 ;;
+    esac ;;
+  *) echo "ERROR: expected no options or --no-proxy" >&2; exit 2 ;;
+esac
+
+# Update first, then re-exec the freshly pulled script with the SAME mode.
+# The old script previously dropped positional arguments at this boundary.
 cd "$(dirname "$0")/.."
 if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
   sh scripts/update-m1.sh
   EASYADB_UPDATED=1
   export EASYADB_UPDATED
-  exec sh scripts/build-with-mihomo.sh
+  exec sh scripts/build-with-mihomo.sh "$@"
 fi
 
-# FNOS / Linux: build and run EasyADB without host networking.
+if [ "$MODE" = direct ]; then
+  # This compose file is self-contained: it does NOT mention proxy-net, Mihomo
+  # or proxy build args. It retains the same Compose project, image, volumes
+  # and published ports as the default mode.
+  if ! docker compose version >/dev/null 2>&1; then
+    echo 'ERROR: Docker Compose v2 is required.' >&2
+    exit 1
+  fi
+  echo "Building EasyADB without a scripted proxy (Docker/OpenWrt networking)..."
+  # No Mihomo bridge IP, --add-host, BuildKit proxy builder or custom proxy args.
+  # External Docker daemon/network settings remain under the host's control.
+  docker build --progress=plain --tag easyadb:local .
+  docker compose -f compose.no-proxy.yaml up -d --no-build
+  exit 0
+fi
+
+# FNOS / Linux: original Mihomo path, unchanged below this point.
+# BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves
+# a temporary bridge IP; no host networking.
+
 # Both the dedicated BuildKit container and EasyADB runtime join proxy-net.
 # BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
 NETWORK=proxy-net
