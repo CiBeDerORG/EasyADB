@@ -596,6 +596,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if VIDEO_ENGINE == "webcodecs":
             await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 mse 或 webrtc"})
             return
+        if initial.get("player") == "webcodecs":
+            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现，请在 .env 选择 mse 或 webrtc"})
+            return
         if initial.get("player", "mse") != VIDEO_ENGINE:
             await websocket.send_json({"type": "error", "message": "播放器与服务器 EASYADB_VIDEO_ENGINE 配置不一致，请刷新网页"})
             return
@@ -1002,7 +1005,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     await asyncio.wait_for(pc.close(), 10)
                 except (RuntimeError, OSError, asyncio.TimeoutError):
                     pass
-            if stream.thread is None:
+            if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
                 # SDP failure never launched ADB or allocated a worker resource.
                 stream.cleanup_complete = True
                 stream.finished.set()
