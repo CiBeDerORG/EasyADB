@@ -275,7 +275,10 @@ def test_real_ffmpeg_copy_remux_produces_mse_init_and_media_fragments():
         chunks.extend(assembler.feed(media[offset:offset + 37]))
     assert len(chunks) == 12
     assert all(b"moof" in chunk and b"mdat" in chunk for chunk in chunks)
-    assert b"".join(chunks) == media[:media.find(b"mfra") - 4]
+    packed = b"".join(chunks)
+    assert media.startswith(packed)
+    trailing = media[len(packed):]
+    assert not trailing or trailing[4:8] == b"mfra"
 
 
 def test_sparse_scrcpy_like_input_keeps_real_timeline_in_fragmented_mp4(tmp_path):
