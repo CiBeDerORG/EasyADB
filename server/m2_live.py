@@ -1,0 +1,356 @@
+"""Single-device, explicitly started scrcpy H264 -> FFmpeg fMP4 -> MSE transport.
+
+No background ADB polling, automatic device reconnection, control messages or
+recording. Every stream is owned by exactly one authenticated WebSocket.
+"""
+import os
+import queue
+import secrets
+import socket
+import struct
+import subprocess
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+from .m2_video_probe import (
+    DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, PROFILES, SERVER_FILE,
+    VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
+)
+
+MAX_INIT_BYTES = 1024 * 1024
+MAX_QUEUE_ITEMS = 48
+MAX_QUEUE_WAIT = 3.0
+MAX_FRAME_BYTES = 8 * 1024 * 1024
+
+
+class StreamStopped(Exception):
+    pass
+
+
+def parse_init_segments(blob):
+    """Wait for ftyp + moov and derive real avc1.* from the encoder avcC box.
+
+    Returns (bytes_consumed, init_segment, mime), or None if incomplete.
+    Fragments may immediately follow moov in the same input buffer.
+    """
+    offset = 0
+    names = []
+    while True:
+        if len(blob) - offset < 8:
+            return None
+        size, name = struct.unpack_from(">I4s", blob, offset)
+        if size < 8 or size > MAX_INIT_BYTES:
+            raise VideoProbeError("视频 MP4 初始化段尺寸异常")
+        if len(blob) - offset < size:
+            return None
+        names.append(name)
+        end = offset + size
+        if name == b"moov":
+            if not names or names[0] != b"ftyp":
+                raise VideoProbeError("视频 MP4 缺少初始 ftyp")
+            avcc = blob.find(b"avcC", offset, end)
+            if avcc < 4 or avcc + 8 > end:
+                raise VideoProbeError("视频 MP4 缺少 H.264 avcC 编码信息")
+            if blob[avcc + 4] != 1:
+                raise VideoProbeError("视频 H.264 avcC 版本异常")
+            codec = "avc1." + bytes(blob[avcc + 5:avcc + 8]).hex().upper()
+            return end, bytes(blob[:end]), f'video/mp4; codecs="{codec}"'
+        if name not in (b"ftyp", b"free"):
+            raise VideoProbeError("视频 MP4 初始化段顺序异常")
+        offset = end
+        if offset > MAX_INIT_BYTES:
+            raise VideoProbeError("视频 MP4 初始化段过大")
+
+
+def _socket_read(sock, amount, stop, timeout=1.0):
+    """Cancel-aware exact reads for continuous sessions, unlike bounded probe."""
+    out = bytearray()
+    while len(out) < amount:
+        if stop.is_set():
+            raise StreamStopped()
+        sock.settimeout(timeout)
+        try:
+            block = sock.recv(amount - len(out))
+        except socket.timeout:
+            continue
+        except OSError as exc:
+            if stop.is_set():
+                raise StreamStopped() from exc
+            raise VideoProbeError("手机端视频 socket 中断") from exc
+        if not block:
+            raise VideoProbeError("手机端视频 socket 已关闭")
+        out.extend(block)
+    return bytes(out)
+
+
+class LiveVideo:
+    def __init__(self, serial, profile, server_file=None):
+        if profile not in PROFILES:
+            raise ValueError("未知视频档位")
+        self.serial = serial
+        self.profile = profile
+        self.server_file = Path(server_file) if server_file is not None else SERVER_FILE
+        self.stop_event = threading.Event()
+        self.events = queue.Queue(MAX_QUEUE_ITEMS)
+        self.thread = None
+        self.video_sock = None
+        self.adb_proc = None
+        self.ffmpeg_proc = None
+        self._resource_lock = threading.Lock()
+
+    def start(self):
+        if self.thread is not None:
+            raise RuntimeError("已启动")
+        self.thread = threading.Thread(target=self._run, daemon=True, name="easyadb-m2-live")
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        with self._resource_lock:
+            sock = self.video_sock
+            adb_proc = self.adb_proc
+            mux = self.ffmpeg_proc
+        if sock:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+        for proc in (mux, adb_proc):
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+
+    def join(self, timeout=8):
+        if self.thread:
+            self.thread.join(timeout=timeout)
+
+    def _emit(self, item):
+        deadline = time.monotonic() + MAX_QUEUE_WAIT
+        while not self.stop_event.is_set():
+            try:
+                self.events.put(item, timeout=0.2)
+                return
+            except queue.Full:
+                if time.monotonic() >= deadline:
+                    raise VideoProbeError("浏览器读取视频过慢，已终止本轮会话")
+        raise StreamStopped()
+
+    def _stream_to_ffmpeg(self, video, mux, first_header):
+        """Consume only matching scrcpy v5.0.1 H264 Annex B media packets."""
+        header = first_header
+        first_config = False
+        while not self.stop_event.is_set():
+            pts, length = struct.unpack(">QI", header)
+            if pts & (1 << 63):
+                _, width, height = struct.unpack(">III", header)
+                # fMP4 track dimensions are fixed for this first-stage spike.
+                raise VideoProbeError(
+                    "手机画面尺寸发生变化；首版请停止后重新开始投屏")
+            if not 0 < length <= MAX_FRAME_BYTES:
+                raise VideoProbeError("scrcpy H.264 媒体包大小异常")
+            payload = _socket_read(video, length, self.stop_event)
+            if pts & (1 << 62):
+                first_config = True
+            elif not first_config and not (pts & (1 << 61)):
+                # Wait for codec initialization and a safe random-access frame.
+                header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                continue
+            if first_config or (pts & (1 << 61)):
+                try:
+                    mux.stdin.write(payload)
+                    mux.stdin.flush()
+                except (OSError, BrokenPipeError, ValueError) as exc:
+                    raise VideoProbeError("FFmpeg 已停止接收 H.264 数据") from exc
+            header = _socket_read(video, HEADER_BYTES, self.stop_event)
+        raise StreamStopped()
+
+    def _run(self):
+        scid = f"{secrets.randbelow(0x7FFFFFFE) + 1:08x}"
+        remote = f"/data/local/tmp/easyadb-live-{scid}.jar"
+        abstract = f"localabstract:scrcpy_{scid}"
+        port = None
+        feeder = None
+        failure = None
+        try:
+            if not self.server_file.is_file():
+                raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
+            with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
+                _run_adb(self.serial, "push", str(self.server_file), remote)
+                port_text = _run_adb(self.serial, "forward", "tcp:0", abstract)
+                if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
+                    raise VideoProbeError("创建视频专用 ADB 转发失败")
+                port = int(port_text)
+                settings = PROFILES[self.profile]
+                cmd = [
+                    "adb", "-s", self.serial, "shell", f"CLASSPATH={remote}",
+                    "app_process", "/", "com.genymobile.scrcpy.Server", VERSION,
+                    f"scid={scid}", "video=true", "audio=false", "control=false",
+                    "tunnel_forward=true", "send_device_meta=true",
+                    "send_frame_meta=true", "send_stream_meta=true",
+                    "send_dummy_byte=true", "cleanup=true", "power_on=false",
+                    "downsize_on_error=false", "video_codec=h264",
+                    f"max_size={settings['max_size']}",
+                    f"video_bit_rate={settings['video_bit_rate']}",
+                    f"max_fps={settings['max_fps']}",
+                ]
+                adb_proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                            stdout=adb_log, stderr=subprocess.STDOUT)
+                with self._resource_lock:
+                    self.adb_proc = adb_proc
+                video = _connect_forwarded(port, adb_proc, time.monotonic() + 16)
+                with self._resource_lock:
+                    self.video_sock = video
+                name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event).split(b"\0", 1)[0]
+                codec = _socket_read(video, 4, self.stop_event)
+                if codec != b"h264":
+                    raise VideoProbeError("scrcpy 未输出预期 H.264 编码")
+                header = _socket_read(video, HEADER_BYTES, self.stop_event)
+                flags, width, height = struct.unpack(">III", header)
+                if not flags & 0x80000000 or not 0 < width <= 8192 or not 0 < height <= 8192:
+                    raise VideoProbeError("scrcpy 视频初始化尺寸无效")
+                first_header = _socket_read(video, HEADER_BYTES, self.stop_event)
+
+                # No transcoding; only repack existing H264 bytes into fMP4.
+                mux = subprocess.Popen([
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                    "-f", "h264", "-r", "30", "-i", "pipe:0",
+                    "-map", "0:v:0", "-an", "-c:v", "copy",
+                    "-movflags", "+empty_moov+default_base_moof+frag_every_frame",
+                    "-f", "mp4", "pipe:1",
+                ], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                   stderr=mux_log, bufsize=0)
+                with self._resource_lock:
+                    self.ffmpeg_proc = mux
+
+                def feed():
+                    try:
+                        self._stream_to_ffmpeg(video, mux, first_header)
+                    except StreamStopped:
+                        pass
+                    except VideoProbeError as exc:
+                        if not self.stop_event.is_set():
+                            try:
+                                self._emit(("error", str(exc)))
+                            except (VideoProbeError, StreamStopped):
+                                pass
+                    finally:
+                        if mux.stdin:
+                            try:
+                                mux.stdin.close()
+                            except OSError:
+                                pass
+
+                feeder = threading.Thread(target=feed, daemon=True, name="easyadb-m2-feeder")
+                feeder.start()
+                init_buffer = bytearray()
+                has_init = False
+                while not self.stop_event.is_set():
+                    data = os.read(mux.stdout.fileno(), 32768)
+                    if not data:
+                        if not self.stop_event.is_set():
+                            mux_log.flush()
+                            mux_log.seek(0)
+                            raw = mux_log.read(10000).decode("utf-8", "replace").lower()
+                            msg = ("FFmpeg H.264 转封装失败，请重新开始实验"
+                                   if "error" in raw or mux.poll() not in (0, None)
+                                   else "视频编码流已结束")
+                            raise VideoProbeError(msg)
+                        break
+                    if not has_init:
+                        init_buffer.extend(data)
+                        if len(init_buffer) > MAX_INIT_BYTES:
+                            raise VideoProbeError("MP4 初始化信息过大")
+                        parsed = parse_init_segments(init_buffer)
+                        if parsed is None:
+                            continue
+                        end, init, mime = parsed
+                        self._emit(("init", {"mime": mime, "width": width, "height": height,
+                                             "profile": self.profile,
+                                             "codec": "h264", "device": name.decode("utf-8", "replace")}))
+                        self._emit(("bytes", init))
+                        remainder = bytes(init_buffer[end:])
+                        if remainder:
+                            self._emit(("bytes", remainder))
+                        init_buffer.clear()
+                        has_init = True
+                    else:
+                        self._emit(("bytes", data))
+        except StreamStopped:
+            pass
+        except VideoProbeError as exc:
+            failure = str(exc)
+        except (OSError, subprocess.SubprocessError) as exc:
+            failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
+        finally:
+            self.stop()
+            if feeder:
+                feeder.join(timeout=3)
+            for proc in (self.ffmpeg_proc, self.adb_proc):
+                if proc is not None:
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2)
+            if port is not None:
+                try:
+                    _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
+                except VideoProbeError:
+                    pass
+            try:
+                _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
+            except VideoProbeError:
+                pass
+            if failure and not self.stop_event.is_set():
+                # stop() has set it; still explicitly deliver the error.
+                pass
+            if failure:
+                try:
+                    self.events.put_nowait(("error", failure))
+                except queue.Full:
+                    pass
+            try:
+                self.events.put_nowait(("end", None))
+            except queue.Full:
+                pass
+
+
+class LiveRegistry:
+    """One user-opened session per logical device, no autonomous startup."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.sessions = {}
+
+    def reserve(self, device_id, session):
+        with self.lock:
+            if device_id in self.sessions:
+                return False
+            self.sessions[device_id] = session
+            return True
+
+    def release(self, device_id, session):
+        with self.lock:
+            if self.sessions.get(device_id) is session:
+                self.sessions.pop(device_id, None)
+
+    def stop_for(self, device_id):
+        with self.lock:
+            s = self.sessions.get(device_id)
+        if s:
+            s.stop()
+
+    def stop_all(self):
+        with self.lock:
+            sessions = list(self.sessions.values())
+        for s in sessions:
+            s.stop()
+        for s in sessions:
+            s.join(timeout=8)
