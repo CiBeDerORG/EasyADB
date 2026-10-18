@@ -548,7 +548,8 @@ function liveDiagnostic(diag){
   const stat=liveQualityMeter.sample(video,performance.now(),{
    renderedFrames:liveVideoFrames,
    frameAgeMs:liveVideoFrameAt?performance.now()-liveVideoFrameAt:null,
-   receiveMbps:traffic?traffic.mbps:null,queueBytes:player?player.queueBytes:null
+   receiveMbps:traffic?traffic.mbps:null,queueBytes:player?player.queueBytes:null,
+   procCpuPct:diag.proc_cpu_pct,procRssMib:diag.proc_rss_mib
   });
   const el=$('m2QualityMetrics');el.hidden=false;el.textContent=EasyADBMetrics.format(stat);
  }
@@ -607,7 +608,8 @@ function stopLive(){
     line.textContent=x.device+' · '+x.profile+' · '+format(x.seconds,0)+'s'+
      ' · 实测均值 '+format(x.avgFps)+' FPS / 掉帧 '+format(x.avgDropPct)+'%'+
      ' · 接收 '+format(x.avgReceiveMbps,2)+' Mbps / 缓冲 '+format(x.avgBufferSeconds,2)+'s'+
-     ' · 累计 '+EasyADBTraffic.size(x.totalBytes)+' / 峰值待追加 '+x.maxQueueBytes+'B';
+     ' · 累计 '+EasyADBTraffic.size(x.totalBytes)+' / 峰值待追加 '+x.maxQueueBytes+'B'+
+     ' · 本地进程 CPU '+format(x.avgCpuPct)+'% / RSS '+format(x.avgRssMib,2)+' MiB';
     return line;
    }));
   }
