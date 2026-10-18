@@ -21,8 +21,8 @@ const CHOICES=[
 ];
 const CUSTOM={
  max_size:[['960','960'],['1280','1280'],['1600','1600'],['0','原生']],
- video_bit_rate:[['2000000','2 Mbps'],['3000000','3 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps']],
- max_fps:[['15','15 FPS'],['24','24 FPS'],['30','30 FPS']]
+ video_bit_rate:[['2000000','2 Mbps'],['3000000','3 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps'],['18000000','18 Mbps'],['20000000','20 Mbps']],
+ max_fps:[['15','15 FPS'],['24','24 FPS'],['30','30 FPS'],['45','45 FPS'],['55','55 FPS'],['60','60 FPS']]
 };
 const choice=(options,value)=>{
  const select=make('select','multi-quality');

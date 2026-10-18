@@ -39,6 +39,8 @@ def test_original_probe_and_live_presets_are_unchanged():
     {"max_size": 8192, "video_bit_rate": 8_000_000, "max_fps": 30},
     {"max_size": 1600, "video_bit_rate": 99_000_000, "max_fps": 30},
     {"max_size": 1600, "video_bit_rate": 8_000_000, "max_fps": 120},
+    {"max_size": 1600, "video_bit_rate": 21_000_000, "max_fps": 60},
+    {"max_size": 1600, "video_bit_rate": 20_000_000, "max_fps": 61},
     {"max_size": 1600, "video_bit_rate": 8_000_000, "max_fps": 30,
      "shell": "adb disconnect"},
     [1600, 8_000_000, 30], "max_fps=120", None,
@@ -60,13 +62,19 @@ def test_unrecognized_presets_or_overrides_are_rejected(profile, quality):
 def test_every_allowed_custom_option_is_explicitly_bounded():
     assert CUSTOM_CHOICES == {
         "max_size": (0, 960, 1280, 1600),
-        "video_bit_rate": (2_000_000, 3_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000),
-        "max_fps": (15, 24, 30),
+        "video_bit_rate": (2_000_000, 3_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000, 18_000_000, 20_000_000),
+        "max_fps": (15, 24, 30, 45, 55, 60),
     }
     # Every field is independent, including the visible 960 / 3 Mbps / 24 FPS default.
     assert resolve_live_quality("custom", {
         "max_size": 960, "video_bit_rate": 3_000_000, "max_fps": 24,
     }) == LIVE_PROFILES["economy"]
+    # Requested combinations are independent; target limits are not measured output.
+    for rate in (18_000_000, 20_000_000):
+        for fps in (45, 55, 60):
+            assert resolve_live_quality("custom", {
+                "max_size": 960, "video_bit_rate": rate, "max_fps": fps,
+            }) == {"max_size": 960, "video_bit_rate": rate, "max_fps": fps}
     quality = resolve_live_quality("custom", {
         "max_size": 1280, "video_bit_rate": 4_000_000, "max_fps": 15,
     })
@@ -91,7 +99,7 @@ def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_pa
         {"profile": "baseline", "quality": {"max_fps": 120}},
         {"profile": "unknown"},
         {"profile": "custom", "quality": {
-            "max_size": 1600, "video_bit_rate": 16_000_000, "max_fps": 60,
+            "max_size": 1600, "video_bit_rate": 16_000_000, "max_fps": 61,
         }},
         {"profile": "custom", "quality": {
             "max_size": 1600, "video_bit_rate": 4_000_000, "max_fps": 30, "command": "shell",
@@ -138,7 +146,7 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
         def join(self, timeout=20): self.finished.wait(timeout)
 
     monkeypatch.setattr(mod, "LiveVideo", FakeStream)
-    quality = {"max_size": 1280, "video_bit_rate": 4_000_000, "max_fps": 24}
+    quality = {"max_size": 1280, "video_bit_rate": 20_000_000, "max_fps": 60}
     with TestClient(mod.app) as client:
         device = client.post("/api/devices", headers=AUTH, json={
             "name": "Phone", "ip": "10.10.30.206", "port": 40455,
@@ -187,6 +195,10 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     for field in ("max_size", "video_bit_rate", "max_fps"):
         assert field in multi
     assert "['3000000','3 Mbps']" in multi
+    for rate in (18, 20):
+        assert f"['{rate}000000','{rate} Mbps']" in multi
+    for fps in (45, 55, 60):
+        assert f"['{fps}','{fps} FPS']" in multi
     assert "qualityPayload(this.getChoice(d.id))" in multi
     # A running phone locks ONLY its own quality/route, not every device.
     assert "const busy=this.opening||this.getManagementBusy?.()" in multi
