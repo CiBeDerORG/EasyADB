@@ -1,0 +1,31 @@
+name: M1 tests
+on:
+  push:
+    branches: [feat/m1-multi-device]
+  pull_request:
+    branches: [feat/adb-connect-preview]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install -r server/requirements.txt
+          python -m pip install pytest httpx
+      - name: Compile code
+        run: python -m compileall -q server tests
+      - name: Check modal UI and deployment scripts
+        run: |
+          for script in scripts/*.sh; do sh -n "$script"; done
+          python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==3 and "firstPairDialog" in h and "firstPairForm" in h and "groupDialog" in h and "groupPrefix" in h and "deleteGroup" in h and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
+          node --check /tmp/easyadb-web.js
+      - name: Run mock ADB tests
+        env:
+          EASYADB_TOKEN: local-test-token-123
+        run: python -m pytest -q

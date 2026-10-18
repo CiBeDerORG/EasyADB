@@ -2,89 +2,421 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EasyADB · ADB 连接测试</title>
+<title>EasyADB · 设备管理</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0d1320;color:#eef3fb}
-*{box-sizing:border-box}body{margin:0;padding:32px 16px}main{max-width:1080px;margin:auto}
-header{margin-bottom:26px}h1{font-size:29px;margin:0 0 8px}h1 span{color:#80a4ff}p{line-height:1.55}
-.hint{color:#99acc6;font-size:13px}.grid{display:grid;grid-template-columns:minmax(280px,370px) 1fr;gap:20px;align-items:start}
-.panel{background:#172233;border:1px solid #34445e;border-radius:16px;padding:22px;min-width:0}h2{font-size:18px;margin:0 0 18px}
-label{display:block;font-size:13px;color:#c1d0e4;margin:12px 0 7px}
-input{width:100%;height:42px;padding:0 12px;border-radius:8px;border:1px solid #50627d;background:#101a2a;color:#fff;font:inherit}
+*{box-sizing:border-box}body{margin:0;padding:25px 15px}main{max-width:1220px;margin:auto}
+h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:0}p{line-height:1.5}
+.hint{color:#9baec9;font-size:13px}.grid{display:grid;grid-template-columns:minmax(310px,440px) 1fr;gap:17px;align-items:start}
+.panel{background:#172233;border:1px solid #34445e;border-radius:14px;padding:20px;min-width:0}
+.stack{display:grid;gap:16px}.heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+label{display:block;font-size:13px;color:#c1d0e4;margin:10px 0 6px}
+input{width:100%;height:40px;padding:0 11px;border-radius:8px;border:1px solid #50627d;background:#101a2a;color:#fff;font:inherit}
 input:focus{outline:2px solid #7094ff;outline-offset:1px}
-.row{display:grid;grid-template-columns:1fr 110px;gap:10px}
-button{background:#4772e7;color:#fff;font-weight:650;padding:11px 14px;border:0;border-radius:9px;cursor:pointer}
-button.secondary{background:#2a3b56;border:1px solid #516480}button:disabled{opacity:.5;cursor:not-allowed}
-.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:17px}
-.status{background:#25344d;border-radius:9px;padding:12px;margin-top:16px;min-height:43px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+button{background:#4772e7;color:#fff;font-weight:650;padding:9px 12px;border:0;border-radius:8px;cursor:pointer}
+button.secondary{background:#2a3b56;border:1px solid #516480}button.danger{background:#783345}
+button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.two{display:grid;grid-template-columns:1fr 120px;gap:9px}.check{display:flex;align-items:center;gap:8px;font-size:13px;color:#c7d7ed;margin-top:12px}
+.check input{width:17px;height:17px;flex:none}
+.status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
-details{border-top:1px solid #34445e;margin-top:23px;padding-top:18px}summary{cursor:pointer;font-weight:650}
-.head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:15px}
-.head h2{margin:0}.device{font-size:12px;color:#a3b6d0;overflow-wrap:anywhere}
-.screen{background:#0a101b;border:1px dashed #475d7a;min-height:400px;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.screen img{display:block;max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
-.screen img[hidden],.screen .placeholder[hidden]{display:none}
-.placeholder{text-align:center;color:#9babc2;font-size:14px;line-height:1.8;padding:28px}
-@media(max-width:760px){.grid{grid-template-columns:1fr}body{padding:19px 12px}.panel{padding:18px}}
+.device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
+.group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
+.device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
+.group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
+.device-group>summary::-webkit-details-marker{display:none}
+.device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
+.device-group:not([open])>summary:before{transform:rotate(-90deg)}
+.group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
+.group-items{display:grid;gap:9px;padding:0 10px 10px}
+.group-items .item{background:#101a2a}
+[hidden]{display:none!important}
+dialog.device-dialog{padding:0;color:#eef3fb;background:#172233;border:1px solid #405777;border-radius:16px;width:min(540px,calc(100% - 26px));max-height:min(92vh,820px);box-shadow:0 20px 70px #0009;overflow-y:auto}
+dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #34445e;padding:18px 20px}
+.modal-body{padding:7px 20px 20px}
+.modal-head button{padding:5px 10px;font-size:20px;line-height:1.2}
+.modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
+.modal-status{min-height:0;margin-top:12px}
+.modal-status:empty{display:none}
+.item{border:1px solid #40536f;border-radius:10px;padding:12px;background:#101a2a}
+.item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px}
+.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}.muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
+.pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
+.pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
+.pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
+.item-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.item-actions button{font-size:12px;padding:6px 10px}
+.address-row{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
+.address-row.selected{background:#213956;border:1px solid #5475a5;border-radius:7px;padding:5px 7px}
+.address-switch{font-size:11px;padding:4px 8px;white-space:nowrap}
+.address-switch.selected{background:#24533e;color:#b5f1d0;border:1px solid #397656}
+.address-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.first-pair{font-size:11px;padding:4px 8px;white-space:nowrap;background:#42659b}
+.pairing-destination{font-weight:700;color:#b5cffd;overflow-wrap:anywhere}
+.pill.idle{background:#314359}
+.screen{display:flex;justify-content:center;align-items:center;min-height:410px;background:#0a101b;border:1px dashed #475d7a;border-radius:11px;overflow:hidden}
+.screen img{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
+.screen img[hidden],.screen .placeholder[hidden]{display:none}.placeholder{text-align:center;color:#9babc2;font-size:13px;line-height:1.8;padding:25px}
+details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
+@media(max-width:820px){.grid{grid-template-columns:1fr}.panel{padding:16px}body{padding:14px 10px}}
 </style>
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 连接测试</span></h1><p class="hint">通过无线 ADB 连接手机，并在网页查看当前截图。暂不支持实时投屏或触摸控制。</p></header>
+<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M1 · 保存多台设备、分别连接与截图，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。暂不支持实时投屏或控制。</p></header>
 <div class="grid">
-<section class="panel">
-<h2>连接设备</h2>
-<label for="token">访问密钥（.env 中的 EASYADB_TOKEN）</label><input id="token" type="password" autocomplete="off" placeholder="输入访问密钥">
-<label for="ip">手机 IPv4 地址</label><input id="ip" type="text" spellcheck="false" placeholder="192.168.31.100">
-<label for="port">无线调试主页的连接端口</label><input id="port" type="number" min="1" max="65535" placeholder="例如 39521">
-<div class="actions"><button id="connect">连接并截图</button><button id="refresh" class="secondary" disabled>刷新截图</button></div>
-<div id="status" class="status" role="status" aria-live="polite">尚未连接</div>
-<details><summary>第一次连接？先配对</summary>
-<p class="hint">手机 → 开发者选项 → 无线调试 → 使用配对码配对设备。请填写弹窗中的配对端口，而不是上面的连接端口。</p>
-<div class="row"><div><label for="pairPort">配对端口</label><input id="pairPort" type="number" min="1" max="65535" placeholder="配对端口"></div>
-<div><label for="code">六位配对码</label><input id="code" type="text" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="123456"></div></div>
-<div class="actions"><button class="secondary" id="pair">执行配对</button></div>
-</details>
-<p class="hint">EasyADB 所在的机器必须能访问手机显示的 IP 和端口，EasyTier 组网还需保证对应子网路由可达。</p>
-</section>
-<section class="panel">
-<div class="head"><h2>手机画面</h2><span class="device" id="device">未连接</span></div>
-<div class="screen"><div class="placeholder" id="placeholder">连接成功后将在此展示当前手机截图。<br>点击「刷新截图」可获取最新画面。</div><img id="shot" alt="手机当前截图" hidden></div>
-<p class="hint">这里是按需截图，不会持续采集屏幕。</p>
-</section>
+ <div class="stack">
+  <section class="panel">
+   <h2>访问配置</h2>
+   <label for="token">访问密钥（EASYADB_TOKEN）</label>
+   <div class="two" style="grid-template-columns:1fr auto"><input id="token" type="password" autocomplete="off" placeholder="输入服务端访问密钥"><button id="load">加载设备</button></div>
+   <p class="hint">密钥仅保存在当前页面内存中，刷新网页需重新输入。</p>
+   <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
+  </section>
+  <section class="panel">
+   <div class="heading"><h2>设备列表</h2><div class="buttons" style="margin:0"><button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button><button id="newDevice" type="button" disabled>＋ 添加设备</button><button class="secondary" id="refreshAll" disabled>检查全部状态</button></div></div>
+   <div class="muted" id="count">尚未加载</div><div class="device-list" id="devices" style="margin-top:12px"></div>
+  </section>
+  <!-- Add/edit form is an accessible native modal, not a permanent sidebar. -->
+ </div>
+ <section class="panel">
+  <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
+   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button id="shotButton" disabled>刷新截图</button></div>
+  </div>
+  <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"></div>
+  <p class="hint">截图按需获取；切换设备会清除旧画面，避免显示另一台手机的截图。所有设备的操作通过稳定设备 ID 定位。</p>
+ </section>
 </div>
+<dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
+ <div class="modal-head"><h2 id="formTitle">添加设备</h2><button class="secondary" type="button" id="closeDialog" aria-label="关闭弹窗">×</button></div>
+ <div class="modal-body">
+  <form id="form">
+   <label for="name">设备名称</label><input id="name" required maxlength="64" placeholder="例如：小米 11">
+   <label for="group">设备分组（可选）</label><input id="group" maxlength="64" list="groupNames" placeholder="选择已有分组，或输入新分组"><datalist id="groupNames"></datalist>
+   <div class="two"><div><label for="ip">组网 IP（IPv4）</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
+   <div><label for="port">ADB 连接端口</label><input id="port" required type="number" min="1" max="65535" placeholder="动态端口"></div></div>
+      <div class="status error modal-status" id="formMessage" role="alert" hidden></div>
+   <div class="modal-actions"><button class="secondary" id="cancelDialog" type="button">取消</button><button id="save" type="submit">保存设备</button></div>
+  </form>
+  <details><summary>第一次连接？先配对无线调试</summary>
+   <p class="hint">手机无线调试 → 使用配对码配对设备。这里使用<strong>配对弹窗端口</strong>；设备记录应填写无线调试主页的连接端口。</p>
+   <div class="two"><div><label for="pairIp">手机 IPv4</label><input id="pairIp" placeholder="192.168.31.100"></div><div><label for="pairPort">配对端口</label><input id="pairPort" type="number" min="1" max="65535"></div></div>
+   <label for="pairCode">六位配对码</label><input id="pairCode" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456">
+   <div class="buttons"><button class="secondary" id="pair" type="button">执行配对</button></div>
+   <div class="status modal-status" id="pairMessage" role="status" aria-live="polite" hidden></div>
+  </details>
+ </div>
+</dialog>
+<dialog class="device-dialog" id="groupDialog" aria-labelledby="groupFormTitle">
+ <div class="modal-head"><h2 id="groupFormTitle">添加分组</h2><button class="secondary" type="button" id="closeGroup" aria-label="关闭分组弹窗">×</button></div>
+ <div class="modal-body"><form id="groupForm">
+  <label for="groupName">分组名称</label><input id="groupName" required maxlength="64" placeholder="家里 OpenWrt">
+  <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
+  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。连接地址由用户手动选择，失败不会自动回退；留空仅使用组网 IP。</p>
+  <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
+  <div class="modal-actions"><button class="danger" id="deleteGroup" type="button" style="margin-right:auto" hidden>删除分组</button><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
+ </form></div>
+</dialog>
+<dialog class="device-dialog" id="firstPairDialog" aria-labelledby="firstPairTitle">
+ <div class="modal-head"><h2 id="firstPairTitle">首次连接 · 无线 ADB 配对</h2><button class="secondary" id="closeFirstPair" type="button" aria-label="关闭首次连接弹窗">×</button></div>
+ <div class="modal-body">
+  <p class="hint">在手机上打开「开发者选项 → 无线调试 → 使用配对码配对设备」，保持配对窗口开启，再填写下面的信息。</p>
+  <form id="firstPairForm">
+   <label for="firstPairIp">当前选择的配对目标 IP</label>
+   <input id="firstPairIp" readonly aria-readonly="true">
+   <p class="hint">此地址由已保存的「当前选择」决定，不能在配对弹窗中更换线路。</p>
+   <div class="two">
+    <div><label for="firstPairPort">配对端口（不是设备连接端口）</label><input id="firstPairPort" type="number" min="1" max="65535" required placeholder="手机配对窗口显示的端口"></div>
+    <div><label for="firstPairCode">六位配对码</label><input id="firstPairCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required placeholder="123456"></div>
+   </div>
+   <div id="firstPairMessage" class="status modal-status" role="status" aria-live="polite" hidden></div>
+   <div class="modal-actions"><button class="secondary" id="cancelFirstPair" type="button">取消</button><button id="submitFirstPair" type="submit">执行配对</button></div>
+  </form>
+  <p class="hint">配对成功后关闭弹窗，仍需手动点击设备「连接」。不会自动重试或切换 IP。</p>
+ </div>
+</dialog>
 </main>
 <script>
-const $=id=>document.getElementById(id);let screenshotUrl=null;let connected=false;
-function message(text,kind=''){$('status').textContent=text;$('status').className='status '+kind;}
-function busy(value){$('connect').disabled=value;$('pair').disabled=value;$('refresh').disabled=value||!connected;}
+const $=id=>document.getElementById(id);
+let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
+const groupOpen=new Map();
+const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
+function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
 async function api(path,options={}){
- const r=await fetch(path,{...options,headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()},cache:'no-store'});
- if(!r.ok){let info={};try{info=await r.json();}catch{}throw Error(info.detail||'请求失败（'+r.status+'）');}return r;
+ const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
+ if(!r.ok){let e={};try{e=await r.json();}catch{}throw Error(typeof e.detail==='string'?e.detail:'请求失败：HTTP '+r.status);}
+ return r;
 }
-async function screenshot(){
- const r=await api('/api/screenshot');const blob=await r.blob();const next=URL.createObjectURL(blob);
- $('shot').src=next;$('shot').hidden=false;$('placeholder').hidden=true;
- if(screenshotUrl)URL.revokeObjectURL(screenshotUrl);screenshotUrl=next;
+function clearShot(){
+ $('shot').hidden=true;$('shot').removeAttribute('src');$('placeholder').hidden=false;
+ if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
-$('connect').addEventListener('click',async()=>{
- busy(true);message('正在建立 ADB 连接…');
+function elem(tag,className,text){
+ const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;
+}
+function action(label,handler,cls='secondary'){
+ const b=elem('button',cls,label);b.type='button';b.addEventListener('click',handler);return b;
+}
+function select(id){
+ if(selected!==id){selected=id;clearShot();}
+ render();
+}
+function render(){
+ const list=$('devices');list.replaceChildren();
+ const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,items:[]}]));
+ for(const d of devices){
+  const key=d.group_name?'named:'+d.group_name:'ungrouped';
+  if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',ip_prefix:null,items:[]});
+  grouped.get(key).items.push(d);
+ }
+ const keys=[...grouped.keys()].sort((a,b)=>a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
+ $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
+ for(const key of keys){
+  const g=grouped.get(key),section=elem('details','device-group'),shell=elem('div','group-shell');
+  section.open=groupOpen.has(key)?groupOpen.get(key):true;
+  section.addEventListener('toggle',()=>groupOpen.set(key,section.open));
+  const summary=elem('summary');
+  summary.append(elem('span','',g.title));
+  if(g.ip_prefix)summary.append(elem('span','group-prefix',g.ip_prefix));
+  summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
+  section.append(summary);
+  const wrapper=elem('div','group-items');
+  for(const d of g.items){
+   const item=elem('div','item'+(d.id===selected?' active':''));
+   const top=elem('div','item-top'),info=elem('div');
+   info.append(elem('div','item-name',d.name));
+   const addAddress=(label,route,ip)=>{
+    const chosen=d.selected_route===route,row=elem('div','address-row'+(chosen?' selected':''));
+    row.append(elem('span','muted',label+'：'+ip+':'+d.port));
+    const change=action(chosen?'✓ 当前选择':'⇄ 切换',()=>switchRoute(d.id,route),
+                        'secondary address-switch'+(chosen?' selected':''));
+    change.disabled=loading||chosen;
+    change.setAttribute('aria-label','将'+d.name+'的当前连接设为'+label+' '+ip+':'+d.port);
+    const controls=elem('div','address-controls');
+    controls.append(change);
+    // Only a failed explicit "连接" attempt exposes first-time pairing;
+    // a mere status check or an idle device must not show the button.
+    if(chosen&&d.connect_failed){
+     const pairButton=action('首次连接',()=>openFirstPair(d.id),'first-pair');
+     pairButton.disabled=loading;
+     pairButton.setAttribute('aria-label','为'+d.name+'当前选择的'+label+'进行首次无线配对');
+     controls.append(pairButton);
+    }
+    row.append(controls);info.append(row);
+   };
+   addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
+   if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
+   top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));item.append(top);
+   if(d.status==='connected')item.append(elem('div','muted','ADB 已连接：'+d.active_serial));
+   if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
+   if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
+   const actions=elem('div','item-actions');
+   actions.append(action('查看',()=>select(d.id)),action('连接',()=>runConnect(d.id)));
+   actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
+   item.append(actions);wrapper.append(item);
+  }
+  if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
+  section.append(wrapper);shell.append(section);
+  if(key!=='ungrouped')shell.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
+  list.append(shell);
+ }
+ if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
+ const d=devices.find(x=>x.id===selected);
+ $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
+ $('previewInfo').textContent=d?('当前选择：'+(d.selected_route==='lan'?'内网 IP':'组网 IP')+' · '+d.selected_serial+(d.status==='connected'?' · 已连接':' · 待手动连接')):'从左侧列表选择设备';
+ $('connect').disabled=loading||!d;
+ $('shotButton').disabled=loading||!d||d.status!=='connected';
+ $('refreshAll').disabled=loading||!loaded;
+ $('newDevice').disabled=loading||!loaded;
+ $('newGroup').disabled=loading||!loaded;
+}
+async function load(quiet=false){
+ if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
  try{
-  const r=await api('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('ip').value.trim(),port:Number($('port').value)})});
-  const data=await r.json();connected=true;$('device').textContent=data.serial+' · ADB 已连接';
-  message('ADB 已连接，正在获取截图…','ok');await screenshot();message('连接成功，截图已更新','ok');
- }catch(e){message(e.message,'error');}finally{busy(false);}
+  const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
+  devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected)){selected=null;clearShot();}
+  render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
+ }catch(e){if(!quiet)message(e.message,'error');}
+}
+function reset(){
+ editing=null;$('form').reset();$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
+ $('formMessage').hidden=true;$('formMessage').textContent='';
+ $('pairMessage').hidden=true;$('pairMessage').textContent='';
+ $('pairCode').value='';$('pairPort').value='';$('pairIp').value='';
+}
+function modalMessage(text,kind='error',id='formMessage'){
+ const el=$(id);el.hidden=false;el.textContent=text;el.className='status modal-status '+kind;
+}
+function closeModal(){if(loading)return;$('deviceDialog').close();}
+function openModal(id=null){
+ if(loading||!loaded)return;
+ reset();const d=id?devices.find(x=>x.id===id):null;
+ if(id&&!d)return;
+ const options=$('groupNames');options.replaceChildren();
+ for(const name of groups.map(x=>x.name).sort((a,b)=>a.localeCompare(b,'zh-CN'))){
+  const opt=document.createElement('option');opt.value=name;options.append(opt);
+ }
+ if(d){
+  editing=id;$('name').value=d.name;$('group').value=d.group_name;
+  $('ip').value=d.ip;$('port').value=d.port;
+  $('formTitle').textContent='编辑设备';$('save').textContent='保存修改';$('pairIp').value=d.ip;
+ }
+ $('deviceDialog').showModal();$('name').focus();
+}
+function edit(id){openModal(id);}
+function openGroup(name=null){
+ if(loading||!loaded)return;
+ const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
+ editingGroup=g?g.name:null;
+ $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
+ $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
+ $('saveGroup').textContent=g?'保存修改':'保存分组';
+ $('deleteGroup').hidden=!g;
+ if(g){$('groupName').value=g.name;$('groupPrefix').value=g.ip_prefix||'';}
+ $('groupDialog').showModal();$('groupName').focus();
+}
+function closeGroup(){if(!loading)$('groupDialog').close();}
+function openFirstPair(id){
+ if(loading||!loaded)return;
+ const d=devices.find(x=>x.id===id);
+ if(!d||!d.connect_failed||!d.selected_serial)return;
+ pairingDeviceId=d.id;pairingSerial=d.selected_serial;
+ $('firstPairForm').reset();
+ $('firstPairTitle').textContent='首次连接 · '+d.name;
+ $('firstPairIp').value=d.selected_serial.slice(0,d.selected_serial.lastIndexOf(':'));
+ $('firstPairMessage').hidden=true;$('firstPairMessage').textContent='';
+ $('firstPairDialog').showModal();$('firstPairPort').focus();
+}
+function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
+async function switchRoute(id,route){
+ if(loading)return;loading=true;render();
+ message('正在保存当前连接地址…');
+ try{
+  const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
+   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
+  })).json();
+  devices=devices.map(d=>d.id===id?result:d);
+  if(selected===id)clearShot();
+  await load(true);
+  message('已切换为'+(route==='lan'?'内网 IP':'组网 IP')+'，需要点击「连接」才能建立 ADB 连接','ok');
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
+}
+async function runConnect(id){
+ if(loading)return;select(id);loading=true;render();message('正在连接所选设备…');
+ try{
+  const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
+  devices=devices.map(x=>x.id===id?d:x);message(d.name+' 已连接','ok');
+  await load(true);
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
+}
+async function remove(id){
+ const d=devices.find(x=>x.id===id);if(!d||loading||!confirm('从列表删除「'+d.name+'」？不会清除手机端 ADB 配对授权。'))return;
+ loading=true;render();
+ try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id){selected=null;clearShot();}if(editing===id && !$('deviceDialog').open)reset();await load(true);message('设备已从列表删除','ok');}
+ catch(e){message(e.message,'error');}finally{loading=false;render();}
+}
+$('load').addEventListener('click',()=>load());
+$('token').addEventListener('input',()=>{loaded=false;devices=[];groups=[];selected=null;clearShot();render();});
+$('newDevice').addEventListener('click',()=>openModal());
+$('newGroup').addEventListener('click',()=>openGroup());
+$('closeFirstPair').addEventListener('click',closeFirstPair);
+$('cancelFirstPair').addEventListener('click',closeFirstPair);
+$('firstPairDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('firstPairDialog').addEventListener('close',()=>{
+ pairingDeviceId=null;pairingSerial=null;
+ $('firstPairForm').reset();$('firstPairMessage').hidden=true;
+});
+$('firstPairDialog').addEventListener('click',ev=>{
+ if(ev.target===$('firstPairDialog')&&!loading)closeFirstPair();
+});
+$('firstPairForm').addEventListener('submit',async ev=>{
+ ev.preventDefault();
+ if(loading||!pairingDeviceId||!pairingSerial)return;
+ const id=pairingDeviceId;
+ loading=true;$('submitFirstPair').disabled=true;render();
+ try{
+  const response=await(await api('/api/devices/'+encodeURIComponent(id)+'/pair',{
+   method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({
+    port:Number($('firstPairPort').value),
+    code:$('firstPairCode').value.trim(),
+    selected_serial:pairingSerial
+   })
+  })).json();
+  $('firstPairCode').value='';
+  modalMessage(response.message+'。请关闭弹窗，再手动点击「连接」；不会自动重试。','ok','firstPairMessage');
+ }catch(e){
+  modalMessage(e.message,'error','firstPairMessage');
+ }finally{loading=false;$('submitFirstPair').disabled=false;render();}
+});
+$('deleteGroup').addEventListener('click',async()=>{
+ if(loading||!editingGroup)return;
+ const name=editingGroup;
+ const count=devices.filter(d=>d.group_name===name).length;
+ const detail=count?'列表中的 '+count+' 台设备会移入「未分组」。':'这是一个空分组。';
+ if(!confirm('确认删除分组「'+name+'」？\n'+detail+'\n设备记录和 ADB 授权会保留，原分组内网 IP 映射会取消。'))return;
+ loading=true;render();
+ try{
+  const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
+  $('groupDialog').close();groupOpen.delete('named:'+name);
+  clearShot();await load(true);
+  message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
+ }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+});
+$('closeGroup').addEventListener('click',closeGroup);
+$('cancelGroup').addEventListener('click',closeGroup);
+$('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('groupDialog').addEventListener('close',()=>{editingGroup=null;});
+$('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
+$('groupForm').addEventListener('submit',async ev=>{
+ ev.preventDefault();if(loading)return;loading=true;render();
+ const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
+ try{
+  const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
+  await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  $('groupDialog').close();clearShot();await load(true);message('分组设置已保存','ok');
+ }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+});
+$('closeDialog').addEventListener('click',closeModal);
+$('cancelDialog').addEventListener('click',closeModal);
+$('deviceDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('deviceDialog').addEventListener('close',reset);
+$('deviceDialog').addEventListener('click',ev=>{
+ if(ev.target===$('deviceDialog')&&!loading)closeModal();
+});
+$('form').addEventListener('submit',async ev=>{
+ ev.preventDefault();if(loading)return;loading=true;render();
+ const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
+ try{
+  const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
+  const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+  selected=d.id;clearShot();$('deviceDialog').close();await load(true);message('设备已保存','ok');
+ }catch(e){modalMessage(e.message);}finally{loading=false;render();}
+});
+$('refreshAll').addEventListener('click',async()=>{
+ if(loading)return;loading=true;render();message('正在逐台检查 ADB 状态…');
+ try{devices=await(await api('/api/devices/refresh',{method:'POST'})).json();render();message('所选连接地址的状态检查已完成；没有自动发起连接','ok');}
+ catch(e){message(e.message,'error');}finally{loading=false;render();}
+});
+$('connect').addEventListener('click',()=>{if(selected)runConnect(selected);});
+$('shotButton').addEventListener('click',async()=>{
+ const id=selected;if(!id||loading)return;loading=true;render();message('正在获取截图…');
+ try{
+  const blob=await(await api('/api/devices/'+encodeURIComponent(id)+'/screenshot')).blob();
+  if(selected===id){const next=URL.createObjectURL(blob);clearShot();shotUrl=next;$('shot').src=next;$('shot').hidden=false;$('placeholder').hidden=true;message('截图已更新','ok');}
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
 });
 $('pair').addEventListener('click',async()=>{
- busy(true);message('正在进行配对…');
+ if(loading)return;loading=true;render();message('正在配对…');
  try{
-  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('ip').value.trim(),port:Number($('pairPort').value),code:$('code').value.trim()})});
-  const data=await r.json();$('code').value='';message(data.message,'ok');
- }catch(e){message(e.message,'error');}finally{busy(false);}
+  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim()||$('ip').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
+  $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
+ }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
 });
-$('refresh').addEventListener('click',async()=>{
- busy(true);message('正在获取截图…');try{await screenshot();message('截图已更新','ok');}catch(e){message(e.message,'error');}finally{busy(false);}
-});
+render();
 </script>
 </body>
 </html>

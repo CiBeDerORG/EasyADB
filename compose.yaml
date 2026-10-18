@@ -16,10 +16,12 @@ services:
     restart: unless-stopped
     environment:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
+      EASYADB_DB: /app/data/devices.sqlite3
     ports:
       - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
     volumes:
       - ./data/adb:/root/.android
+      - ./data/storage:/app/data
     networks:
       - default
       - proxy-net
