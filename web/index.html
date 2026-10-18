@@ -46,6 +46,11 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
 .pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
 .item-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.item-actions button{font-size:12px;padding:6px 10px}
+.address-row{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
+.address-row.selected{background:#213956;border:1px solid #5475a5;border-radius:7px;padding:5px 7px}
+.address-switch{font-size:11px;padding:4px 8px;white-space:nowrap}
+.address-switch.selected{background:#24533e;color:#b5f1d0;border:1px solid #397656}
+.pill.idle{background:#314359}
 .screen{display:flex;justify-content:center;align-items:center;min-height:410px;background:#0a101b;border:1px dashed #475d7a;border-radius:11px;overflow:hidden}
 .screen img{max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
 .screen img[hidden],.screen .placeholder[hidden]{display:none}.placeholder{text-align:center;color:#9babc2;font-size:13px;line-height:1.8;padding:25px}
@@ -55,7 +60,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M1 · 保存多台设备、分别连接与截图，后台检查状态并按设置重连。暂不支持实时投屏或控制。</p></header>
+<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M1 · 保存多台设备、分别连接与截图，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。暂不支持实时投屏或控制。</p></header>
 <div class="grid">
  <div class="stack">
   <section class="panel">
@@ -87,8 +92,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <label for="group">设备分组（可选）</label><input id="group" maxlength="64" list="groupNames" placeholder="选择已有分组，或输入新分组"><datalist id="groupNames"></datalist>
    <div class="two"><div><label for="ip">组网 IP（IPv4）</label><input id="ip" required placeholder="192.168.31.100" spellcheck="false"></div>
    <div><label for="port">ADB 连接端口</label><input id="port" required type="number" min="1" max="65535" placeholder="动态端口"></div></div>
-   <label class="check"><input type="checkbox" id="auto" checked>断线后自动尝试连接（每轮检测）</label>
-   <div class="status error modal-status" id="formMessage" role="alert" hidden></div>
+      <div class="status error modal-status" id="formMessage" role="alert" hidden></div>
    <div class="modal-actions"><button class="secondary" id="cancelDialog" type="button">取消</button><button id="save" type="submit">保存设备</button></div>
   </form>
   <details><summary>第一次连接？先配对无线调试</summary>
@@ -115,7 +119,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,loading=false,loaded=false,shotUrl=null;
 const groupOpen=new Map();
-const labels={connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
+const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
 async function api(path,options={}){
  const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
@@ -159,10 +163,20 @@ function render(){
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
    const top=elem('div','item-top'),info=elem('div');
-   info.append(elem('div','item-name',d.name),elem('div','muted','组网 IP：'+(d.mesh_ip||d.ip)+':'+d.port));
-   if(d.lan_ip)info.append(elem('div','muted','内网 IP：'+d.lan_ip+':'+d.port));
+   info.append(elem('div','item-name',d.name));
+   const addAddress=(label,route,ip)=>{
+    const chosen=d.selected_route===route,row=elem('div','address-row'+(chosen?' selected':''));
+    row.append(elem('span','muted',label+'：'+ip+':'+d.port));
+    const change=action(chosen?'✓ 当前选择':'⇄ 切换',()=>switchRoute(d.id,route),
+                        'secondary address-switch'+(chosen?' selected':''));
+    change.disabled=loading||chosen;
+    change.setAttribute('aria-label','将'+d.name+'的当前连接设为'+label+' '+ip+':'+d.port);
+    row.append(change);info.append(row);
+   };
+   addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
+   if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
    top.append(info,elem('span','pill '+d.status,labels[d.status]||'待检查'));item.append(top);
-   if(d.status==='connected')item.append(elem('div','muted','当前连接：'+(d.active_route==='lan'?'内网 IP':'组网 IP')+' · '+d.active_serial));
+   if(d.status==='connected')item.append(elem('div','muted','ADB 已连接：'+d.active_serial));
    if(d.model||d.android_version)item.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
    if(d.last_error&&d.status!=='connected')item.append(elem('div','muted',d.last_error));
    const actions=elem('div','item-actions');
@@ -178,7 +192,7 @@ function render(){
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
  $('previewTitle').textContent=d?d.name+' / 设备截图':'设备截图';
- $('previewInfo').textContent=d?(d.status==='connected'?'当前连接：'+(d.active_route==='lan'?'内网 IP':'组网 IP')+' · '+d.active_serial:'组网 IP：'+(d.mesh_ip||d.ip)+(d.lan_ip?' · 内网 IP：'+d.lan_ip:'')):'从左侧列表选择设备';
+ $('previewInfo').textContent=d?('当前选择：'+(d.selected_route==='lan'?'内网 IP':'组网 IP')+' · '+d.selected_serial+(d.status==='connected'?' · 已连接':' · 待手动连接')):'从左侧列表选择设备';
  $('connect').disabled=loading||!d;
  $('shotButton').disabled=loading||!d||d.status!=='connected';
  $('refreshAll').disabled=loading||!loaded;
@@ -194,7 +208,7 @@ async function load(quiet=false){
  }catch(e){if(!quiet)message(e.message,'error');}
 }
 function reset(){
- editing=null;$('form').reset();$('auto').checked=true;$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
+ editing=null;$('form').reset();$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
  $('formMessage').hidden=true;$('formMessage').textContent='';
  $('pairMessage').hidden=true;$('pairMessage').textContent='';
  $('pairCode').value='';$('pairPort').value='';$('pairIp').value='';
@@ -213,7 +227,7 @@ function openModal(id=null){
  }
  if(d){
   editing=id;$('name').value=d.name;$('group').value=d.group_name;
-  $('ip').value=d.ip;$('port').value=d.port;$('auto').checked=d.auto_reconnect;
+  $('ip').value=d.ip;$('port').value=d.port;
   $('formTitle').textContent='编辑设备';$('save').textContent='保存修改';$('pairIp').value=d.ip;
  }
  $('deviceDialog').showModal();$('name').focus();
@@ -231,6 +245,20 @@ function openGroup(name=null){
  $('groupDialog').showModal();$('groupName').focus();
 }
 function closeGroup(){if(!loading)$('groupDialog').close();}
+async function switchRoute(id,route){
+ if(loading)return;loading=true;render();
+ message('正在保存当前连接地址…');
+ try{
+  const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
+   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
+  })).json();
+  devices=devices.map(d=>d.id===id?result:d);
+  if(selected===id)clearShot();
+  await load(true);
+  message('已切换为'+(route==='lan'?'内网 IP':'组网 IP')+'，需要点击「连接」才能建立 ADB 连接','ok');
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
+}
 async function runConnect(id){
  if(loading)return;select(id);loading=true;render();message('正在连接所选设备…');
  try{
@@ -287,7 +315,7 @@ $('deviceDialog').addEventListener('click',ev=>{
 });
 $('form').addEventListener('submit',async ev=>{
  ev.preventDefault();if(loading)return;loading=true;render();
- const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value),auto_reconnect:$('auto').checked};
+ const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
   const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
@@ -296,7 +324,7 @@ $('form').addEventListener('submit',async ev=>{
 });
 $('refreshAll').addEventListener('click',async()=>{
  if(loading)return;loading=true;render();message('正在逐台检查 ADB 状态…');
- try{devices=await(await api('/api/devices/refresh',{method:'POST'})).json();render();message('全部设备检查完成','ok');}
+ try{devices=await(await api('/api/devices/refresh',{method:'POST'})).json();render();message('所选连接地址的状态检查已完成；没有自动发起连接','ok');}
  catch(e){message(e.message,'error');}finally{loading=false;render();}
 });
 $('connect').addEventListener('click',()=>{if(selected)runConnect(selected);});
@@ -315,9 +343,6 @@ $('pair').addEventListener('click',async()=>{
   $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
  }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
 });
-// This timer only re-renders the monitor's cached states; it does not send ADB
-// commands and does not launch additional connection polling loops.
-setInterval(()=>{if(!loading&&$('token').value.trim()&&!document.hidden)load(true);},20000);
 render();
 </script>
 </body>
