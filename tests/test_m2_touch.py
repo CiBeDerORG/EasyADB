@@ -71,6 +71,8 @@ def test_live_touch_sends_only_its_own_control_socket():
         assert len(first) == 32 and first[0:2] == b"\x02\x00"
         with pytest.raises(InvalidTouch):
             stream.send_touch(event("down", session_id=stream.session_id))
+        with pytest.raises(InvalidTouch):
+            stream.send_touch(event("move", session_id="other-session"))
         stream.release_touch()
         second = right.recv(32)
         assert second[0:2] == b"\x02\x03"
