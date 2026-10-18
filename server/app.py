@@ -458,20 +458,21 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             nonlocal manual_stop
             control_enabled = False
             last_move = 0.0
+            last_input = 0.0
             try:
                 while True:
                     raw = await websocket.receive_text()
                     if raw == "stop":
                         manual_stop = True
                         break
-                    if len(raw) > 512:
+                    if len(raw) > 1024:
                         break  # fail closed for oversized/unrecognized control traffic
                     try:
                         message = json.loads(raw)
                     except ValueError:
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
-                        "control_enable", "control_disable", "touch"
+                        "control_enable", "control_disable", "touch", "input_text", "nav_key"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -512,6 +513,34 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             await websocket.send_json({"type": "touch_error", "message": str(exc)})
                         except VideoProbeError as exc:
                             await websocket.send_json({"type": "touch_error", "message": str(exc)})
+                            break
+                    elif kind in ("input_text", "nav_key"):
+                        # Never use clipboard, arbitrary adb shell, or global
+                        # keyboard listeners. Only explicitly enabled session.
+                        if not control_enabled or not touch_ready.is_set():
+                            await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
+                                                       "message": "请先手动启用远程控制"})
+                            continue
+                        if time.monotonic() - last_input < 0.10:
+                            await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
+                                                       "message": "输入过于频繁，请稍后再试"})
+                            continue
+                        try:
+                            if kind == "input_text":
+                                await asyncio.to_thread(stream.send_text, message)
+                            else:
+                                await asyncio.to_thread(stream.send_nav, message)
+                            last_input = time.monotonic()
+                            # Acknowledge a successful socket write, not Android
+                            # text-field acceptance. Never echo input content.
+                            await websocket.send_json({"type": "input_accepted",
+                                                       "session_id": stream.session_id, "kind": kind})
+                        except InvalidTouch as exc:
+                            await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
+                                                       "message": str(exc)})
+                        except VideoProbeError as exc:
+                            await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
+                                                       "message": str(exc)})
                             break
             except (WebSocketDisconnect, RuntimeError):
                 pass
