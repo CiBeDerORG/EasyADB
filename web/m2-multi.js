@@ -37,8 +37,8 @@ const briefQuality=v=>v.profile==='custom'
  ?'自定义 · '+(v.max_size||'原生')+' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
- constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,getSoloActive,onChange,runPreflight,runVideoProbe}){
-  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,getSoloActive,onChange,runPreflight,runVideoProbe});
+ constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected}){
+  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.checking=new Set();
@@ -58,7 +58,7 @@ class MultiView{
   this.probeResults.set(id,previous.slice(-8).join('\n'));
  }
  async checkDevice(d,kind,profile){
-  if(this.opening||this.hasActive()||this.getSoloActive()||this.checking.has(d.id))return;
+  if(this.opening||this.hasActive()||this.checking.has(d.id))return;
   if(d.status!=='connected'||d.active_serial!==d.selected_serial)return;
   if(!this.getToken()){this.status('请先输入访问密钥并加载设备。',true);return;}
   const key=d.id;this.checking.add(key);
@@ -89,7 +89,7 @@ class MultiView{
   this.picker.replaceChildren();
   for(const d of devices){
    const active=this.cards.has(d.id),connected=ids.has(d.id);
-   const busy=this.opening||this.hasActive()||Boolean(this.getSoloActive())||this.checking.has(d.id);
+   const busy=this.opening||this.hasActive()||this.checking.has(d.id);
    const item=make('div','multi-choice');
    const main=make('label','multi-choice-label');
    const check=make('input');check.type='checkbox';check.value=d.id;
@@ -131,7 +131,7 @@ class MultiView{
    this.picker.append(item);
   }
   const available=[...this.selected].filter(id=>ids.has(id)&&!this.cards.has(id));
-  this.startButton.disabled=this.opening||this.cards.size>0||this.getSoloActive()||
+  this.startButton.disabled=this.opening||this.cards.size>0||
    this.checking.size>0||available.length<1||available.length>MAX_DEVICES;
   this.stopButton.disabled=this.cards.size===0&&!this.opening;
   this.startButton.textContent='开始同屏（已选 '+available.length+' / 最多 '+MAX_DEVICES+' 台）';
@@ -139,7 +139,7 @@ class MultiView{
 
  hasActive(){return this.cards.size>0;}
  start(){
-  if(this.opening||this.hasActive()||this.getSoloActive())return;
+  if(this.opening||this.hasActive())return;
   const ds=this.getDevices()||[];
   const selected=[...this.selected].map(id=>ds.find(d=>d.id===id));
   if(selected.length<1||selected.length>MAX_DEVICES||
@@ -347,20 +347,28 @@ class MultiView{
      keyStatus.textContent='已写入本轮控制通道（手机是否接收由当前焦点决定）';refresh();
     }else if(m.type==='input_error'){
      card.lastInput=false;keyStatus.textContent=m.message||'输入失败';refresh();
-     if(m.code==='adb_disconnected'){mark('ADB 已断开，请手动重新连接',true);this.end(card,false);}
+     if(m.code==='adb_disconnected'){
+      mark('ADB 已断开，请手动重新连接',true);
+      this.onDeviceDisconnected?.(card.id);this.end(card,false);
+     }
     }else if(m.type==='touch_error'){
      // A rejected early control_enable must release the pending UI latch.
      // Otherwise this card's button stays disabled forever.
      card.pending=false;refresh();
      keyStatus.textContent=m.message||'触摸失败';
-     if(m.code==='adb_disconnected'){mark('ADB 已断开，请手动重新连接',true);this.end(card,false);}
+     if(m.code==='adb_disconnected'){
+      mark('ADB 已断开，请手动重新连接',true);
+      this.onDeviceDisconnected?.(card.id);this.end(card,false);
+     }
     }else if(m.type==='stopping'){
      card.state='stopping';mark('正在清理此路资源…');refresh();
     }else if(m.type==='ended'){
      if(m.cleanup_complete!==true){mark('服务端未确认完整清理',true);this.end(card,false);}
      else{mark('已停止，资源已释放');this.end(card,true);}
     }else if(m.type==='error'){
-     mark(m.message||'本路视频异常',true);this.end(card,false);
+     mark(m.message||'本路视频异常',true);
+     if(m.code==='adb_disconnected')this.onDeviceDisconnected?.(card.id);
+     this.end(card,false);
     }
    };
    ws.onerror=()=>{if(!card.closed)mark('此路 WebSocket 发生网络错误',true);};

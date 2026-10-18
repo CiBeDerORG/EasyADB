@@ -222,10 +222,14 @@ def test_manual_stop_never_triggers_an_extra_adb_connection_check(monkeypatch, t
         assert device["id"] not in mod.live_registry.sessions
 
 
+
 def test_browser_refreshes_saved_status_only_for_confirmed_adb_loss():
     from pathlib import Path
-    page = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
-    assert "const adbOffline=msg.code==='adb_disconnected';" in page
-    assert "if(adbOffline)load(true);" in page
-    assert "window.setInterval(" not in page
-    assert "adb connect" not in page.lower().split("if(adbOffline)load(true);")[1][:150]
+    root = Path(__file__).resolve().parents[1] / "web"
+    page = (root / "index.html").read_text()
+    multi = (root / "m2-multi.js").read_text()
+    assert "onDeviceDisconnected:()=>load(true)" in page
+    assert "if(m.code==='adb_disconnected')" in multi
+    assert "this.onDeviceDisconnected?.(card.id)" in multi
+    assert "/connect" not in multi  # no auto-connect API call in the per-card controller
+

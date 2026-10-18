@@ -174,14 +174,17 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
         assert not mod.live_registry.sessions
 
 
+
 def test_keyboard_ui_is_explicit_and_never_global_key_capture():
     root = Path(__file__).resolve().parents[1]
     html = (root / "web" / "index.html").read_text()
-    assert 'id="liveTextForm"' in html and 'id="liveTextInput"' in html
-    assert 'id="liveTextSend"' in html
-    assert 'id="liveNavButtons"' in html and 'data-nav="recents"' in html
-    assert 'id="m2KeyInfo"' in html and "input_accepted" in html
-    assert "sendLiveInput('input_text',{text})" in html
-    assert "sendLiveInput('nav_key',{key:button.dataset.nav})" in html
-    assert "document.addEventListener('keydown'" not in html
-    assert "window.addEventListener('keydown'" not in html
+    multi = (root / "web" / "m2-multi.js").read_text()
+    assert "make('form','multi-text')" in multi
+    assert "make('input')" in multi and "make('button','','发送文字')" in multi
+    assert "['recents','最近任务']" in multi
+    assert "m.type==='input_accepted'" in multi
+    assert "this.sendInput(card,'input_text',{text:value})" in multi
+    assert "this.sendInput(card,'nav_key',{key})" in multi
+    assert "document.addEventListener('keydown'" not in html + multi
+    assert "window.addEventListener('keydown'" not in html + multi
+

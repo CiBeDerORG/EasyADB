@@ -224,33 +224,34 @@ def test_socket_read_is_stoppable_without_a_background_reconnect():
         remote.close()
 
 
+
 def test_http_nas_player_uses_mse_adapter_and_reserves_webcodecs_interface():
     root = Path(__file__).resolve().parents[1]
     html = (root / "web" / "index.html").read_text()
+    multi = (root / "web" / "m2-multi.js").read_text()
     adapter = (root / "web" / "m2-player.js").read_text()
-    assert 'id="liveVideo"' in html and 'id="liveStart"' in html
-    assert 'id="liveStop"' in html and '<script src="/m2-player.js"></script>' in html
-    assert "EasyADBPlayers.create(playerMode,video" in html
-    assert 'id="m2LiveDiag"' in html
-    assert 'id="m2LiveTraffic"' in html
-    assert 'id="m2SessionInfo"' in html
-    assert "liveSessionState('stopping')" in html
-    assert "msg.type==='ended'" in html
-    assert "msg.cleanup_complete!==true" in html
-    assert '<script src="/m2-traffic.js"></script>' in html
-    assert "liveTraffic.record(e.data.byteLength)" in html
-    assert "if(ws&&liveTraffic)updateLiveTraffic(true)" in html
-    assert "else if(msg.type==='diagnostic'){liveDiagnostic(msg);}" in html
-    assert "requestVideoFrameCallback" in html
-    assert "adb_check_ms" in html
+    assert 'id="multiPanel"' in html and 'id="multiGrid"' in html
+    assert 'id="multiPicker"' in html and '<script src="/m2-player.js"></script>' in html
+    assert '<script src="/m2-multi.js"></script>' in html
+    assert 'id="liveVideo"' not in html and 'id="legacySolo"' not in html
+    assert "EasyADBPlayers.create('mse',video" not in html
+    assert "root.EasyADBPlayers.create('mse',video" in multi
+    assert "card.player.initialize(m)" in multi
+    assert "m.type==='diagnostic'" in multi and "m.type==='ended'" in multi
+    assert "m.cleanup_complete!==true" in multi
+    assert "root.EasyADBTraffic.Meter" in multi
+    assert "card.meter.record(len)" in multi
+    assert "root.EasyADBTouch.create(video" in multi
+    assert "requestVideoFrameCallback" in multi
+    assert "m.adb_check_ms" in multi
     assert "new MediaSource()" in adapter
     assert "MediaSource.isTypeSupported(mime)" in adapter
-    assert "new WebSocket(" in html and "player:playerMode" in html
-    assert "new VideoDecoder" not in adapter and "new VideoDecoder" not in html
+    assert "new WebSocket(" in multi and "profile:quality.profile" in multi
+    assert "new VideoDecoder" not in adapter and "new VideoDecoder" not in multi
     assert "WebCodecsPlayer.implemented" in adapter
     assert "format!=='fmp4'" in adapter
-    assert "window.addEventListener('beforeunload',stopLive)" in html
-
+    assert "window.addEventListener('beforeunload'" in html
+    assert "multiView.closeAll()" in html
 
 def test_js_adapter_is_served_as_javascript_without_auth(monkeypatch, tmp_path):
     monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")

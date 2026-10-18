@@ -44,18 +44,23 @@ const root={
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
 assert.match(page,/任意勾选 1～4 台/);
-assert.match(page,/id="legacySolo" hidden/);
+assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
+assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
+assert.match(page,/class="workspace"/);
+assert.match(page,/class="panel inventory-panel"/);
+assert.match(page,/class="stage-main"/);
+assert.match(page,/class="stage-settings"/);
+assert.match(page,/class="stage-view"/);
 assert.match(page,/runPreflight:async id/);
 assert.match(page,/runVideoProbe:async\(id,profile\)/);
 assert.doesNotMatch(page,/id="multiProfile"/,'no global multiview quality selector');
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
-let solo=false;
 const calls=[];
 const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
  getDevices:()=>devices,getToken:()=> 'token-test',
- getSoloActive:()=>solo,onChange(){},
+ onChange(){},
  runPreflight:async id=>{calls.push(['preflight',id]);return{selected_serial:'checked-'+id,model:'Test',android_sdk:35,cpu_abi:'arm64',display_size:'1080x2400'};},
  runVideoProbe:async(id,p)=>{calls.push(['probe',id,p]);return{codec:'H.264',encoded_width:720,
   encoded_height:1280,media_packets:3,key_frames:1,sample_bytes:1024,elapsed_ms:150};}

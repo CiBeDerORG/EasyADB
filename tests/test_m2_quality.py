@@ -167,20 +167,22 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
         assert not mod.live_registry.sessions
 
 
+
 def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
-    page = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
-    for field in ("liveProfile", "liveCustomQuality", "liveQualitySize",
-                  "liveQualityBitrate", "liveQualityFps"):
-        assert f'id="{field}"' in page
-    for name in ("economy", "baseline", "native", "custom"):
-        assert f'value="{name}"' in page
-    assert "$('liveProfile').disabled=loading||!!liveWS||" in page
-    assert 'id="legacySolo" hidden' in page
-    assert 'id="multiPicker"' in page
-    assert 'runPreflight:async id' in page
-    assert 'runVideoProbe:async(id,profile)' in page
+    root = Path(__file__).resolve().parents[1] / "web"
+    page = (root / "index.html").read_text()
+    multi = (root / "m2-multi.js").read_text()
+    assert 'id="multiPicker"' in page and 'id="multiGrid"' in page
+    assert 'id="legacySolo"' not in page and 'id="liveProfile"' not in page
     assert 'id="multiProfile"' not in page
-    assert '<option value="economy" selected>' in page
-    assert "if(msg.player!==playerMode)" in page
-    assert "requested.max_fps" in page and "实际编码" in page
-    assert "selected_serial:serial,player:playerMode" in page
+    for name in ("economy", "baseline", "native", "custom"):
+        assert "'"+name+"'" in multi
+    for field in ("max_size", "video_bit_rate", "max_fps"):
+        assert field in multi
+    assert "qualityPayload(this.getChoice(d.id))" in multi
+    assert "const busy=this.opening||this.hasActive()" in multi
+    assert "this.launchQueue=batch" in multi
+    assert "runPreflight:async id" in page
+    assert "runVideoProbe:async(id,profile)" in page
+    assert "实际编码" in multi or "编码 '+m.width" in multi
+

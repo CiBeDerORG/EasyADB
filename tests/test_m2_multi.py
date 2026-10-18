@@ -156,9 +156,14 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="multiPanel"' in html and 'id="multiGrid"' in html
         assert 'src="/m2-multi.js"' in html and 'src="/m2-metrics.js"' in html
         assert "multiView.closeAll()" in html
-        # Device screenshot has only connection and static capture controls.
-        # Live quality, preflight and media probe are now per-device.
-        assert 'id="legacySolo" hidden' in html
+        # Old screenshot panel and hidden single-player state are completely gone.
+        assert 'id="legacySolo"' not in html
+        assert 'id="shotButton"' not in html and 'id="liveVideo"' not in html
+        assert 'id="previewTitle"' not in html
+        assert 'class="workspace"' in html
+        assert 'class="panel inventory-panel"' in html
+        assert 'class="stage-main"' in html
+        assert 'class="stage-settings"' in html and 'class="stage-view"' in html
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
