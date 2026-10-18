@@ -174,6 +174,12 @@ def home():
     return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-player.js")
+def m2_player_script():
+    return FileResponse(ROOT / "web" / "m2-player.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 def pair_at(ip, port, code):
     dest = address(ip, port)
     if not re.fullmatch(r"\d{6}", code):
@@ -392,6 +398,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if not isinstance(supplied, str) or not secrets.compare_digest(supplied, TOKEN):
             await websocket.close(code=1008, reason="访问密钥错误")
             return
+        # Reserve a future raw H264/WebCodecs path without advertising a
+        # nonfunctional decoder or passing fMP4 bytes into VideoDecoder.
+        if initial.get("player", "mse") != "mse":
+            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现；当前只支持 MSE。"})
+            return
         profile = initial.get("profile")
         if profile not in ("baseline", "native"):
             await websocket.send_json({"type": "error", "message": "视频档位无效"})
@@ -448,7 +459,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             except queue.Empty:
                 continue
             if kind == "init":
-                await websocket.send_json({"type": "init", **payload})
+                await websocket.send_json({"type": "init", "player": "mse", "format": "fmp4", **payload})
             elif kind == "bytes":
                 await websocket.send_bytes(payload)
             elif kind == "error":
