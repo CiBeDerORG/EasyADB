@@ -33,28 +33,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null |
   echo "ERROR: $MIHOMO_CONTAINER is not running." >&2
   exit 1
 fi
-MIHOMO_IP="$(docker inspect -f '{{with index .NetworkSettings.Networks "proxy-net"}}{{.IPAddress}}{{end}}' "$MIHOMO_CONTAINER")"
-if [ -z "$MIHOMO_IP" ]; then
-  echo "ERROR: $MIHOMO_CONTAINER is not attached to proxy-net." >&2
-  exit 1
-fi
-# Substitute only the proxy-net DNS hostname; retain the URL-encoded userinfo.
-# The host cannot resolve "mihomo" but can reach its proxy-net bridge IP.
-case "$PROXY" in
-  http://mihomo:7890)
-    HOST_PROXY="http://${MIHOMO_IP}:${MIHOMO_PORT}"
-    ;;
-  http://*@mihomo:7890)
-    USERINFO="${PROXY#http://}"
-    USERINFO="${USERINFO%@mihomo:7890}"
-    case "$USERINFO" in
-      *:*@*|*@*|'') echo 'ERROR: URL-encode any @ characters in username/password as %40.' >&2; exit 1 ;;
-      *:*) ;;
-      *) echo 'ERROR: proxy URL requires username and URL-encoded password.' >&2; exit 1 ;;
-    esac
-    HOST_PROXY="http://${USERINFO}@${MIHOMO_IP}:${MIHOMO_PORT}"
-    ;;
-esac
+. scripts/proxy-host.sh
 
 case "$(uname -m)" in
   x86_64|amd64) CRANE_ARCH=x86_64; PLATFORM=linux/amd64 ;;
