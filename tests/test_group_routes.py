@@ -21,6 +21,11 @@ def fixture(monkeypatch, tmp_path):
 
     def fake_run(args, **kwargs):
         calls.append(args)
+        if args[1] == "pair":
+            # Existing-device pair is a one-shot action and never invokes connect.
+            ok = kwargs.get("input", "").strip() != "000000"
+            return subprocess.CompletedProcess(args, 0 if ok else 1,
+                      "Successfully paired to device\n" if ok else "Failed to pair\n", "")
         if args[1] == "connect":
             serial = args[2]
             if serial in blocked:
@@ -226,3 +231,75 @@ def test_group_empty_delete_and_move_device_out_of_lan_group(monkeypatch, tmp_pa
         assert out.json()["selected_route"] == "mesh"
         assert out.json()["lan_ip"] is None
         assert not calls
+
+
+
+def test_failed_connection_exposes_pairing_only_after_explicit_failure(monkeypatch, tmp_path):
+    mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
+    mesh = "10.10.30.206:5555"
+    lan = "192.168.10.206:5555"
+    with TestClient(mod.app) as client:
+        client.post("/api/groups", headers=AUTH,
+                    json={"name": "Home", "ip_prefix": "192.168.10.*"})
+        d = client.post("/api/devices", headers=AUTH, json=dev()).json()
+        did = d["id"]
+        assert d["connect_failed"] is False
+        assert client.post(f"/api/devices/{did}/refresh", headers=AUTH).json()["connect_failed"] is False
+        blocked.add(mesh)
+        failed = client.post(f"/api/devices/{did}/connect", headers=AUTH)
+        assert failed.status_code == 502
+        state = client.get("/api/devices", headers=AUTH).json()[0]
+        assert state["selected_serial"] == mesh
+        assert state["connect_failed"] is True
+        assert state["status"] == "disconnected"
+        assert client.post(f"/api/devices/{did}/refresh", headers=AUTH).json()["connect_failed"] is True
+
+        # Pairing uses the current selected mesh address and a SEPARATE pairing port.
+        endpoint = f"/api/devices/{did}/pair"
+        req = {"port": 42123, "code": "123456", "selected_serial": mesh}
+        assert client.post(endpoint, json=req).status_code == 401
+        assert client.post(endpoint, headers=AUTH,
+                           json={**req, "code": "oops"}).status_code == 400
+        assert client.post(endpoint, headers=AUTH,
+                           json={**req, "port": 70000}).status_code == 400
+        assert client.post(endpoint, headers=AUTH,
+                           json={**req, "selected_serial": lan}).status_code == 409
+        assert client.post(endpoint, headers=AUTH,
+                           json={**req, "code": "000000"}).status_code == 502
+        assert client.post("/api/devices/no-such-id/pair", headers=AUTH,
+                           json=req).status_code == 404
+
+        before = len([call for call in calls if call[1] == "connect"])
+        result = client.post(endpoint, headers=AUTH, json=req)
+        assert result.status_code == 200
+        assert result.json()["paired_ip"] == "10.10.30.206"
+        assert result.json()["selected_route"] == "mesh"
+        pair_calls = [call for call in calls if call[1] == "pair"]
+        assert pair_calls[-1][2] == "10.10.30.206:42123"
+        assert len([call for call in calls if call[1] == "connect"]) == before
+        assert client.get("/api/devices", headers=AUTH).json()[0]["connect_failed"] is True
+        # Switching is explicit and must hide the contextual button again.
+        switched = client.put(f"/api/devices/{did}/route", headers=AUTH,
+                              json={"route": "lan"}).json()
+        assert switched["connect_failed"] is False
+        assert switched["selected_serial"] == lan
+        assert client.post(endpoint, headers=AUTH, json=req).status_code == 409
+        lan_req = {"port": 43124, "code": "654321", "selected_serial": lan}
+        lan_pair = client.post(endpoint, headers=AUTH, json=lan_req)
+        assert lan_pair.status_code == 200
+        assert lan_pair.json()["paired_ip"] == "192.168.10.206"
+        assert [call[2] for call in calls if call[1] == "pair"][-1] == "192.168.10.206:43124"
+        assert len([call for call in calls if call[1] == "connect"]) == before
+        assert client.post(f"/api/devices/{did}/connect", headers=AUTH).json()["connect_failed"] is False
+
+
+def test_first_time_pair_button_only_follows_manual_connection_failure():
+    from pathlib import Path
+    web = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
+    assert "if(chosen&&d.connect_failed)" in web
+    assert "openFirstPair(d.id)" in web
+    assert "firstPairDialog" in web
+    assert "pairingSerial" in web
+    assert "'/pair'" in web
+    assert "selected_serial:pairingSerial" in web
+    assert "setInterval(" not in web
