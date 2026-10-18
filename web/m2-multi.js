@@ -39,7 +39,7 @@ const briefQuality=v=>v.profile==='custom'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
-  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy});
+  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.checking=new Set();this.lastLiveStatus=new Map();
@@ -89,7 +89,7 @@ class MultiView{
   for(const id of this.selected)if(!ids.has(id)&&!this.cards.has(id))this.selected.delete(id);
   this.picker.replaceChildren();
   for(const d of devices){
-   const active=this.cards.has(d.id),connected=ids.has(d.id);
+   const connected=ids.has(d.id);
    const busy=this.opening||this.getManagementBusy?.()||
     this.isBusyFor(d.id)||this.checking.has(d.id);
    const item=make('div','multi-choice');
