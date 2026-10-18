@@ -24,11 +24,12 @@ class QualityMeter{
   let fps=null,dropPct=null;
   if(duration>=0.25&&this.lastFrames!==null&&total!==null){
    const frames=Math.max(0,total-this.lastFrames);
-   fps=frames/duration;
    if(this.lastDrops!==null&&drops!==null){
+    // getVideoPlaybackQuality.totalVideoFrames INCLUDES dropped frames.
     const delta=Math.max(0,drops-this.lastDrops);
-    dropPct=frames+delta>0?100*delta/(frames+delta):0;
-   }
+    fps=Math.max(0,frames-delta)/duration;
+    dropPct=frames>0?100*delta/frames:0;
+   }else fps=frames/duration;
   }
   let bufferAhead=null;
   try{
