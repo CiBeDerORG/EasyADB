@@ -66,8 +66,13 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
 .muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
-.pill.connected{background:#214b3d;color:#a4efd0}.pill.disconnected,.pill.error{background:#543139;color:#ffbbc4}
-.pill.connecting,.pill.checking{background:#4c4023;color:#f6dd95}
+.adb-badge{display:inline-flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:3px;max-width:100%;border:1px solid #49617e;border-radius:9px;padding:6px 10px;font-size:12px;background:#25344d;color:#c9d5e6;overflow-wrap:anywhere;margin-left:auto}
+.adb-badge .adb-label{font-weight:700;white-space:nowrap}
+.adb-badge .adb-address{font-size:11px;overflow-wrap:anywhere}
+.adb-badge.connected{background:#183e31;border-color:#387c5b;color:#a4efd0}
+.adb-badge.failed{background:#49252e;border-color:#92505c;color:#ffbbc4}
+.adb-badge.connecting,.adb-badge.checking{background:#4c4023;border-color:#82713f;color:#f6dd95}
+.connection-error{color:#ffbbc4}
 .item-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.item-actions button{font-size:12px;padding:6px 10px}
 .address-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;max-width:850px}
 .address-target{display:block;text-align:left;font-size:12px;font-weight:500;padding:7px 10px;max-width:100%;overflow-wrap:anywhere;background:#192b43;border:1px solid #405779;color:#c9daef}
@@ -218,7 +223,25 @@ let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDev
 const managementSelected=new Set(); // separate from the video-session picker
 let multiView=null;
 const groupOpen=new Map();
-const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
+function adbStatusBadge(d){
+ // The selected address is not proof of an active ADB connection.
+ // Display active_serial ONLY when connected; after an explicit failed
+ // connect show the attempted selected_serial. Idle is not an error.
+ const connected=d.status==='connected'&&Boolean(d.active_serial);
+ const inProgress=d.status==='connecting'||d.status==='checking';
+ const failed=!connected&&!inProgress&&(d.connect_failed===true||d.status==='error');
+ const tone=connected?'connected':failed?'failed':inProgress?d.status:'idle';
+ const label=connected?'ADB 已连接':failed?'ADB 连接失败':
+  d.status==='connecting'?'ADB 连接中':d.status==='checking'?'ADB 检查中':
+  d.status==='disconnected'?'ADB 未连接':'待手动连接';
+ const serial=connected?d.active_serial:(failed?d.selected_serial:null);
+ const badge=elem('div','adb-badge '+tone);
+ badge.setAttribute('role','status');
+ badge.setAttribute('aria-label',label+(serial?'：'+serial:''));
+ badge.append(elem('span','adb-label',label));
+ if(serial)badge.append(elem('span','adb-address',serial));
+ return badge;
+}
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
 async function api(path,options={}){
  const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
@@ -295,9 +318,8 @@ function render(){
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
-   top.append(managementLabel,info,elem('span','pill '+d.status,labels[d.status]||'待检查'));primary.append(top);
-   if(d.status==='connected')primary.append(elem('div','muted','ADB 已连接：'+d.active_serial));
-   if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted',d.last_error));
+   top.append(managementLabel,info,adbStatusBadge(d));primary.append(top);
+   if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
    const connect=action('连接',()=>runConnect(d.id));

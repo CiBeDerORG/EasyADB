@@ -91,6 +91,38 @@ assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-a
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
+assert.match(page,/top\.append\(managementLabel,info,adbStatusBadge\(d\)\)/);
+assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','ADB 已连接：'/,
+ 'success address is in the header badge, not repeated below it');
+assert.match(page,/\.adb-badge\.connected\{background:#183e31/,'green successful ADB');
+assert.match(page,/\.adb-badge\.failed\{background:#49252e/,'red failed ADB');
+const badgeStart=page.indexOf('function adbStatusBadge(d){'),
+ badgeEnd=page.indexOf('\nfunction message(',badgeStart);
+assert(badgeStart>=0&&badgeEnd>badgeStart,'a standalone session-status renderer exists');
+const make=(tag,cls,value)=>{
+ const el=new El(tag);el.className=cls;el.textContent=value===undefined?'':value;return el;
+};
+const makeBadge=vm.runInNewContext('('+page.slice(badgeStart,badgeEnd)+')',{elem:make});
+const successBadge=makeBadge({status:'connected',active_serial:'10.10.10.2:5555',
+ selected_serial:'192.168.1.2:5555',connect_failed:false});
+assert.match(successBadge.className,/connected/);
+assert.equal(successBadge.children[0].textContent,'ADB 已连接');
+assert.equal(successBadge.children[1].textContent,'10.10.10.2:5555',
+ 'show actually connected ADB address rather than another selected route');
+const errorBadge=makeBadge({status:'disconnected',active_serial:null,
+ selected_serial:'192.168.1.2:5555',connect_failed:true});
+assert.match(errorBadge.className,/failed/);
+assert.equal(errorBadge.children[0].textContent,'ADB 连接失败');
+assert.equal(errorBadge.children[1].textContent,'192.168.1.2:5555');
+const idleBadge=makeBadge({status:'disconnected',
+ selected_serial:'192.168.1.2:5555',connect_failed:false});
+assert.doesNotMatch(idleBadge.className,/failed|connected/,'not-yet-connected is neutral');
+assert.equal(idleBadge.children.length,1,'idle must not claim a live ADB address');
+const checkingBadge=makeBadge({status:'checking',selected_serial:'10.10.10.2:5555',
+ connect_failed:true});
+assert.match(checkingBadge.className,/checking/,'ongoing check must not show stale red error');
+
+
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');

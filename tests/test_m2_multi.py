@@ -205,6 +205,15 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
         assert ".device-android{" in html
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
+        # Header indicator uses actual active_serial for successful ADB,
+        # selected_serial only to explain an explicit failed attempt.
+        assert "top.append(managementLabel,info,adbStatusBadge(d))" in html
+        assert "const connected=d.status==='connected'&&Boolean(d.active_serial)" in html
+        assert "d.connect_failed===true||d.status==='error'" in html
+        assert "const serial=connected?d.active_serial:(failed?d.selected_serial:null)" in html
+        assert "primary.append(elem('div','muted','ADB 已连接：'+d.active_serial))" not in html
+        assert ".adb-badge.connected{background:#183e31" in html
+        assert ".adb-badge.failed{background:#49252e" in html
         assert "low_latency:true" in multi_js
 
 
