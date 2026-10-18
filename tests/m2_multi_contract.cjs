@@ -332,18 +332,19 @@ assert.equal(multi.getChoice('id-1').video_bit_rate,20000000);
 assert.equal(multi.getChoice('id-1').max_fps,60);
 select(0);select(1);
 assert.equal(startButton.disabled,false);
-startButton.fire('click');assert.equal(sockets.length,2,'sequential first launch');
-const b=sockets.at(-1);b.open();assert.equal(JSON.parse(b.sent[0]).profile,'custom');
+startButton.fire('click');assert.equal(sockets.length,3,'both selected sessions open before either phone initializes');
+const b=sockets[1],c=sockets[2];
+assert.equal(multi.cards.size,2,'all batch cards reserved immediately');
+b.open();assert.equal(JSON.parse(b.sent[0]).profile,'custom');
 b.emit('starting',{session_id:'second-a'});
-assert.equal(sockets.length,2,'starting alone does not start next');
-init(b,'second-a');
-assert.equal(sockets.length,3);
-const c=sockets.at(-1);c.open();
+assert.equal(sockets.length,3,'neither phone waits for the other first frame');
+c.open();
 assert.equal(JSON.parse(c.sent[0]).profile,'custom');
 assert.equal(JSON.parse(c.sent[0]).quality.video_bit_rate,18000000);
 assert.equal(JSON.parse(c.sent[0]).quality.max_fps,55);
 assert.equal(JSON.parse(c.sent[0]).quality.max_size,960);
 c.emit('starting',{session_id:'second-b'});init(c,'second-b');
+init(b,'second-a'); // slower A may initialize AFTER B without blocking it
 const cb=multi.cards.get('id-1'),cc=multi.cards.get('id-2');
 assert.equal(cc.toggle.disabled,false);
 cb.toggle.fire('click');b.emit('control_enabled',{session_id:'second-a'});
@@ -372,19 +373,23 @@ assert.equal(grid.children.length,2,'two selected devices create exactly two vis
 // start the same selection again. No old window may remain behind.
 multi.stopAll();
 assert.equal(b.sent.at(-1),'stop');assert.equal(c.sent.at(-1),'stop');
-b.emit('ended',{session_id:'second-a',cleanup_complete:true});
+assert.equal(multi.stopBatch.total,2,'batch stop dispatches both WS before first ack');
 c.emit('ended',{session_id:'second-b',cleanup_complete:true});
+assert.equal(multi.stopBatch.pending.has('id-1'),true,'slow A cannot block C cleanup');
+assert.equal(multi.cards.get('id-1').state,'stopping');
+b.emit('ended',{session_id:'second-a',cleanup_complete:true});
+assert.equal(multi.stopBatch,null,'independent acknowledgements settle progress');
 assert.equal(grid.children.length,0,'stop-all must clear ALL old windows');
 assert.equal(multi.cards.size,0);
 assert.equal(batchSelected.size,2,'selection is retained but restart remains manual');
 assert.equal(startButton.disabled,false);
 startButton.fire('click');
-assert.equal(grid.children.length,1,'restart adds only the first requested device');
-assert.equal(sockets.length,4);
-const d=sockets[3];d.open();d.emit('starting',{session_id:'restart-a'});init(d,'restart-a');
-assert.equal(grid.children.length,2,'restart must show exactly two NEW video cards');
+assert.equal(grid.children.length,2,'parallel restart reserves two NEW cards immediately');
 assert.equal(sockets.length,5);
-const e=sockets[4];e.open();e.emit('starting',{session_id:'restart-b'});init(e,'restart-b');
+const d=sockets[3],e=sockets[4];
+e.open();e.emit('starting',{session_id:'restart-b'});init(e,'restart-b');
+assert.equal(multi.cards.get('id-1').state,'connecting','slow peer A must not block B');
+d.open();d.emit('starting',{session_id:'restart-a'});init(d,'restart-a');
 assert.equal(grid.children.length,2,'no stale/duplicate windows after second init');
 multi.stopAll();
 d.emit('ended',{session_id:'restart-a',cleanup_complete:true});
@@ -453,14 +458,14 @@ async function waitForCheck(id){
  assert.equal(liveCardA.enabled,true,'append preserves existing remote control');
  assert.equal(liveA.readyState,WS.OPEN,'existing WS was not closed');
  assert.equal(liveA.sent.filter(x=>x.includes('"type":"control_disable"')).length,0);
- // Appending up to four must be sequential and never duplicate existing slots.
+ // Appending B+C opens both simultaneously, without changing A/F sessions.
  select(1);select(2);
- startButton.fire('click');
- const liveB=sockets.at(-1);liveB.open();liveB.emit('starting',{session_id:'append-B'});
- assert.equal(multi.cards.size,3,'wait for B init before opening C');
- init(liveB,'append-B');
- const liveC=sockets.at(-1);liveC.open();liveC.emit('starting',{session_id:'append-C'});
- init(liveC,'append-C');
+ const appendIndex=sockets.length;startButton.fire('click');
+ assert.equal(sockets.length,appendIndex+2,'both append WS opened without waiting for init');
+ assert.equal(multi.cards.size,4,'all four server slots are immediately reserved');
+ const liveB=sockets[appendIndex],liveC=sockets[appendIndex+1];
+ liveC.open();liveC.emit('starting',{session_id:'append-C'});init(liveC,'append-C');
+ liveB.open();liveB.emit('starting',{session_id:'append-B'});init(liveB,'append-B');
  assert.equal(multi.cards.size,4);
  assert.equal(grid.children.length,4);
  assert.equal(multi.cards.size,4,'fifth concurrent device unavailable');
@@ -530,16 +535,19 @@ async function waitForCheck(id){
  ownB.emit('ended',{session_id:'own-B',cleanup_complete:true});
  ownARestart.emit('ended',{session_id:'own-A2',cleanup_complete:true});
  assert.equal(grid.children.length,0);
- // A queued device can independently cancel without ever opening a WS.
+ // Parallel start has no waiting queue: stopping D must not affect C.
  batchSelected.clear();multi.updatePicker();select(2);select(3);
  const queueCount=sockets.length;startButton.fire('click');
- assert.equal(sockets.length,queueCount+1);
- assert.match(liveStatus(3),/排队中/);
- assert.match(liveButton(3).textContent,/关闭此设备画面/);
- liveButton(3).fire('click');
- assert.match(liveStatus(3),/已取消排队/);
- const ownC=sockets.at(-1);ownC.open();ownC.emit('starting',{session_id:'own-C'});init(ownC,'own-C');
- assert.equal(sockets.length,queueCount+1,'cancel queued D without opening its WS');
+ assert.equal(sockets.length,queueCount+2,'C and D both start, no queued device');
+ const ownC=sockets[queueCount],ownD=sockets[queueCount+1];
+ assert.match(liveStatus(3),/启动中/);
+ ownD.open();ownD.emit('starting',{session_id:'own-D'});
+ liveButton(3).fire('click');assert.equal(ownD.sent.at(-1),'stop');
+ assert.match(liveStatus(3),/停止中/);
+ assert.equal(multi.cards.get('id-3').closed,false,'D stop cannot cancel C');
+ ownC.open();ownC.emit('starting',{session_id:'own-C'});init(ownC,'own-C');
+ ownD.emit('ended',{session_id:'own-D',cleanup_complete:true});
+ assert.equal(multi.cards.size,1,'D acknowledgement leaves C running');
  multi.stopAll();ownC.emit('ended',{session_id:'own-C',cleanup_complete:true});
  assert.equal(grid.children.length,0);
  // The batch stop button must only stop selected devices, not all live cards.
@@ -643,6 +651,7 @@ async function waitForCheck(id){
  assert.equal(timers.size,0,'teardown cancels WebRTC stop timeout');
  console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
+ console.log('M2 parallel batch launch and out-of-order stop acknowledgements: OK');
  console.log('M2 selected-only batch stop preserves unselected live/control: OK');
  console.log('M2 independent row live status/start/stop/queue-cancel: OK');
  console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');
