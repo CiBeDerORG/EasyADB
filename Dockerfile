@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 # Proxy is injected by Compose build args, not baked into this image.
 RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates curl unzip \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates curl unzip ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL --connect-timeout 20 --retry 5 --retry-delay 3 --retry-all-errors \
        https://dl.google.com/android/repository/platform-tools-latest-linux.zip -o /tmp/platform-tools.zip \
