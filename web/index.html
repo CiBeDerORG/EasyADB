@@ -65,7 +65,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M2 · 已继承 M1 多设备管理；第一阶段增加手动设备能力预检，连接地址由你手动选择并持久保存；只有点击「连接」才发起连接，不会后台自动重试。M2-00-E 正在验证 HTTP 页面上的实时视频，远程触摸尚未开放。</p></header>
+<header><h1>EasyADB <span>/ 多设备管理</span></h1><p class="hint">M2 · 已继承 M1 多设备管理；连接地址需手动选择并点击「连接」，不会后台自动重试。实时视频采用 HTTP + MSE；鼠标控制需要在当前投屏会话中单独手动启用。</p></header>
 <div class="grid">
  <div class="stack">
   <section class="panel">
@@ -83,18 +83,19 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
  <section class="panel">
   <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
-   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="liveStart" type="button" disabled>开始实时画面</button><button class="danger" id="liveStop" type="button" disabled>停止实时画面</button><button id="shotButton" disabled>刷新截图</button></div>
+   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="liveStart" type="button" disabled>开始实时画面</button><button class="secondary" id="liveTouchToggle" type="button" disabled>启用鼠标控制</button><button class="danger" id="liveStop" type="button" disabled>停止实时画面</button><button id="shotButton" disabled>刷新截图</button></div>
   </div>
   <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"><video id="liveVideo" muted autoplay playsinline hidden aria-label="所选 Android 设备实时画面"></video></div>
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2LiveInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2SessionInfo" class="status" role="status" hidden></div>
+  <div id="m2TouchInfo" class="status" role="status" hidden></div>
   <div id="m2LiveTraffic" class="status" role="status" hidden></div>
   <div id="m2LiveDiag" class="status" role="status" hidden></div>
   <p class="hint">当前播放引擎：MSE（WebCodecs 接口已预留，尚未实现、不可选择）。</p>
   <label for="liveProfile">实时画面档位（需手动开始）</label><select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d"><option value="baseline">基础 · 最大边1600 / 8 Mbps / 30 FPS</option><option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option></select>
-  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。首版仅视频，无触屏/音频/录制。</p>
+  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。触摸控制必须单独点击「启用鼠标控制」，默认仅观看；当前只支持单指点击和拖动，不支持键盘/音频/录制。</p>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -148,12 +149,14 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </main>
 <script src="/m2-player.js"></script>
 <script src="/m2-traffic.js"></script>
+<script src="/m2-touch.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
 let liveWS=null,livePlayer=null,liveDeviceId=null,liveReceivedError=false;
 let liveWsOpenedAt=0,liveLastBytesAt=0,liveFirstBytesAt=0,liveVideoFrameAt=0,liveVideoFrames=0,liveAdbCheckMs=null;
 let liveFrameCallbackId=null,liveTraffic=null,liveState='idle',liveSessionId=null;
+let liveTouch=null,liveTouchAvailable=false,liveTouchEnabled=false,liveTouchPending=false,liveTouchSize=null;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -171,6 +174,7 @@ function clearShot(){
  $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
  $('m2LiveTraffic').hidden=true;$('m2LiveTraffic').textContent='';liveTraffic=null;
  $('m2SessionInfo').hidden=true;$('m2SessionInfo').textContent='';
+ $('m2TouchInfo').hidden=true;$('m2TouchInfo').textContent='';
  if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
@@ -250,6 +254,8 @@ function render(){
  $('shotButton').disabled=loading||!!liveWS||!d||d.status!=='connected';
  $('liveStart').disabled=loading||!!liveWS||!d||d.status!=='connected';
  $('liveStop').disabled=!liveWS||liveState==='stopping';
+ $('liveTouchToggle').disabled=loading||!liveWS||liveState!=='streaming'||!liveTouchAvailable||liveTouchPending;
+ $('liveTouchToggle').textContent=liveTouchPending?'正在切换控制状态…':(liveTouchEnabled?'关闭鼠标控制':'启用鼠标控制');
  $('liveProfile').disabled=loading||!!liveWS;
  $('m2Preflight').disabled=loading||!d||d.status!=='connected';
  $('m2VideoBaseline').disabled=loading||!d||d.status!=='connected';
@@ -510,7 +516,10 @@ function liveDiagnostic(diag){
   mseInfo;
 }
 function stopLive(){
- const ws=liveWS;liveWS=null;liveDeviceId=null;
+ const ws=liveWS;
+ if(liveTouch){liveTouch.destroy();liveTouch=null;}
+ liveTouchAvailable=false;liveTouchEnabled=false;liveTouchPending=false;liveTouchSize=null;
+ liveWS=null;liveDeviceId=null;
  liveState='idle';liveSessionId=null;
  if(ws&&liveTraffic)updateLiveTraffic(true);
  const video=$('liveVideo');
@@ -540,6 +549,8 @@ function startLive(){
  liveWsOpenedAt=0;liveLastBytesAt=0;liveFirstBytesAt=0;
  liveVideoFrameAt=0;liveVideoFrames=0;liveAdbCheckMs=null;
  liveTraffic=null;
+ liveTouchAvailable=false;liveTouchEnabled=false;liveTouchPending=false;liveTouchSize=null;
+ $('m2TouchInfo').hidden=true;$('m2TouchInfo').textContent='';
  $('m2SessionInfo').hidden=true;$('m2SessionInfo').textContent='';
  $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
  $('m2LiveTraffic').hidden=true;$('m2LiveTraffic').textContent='';
@@ -596,6 +607,8 @@ function startLive(){
     liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…（ADB 检查 '+liveAdbCheckMs+'ms）');
    }else if(msg.type==='diagnostic'){liveDiagnostic(msg);}
    else if(msg.type==='stopping'){
+    if(liveTouch)liveTouch.disable();
+    liveTouchEnabled=false;liveTouchPending=false;
     liveSessionState('stopping',msg.session_id);
     liveStatus('服务端正在清理本次投屏资源，请等待停止完成…');
    }else if(msg.type==='ended'){
@@ -606,9 +619,38 @@ function startLive(){
     liveSessionState('ended');
     liveStatus('实时画面已停止，服务端资源已释放。','ok');
     return;
+   }else if(msg.type==='control_enabled'){
+    try{
+     if(!liveTouch||!liveTouchSize||!liveTouchAvailable||liveState!=='streaming')
+      throw Error('本轮画面还未准备好，不能启用控制');
+     liveTouch.enable(liveTouchSize);
+     liveTouchEnabled=true;liveTouchPending=false;
+     const status=$('m2TouchInfo');status.hidden=false;status.className='status ok';
+     status.textContent='鼠标控制已启用：左键点击或按住拖动，仅操作当前投屏设备。';
+     render();
+    }catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
+   }else if(msg.type==='control_disabled'){
+    if(liveTouch)liveTouch.disable();
+    liveTouchEnabled=false;liveTouchPending=false;
+    const status=$('m2TouchInfo');status.hidden=false;status.className='status';
+    status.textContent='鼠标控制已关闭，当前仅观看画面。';
+    render();
+   }else if(msg.type==='touch_error'){
+    const status=$('m2TouchInfo');status.hidden=false;status.className='status error';
+    status.textContent=msg.message||'触摸控制未执行，请检查当前视频及设备状态。';
+    liveTouchPending=false;render();
    }else if(msg.type==='init'){
     try{
      if(msg.player!==playerMode){throw Error('视频服务端播放器协议不匹配');}
+     liveTouchAvailable=msg.control_available===true;
+     liveTouchSize={width:msg.width,height:msg.height};
+     if(liveTouch)liveTouch.destroy();
+     liveTouch=EasyADBTouch.create(video,payload=>{
+      if(liveTouchEnabled&&liveState==='streaming'&&liveWS===ws&&
+         ws.readyState===WebSocket.OPEN&&liveSessionId){
+       ws.send(JSON.stringify({...payload,session_id:liveSessionId}));
+      }
+     });
      liveStatus('已获取视频信息：'+msg.width+'×'+msg.height+' · '+msg.mime);
      livePlayer.initialize(msg);
     }catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
@@ -643,11 +685,26 @@ function startLive(){
   }
  };
 }
+$('liveTouchToggle').addEventListener('click',()=>{
+ if(!liveWS||liveWS.readyState!==WebSocket.OPEN||!liveSessionId||
+    !liveTouchAvailable||!liveTouch||!liveTouchSize||
+    liveState!=='streaming'||liveTouchPending)return;
+ const ws=liveWS;
+ liveTouchPending=true;render();
+ if(liveTouchEnabled){
+  liveTouch.disable();liveTouchEnabled=false;
+  ws.send(JSON.stringify({type:'control_disable',session_id:liveSessionId}));
+ }else{
+  ws.send(JSON.stringify({type:'control_enable',session_id:liveSessionId}));
+ }
+});
 $('liveStart').addEventListener('click',startLive);
 $('liveStop').addEventListener('click',()=>{
  if(!liveWS||liveState==='stopping')return;
  const ws=liveWS;
  if(ws.readyState===WebSocket.OPEN){
+  if(liveTouch)liveTouch.disable();
+  liveTouchEnabled=false;liveTouchPending=false;
   liveSessionState('stopping');
   liveStatus('正在请求服务端停止并清理本次投屏…');
   try{ws.send('stop');}catch(error){liveReceivedError=true;liveStatus('停止请求发送失败：'+error.message,'error');stopLive();}
