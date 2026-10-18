@@ -1,5 +1,5 @@
 name: M2 tests
-# Temporary, strictly one-shot CI trigger for the completed M2 batch.
+# Final one-shot verification after fixing asynchronous contract-test timing.
 # Only this workflow path AND exact commit message can execute test job.
 on:
   workflow_dispatch:

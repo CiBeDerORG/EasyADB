@@ -6,7 +6,7 @@ import socket
 import threading
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from server.devices import DeviceManager
@@ -165,6 +165,11 @@ def test_running_media_error_checks_adb_once_and_never_reconnects(monkeypatch, t
             else:
                 assert result["code"] == "stream_failed"
                 assert "socket 已关闭" in result["message"]
+            # The error event is sent BEFORE the WS handler's finally block.
+            # Wait for its server close frame, emitted AFTER cleanup/release,
+            # rather than racing the handler by exiting the client context.
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
         assert made[0].finished.is_set() and made[0].cleanup_complete
         assert device["id"] not in mod.live_registry.sessions
         assert len(calls) == 2  # one at explicit start, one only ON failure
