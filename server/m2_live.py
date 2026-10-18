@@ -561,35 +561,40 @@ class LiveVideo:
             failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
         finally:
             self._phase_set("结束并清理视频会话")
-            self.stop()
-            if feeder:
-                feeder.join(timeout=3)
-            for proc in (self.ffmpeg_proc, self.adb_proc):
-                if proc is not None:
+            # The registry may retire this session only after resources are
+            # released. Never leave finished unset if an individual cleanup
+            # operation unexpectedly fails; keep cleaning remaining resources.
+            try:
+                self.stop()
+                if feeder:
+                    feeder.join(timeout=3)
+                for proc in (self.ffmpeg_proc, self.adb_proc):
+                    if proc is not None:
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=2)
+                if port is not None:
                     try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=2)
-            if port is not None:
+                        _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
+                    except VideoProbeError:
+                        pass
                 try:
-                    _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
+                    _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
                 except VideoProbeError:
                     pass
-            try:
-                _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
-            except VideoProbeError:
-                pass
-            if failure:
+            finally:
+                if failure:
+                    try:
+                        self.events.put_nowait(("error", failure))
+                    except queue.Full:
+                        pass
                 try:
-                    self.events.put_nowait(("error", failure))
+                    self.events.put_nowait(("end", None))
                 except queue.Full:
                     pass
-            try:
-                self.events.put_nowait(("end", None))
-            except queue.Full:
-                pass
-            self.finished.set()
+                self.finished.set()
 
 
 class LiveRegistry:
