@@ -354,7 +354,7 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
     # Reject while a server-side live slot is owned (including cleanup).
     with manager._device_lock(device_id):
-        get_device(device_id)
+        original = get_device(device_id)
         with live_registry.lock:
             session = live_registry.sessions.get(device_id)
             if session is not None and not live_registry.is_cleaned(session):
@@ -374,7 +374,8 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
             raise HTTPException(409, str(exc)) from None
         if result is None:
             raise HTTPException(404, "找不到该设备")
-        manager.clear(device_id)
+        if selected_address(original) != selected_address(result):
+            manager.clear(device_id)
         return manager.snapshot(result)
 
 
