@@ -49,7 +49,7 @@ class DeviceManager:
         with self.guard:
             state = self.states.get(device["id"], {}).copy()
         allowed = {serial for serial, _ in candidates(device)}
-        if state.get("active_serial") not in allowed:
+        if state.get("status") == "connected" and state.get("active_serial") not in allowed:
             state = {}
         return {
             **device,
