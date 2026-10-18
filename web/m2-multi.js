@@ -41,6 +41,21 @@ class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
+  this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
+  if(typeof root.fetch==='function'){
+   this.engineReady=false;
+   root.fetch('/api/m2/video-engine',{cache:'no-store'})
+    .then(r=>{if(!r.ok)throw Error('无法加载服务端视频引擎配置');return r.json();})
+    .then(data=>{
+     if(!['mse','webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
+     this.videoEngine=data.engine;this.engineSupported=data.implemented===true;
+     this.engineReady=true;
+     this.status('当前视频引擎：'+({mse:'FFmpeg + MSE',webrtc:'WebRTC',
+      webcodecs:'WebCodecs（尚未实现）'})[data.engine]+
+      (this.engineSupported?'':'；请在 .env 改用 mse 或 webrtc'),!this.engineSupported);
+     this.updatePicker();
+    }).catch(e=>{this.engineReady=false;this.status(e.message+'；暂不允许启动投屏',true);});
+  }
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.checking=new Set();this.lastLiveStatus=new Map();
   startButton.addEventListener('click',()=>this.start());
@@ -231,7 +246,8 @@ class MultiView{
   // The lab uses the same per-device MSE card, never a second transport.
   const d=(this.getDevices()||[]).find(item=>item.id===id);
   if(!d||!this.isAdbReady(d)||this.isBusyFor(id)||this.opening||
-     this.cards.size>=MAX_DEVICES||this.getManagementBusy?.()||!this.getToken())return false;
+     this.cards.size>=MAX_DEVICES||this.getManagementBusy?.()||!this.getToken()||
+     !this.engineReady||!this.engineSupported)return false;
   if(!experiment||!["new","new_settings","display"].includes(experiment.mode))return false;
   const choice=this.getChoice(id);
   this.lastLiveStatus.delete(id);
@@ -247,6 +263,7 @@ class MultiView{
    this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多四路）。',true);
    this.updatePicker();return false;
   }
+  if(!this.engineReady||!this.engineSupported){this.status('当前视频引擎未就绪或尚未实现。',true);return false;}
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return false;}
   const batch=additions.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
    lowLatency:this.getChoice(d.id).low_latency===true,
@@ -280,6 +297,7 @@ class MultiView{
    return;
   }
   const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,experiment,
+   engine:this.videoEngine,
    screenOff:screenOff===true&&!experiment,reconnectRequested:false,wakePending:false,
    ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
@@ -313,7 +331,8 @@ class MultiView{
   });
   const state=make('div','status','正在建立本轮会话…');
   const stats=make('div','muted','等待浏览器诊断…');
-  const qualityLine=make('div','muted','本设备画质：'+briefQuality(this.getChoice(d.id))+
+  const qualityLine=make('div','muted','视频引擎：'+(card.engine==='webrtc'?'WebRTC':'FFmpeg + MSE')+
+   ' / 本设备画质：'+briefQuality(this.getChoice(d.id))+
    (lowLatency?' / 低延迟播放实验已开启':'')+
    (card.screenOff?' / 已请求投屏时关闭物理屏幕':'')+'（本轮固定）');
   const detail=make('div','multi-log');
@@ -326,7 +345,7 @@ class MultiView{
    xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
   xiaomi.append(xiaomiTitle,xiaomiHelp);
   detail.append(make('h4','','会话与画质'),qualityLine,state,stats,initInfo,
-   make('h4','','MSE / 资源详情'),diagnostic,
+   make('h4','',card.engine==='webrtc'?'WebRTC / 资源详情':'MSE / 资源详情'),diagnostic,
    make('h4','','本轮事件日志'),eventLog,
    make('h4','','本页历史'),history,xiaomi);
   const logPanel=make('section','multi-log-panel');logPanel.hidden=true;
@@ -481,7 +500,19 @@ class MultiView{
   };
   card.refresh=refresh;
   try{
-   card.player=root.EasyADBPlayers.create('mse',video,{
+   card.player=(card.engine==='webrtc'?root.EasyADBWebRTC.create(video,{
+    onState:stage=>{
+     if(card.closed)return;
+     if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='ready';mark('WebRTC 已就绪，远控独立于媒体连接');refresh();this.updatePicker();
+     }
+     if(stage==='playing'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='playing';mark('WebRTC 画面播放中');refresh();this.updatePicker();
+     }
+     if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
+    },
+    onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
+   }):root.EasyADBPlayers.create('mse',video,{
     lowOverhead:true,lowLatency:card.lowLatency,
     onState:stage=>{
      if(card.closed)return;
@@ -496,14 +527,14 @@ class MultiView{
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
     },
     onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
-   });
+   }));
    const scheme=location.protocol==='https:'?'wss:':'ws:';
    const ws=new WebSocket(scheme+'//'+location.host+
     '/api/devices/'+encodeURIComponent(d.id)+'/m2/live');
    ws.binaryType='arraybuffer';card.ws=ws;
    ws.onopen=()=>{
     if(card.closed)return;
-    const payload={token:this.getToken(),player:'mse',selected_serial:card.serial,
+    const payload={token:this.getToken(),player:card.engine,selected_serial:card.serial,
       profile:quality.profile};
     if(quality.quality)payload.quality=quality.quality;
     if(card.experiment)payload.display_experiment=card.experiment;
@@ -514,6 +545,7 @@ class MultiView{
     if(card.closed)return;
     if(typeof ev.data!=='string'){
      if(card.state==='stopping')return;
+     if(card.engine==='webrtc'){mark('WebRTC 会话意外收到 MSE 视频片段',true);this.end(card,false);return;}
      const len=ev.data.byteLength;card.meter.record(len);card.metrics.recordBytes(len);
      try{card.player.append(new Uint8Array(ev.data));}
      catch(e){mark(e.message,true);this.end(card,false);}
@@ -526,6 +558,14 @@ class MultiView{
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
      refresh();this.updatePicker();
+     if(card.engine==='webrtc')card.player.start(ws,card.session).catch(e=>{
+      if(!card.closed){mark('WebRTC Offer 失败：'+e.message,true);this.end(card,false);}
+     });
+    }else if(m.type==='webrtc_answer'){
+     if(card.engine!=='webrtc'){mark('意外的 WebRTC Answer',true);this.end(card,false);return;}
+     card.player.answer(m.sdp).catch(e=>{
+      if(!card.closed){mark('WebRTC Answer 失败：'+e.message,true);this.end(card,false);}
+     });
     }else if(m.type==='screen_power_notice'){
      mark(m.message||'已发送显示屏电源指令');
     }else if(m.type==='wake_accepted'){
@@ -554,7 +594,10 @@ class MultiView{
        catch{this.end(card,false);return;}
       }
      }
-     const traffic=card.meter.sample(performance.now());
+     if(card.engine==='webrtc')card.player.pollStats(delta=>{
+       if(!card.closed){card.meter.record(delta);card.metrics.recordBytes(delta);}
+      });
+      const traffic=card.meter.sample(performance.now());
      const pd=card.player.diagnostics();
      const stat=card.metrics.sample(video,performance.now(),{
       renderedFrames:card.frameCount,
