@@ -652,10 +652,6 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         live_registry.release(device_id, candidate)
                         stream = None
                         error = "视频会话未能启动，请稍后重试"
-                # Original reserve/start path is handled above.
-                if False:
-                    pass
-                #
 
         if error:
             await websocket.send_json({"type": "error", "message": error})
