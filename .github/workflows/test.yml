@@ -1,18 +1,12 @@
 name: M2 tests
-# Final one-shot verification after fixing asynchronous contract-test timing.
-# Only this workflow path AND exact commit message can execute test job.
+# Run once by explicit user request after the full development batch is ready.
+# Ordinary commits/pull requests MUST NOT automatically start a Runner.
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/m2-web-control]
-    paths: ['.github/workflows/test.yml']
 permissions:
   contents: read
 jobs:
   test:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.event.head_commit.message == 'ci: one-shot M2 compile and test')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
