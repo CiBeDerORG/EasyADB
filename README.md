@@ -35,11 +35,13 @@ sudo sh scripts/build-with-mihomo.sh --no-proxy
 
 两个模式使用同一 Compose 项目目录、镜像名 `easyadb:local`、`EASYADB_BIND_IP/EASYADB_PORT`、`EASYADB_TOKEN`、设备数据库 `./data/storage` 和 ADB 授权 `./data/adb`。构建成功后覆盖更新既有服务，不执行 `down -v`，也不会删除先前的 Mihomo 或 Buildx。需要恢复代理模式时再次运行不带参数的原命令即可。
 
-**从尚未支持该参数的旧版脚本首次切换至无代理模式时**，先在当前 M1 项目目录（原 Git 登录用户身份，**不要加 sudo**）手动获得新脚本：
+**从尚未支持该参数的旧版脚本首次切换至无代理模式时**，先在当前 M1 项目目录（原 Git 登录用户身份，**不要加 sudo**）手动切换至 M2 并获取新脚本，**不能在仍位于 M1 分支时直接 pull M2**：
 
 ```sh
 cd /vol3/1000/software/EasyADB
+git status --short
 git fetch origin
+git switch feat/m2-web-control 2>/dev/null || git switch --track origin/feat/m2-web-control
 git pull --ff-only origin feat/m2-web-control
 sudo sh scripts/build-with-mihomo.sh --no-proxy
 ```
