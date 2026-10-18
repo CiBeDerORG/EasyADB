@@ -1,7 +1,7 @@
 name: M2 tests
 on:
   push:
-    branches: [feat/m2-web-control]
+    branches: [feat/m2-web-control, feat/display-mode-lab]
 permissions:
   contents: read
 jobs:
@@ -23,13 +23,14 @@ jobs:
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done
-          python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==3 and "firstPairDialog" in h and "firstPairForm" in h and "groupDialog" in h and "groupPrefix" in h and "deleteGroup" in h and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
+          python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==4 and "firstPairDialog" in h and "firstPairForm" in h and "groupDialog" in h and "groupPrefix" in h and "deleteGroup" in h and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
           node --check /tmp/easyadb-web.js
           node --check web/m2-player.js
           node --check web/m2-traffic.js
           node --check web/m2-touch.js
           node --check web/m2-metrics.js
           node --check web/m2-multi.js
+          node --check web/display-lab.js
           node tests/m2_quality_metrics.cjs
           node tests/m2_multi_contract.cjs
           node tests/m2_player_contract.cjs
