@@ -215,3 +215,60 @@ def test_real_ffmpeg_copy_remux_produces_mse_init_and_media_fragments():
     assert mime.startswith('video/mp4; codecs="avc1.')
     assert b"moof" in fragmented[end:]
     assert b"mdat" in fragmented[end:]
+
+
+def test_sparse_scrcpy_like_input_keeps_real_timeline_in_fragmented_mp4(tmp_path):
+    """Old '-r 30' mapped 12 frames/1.2 wall seconds into only 0.4s.
+
+    scrcpy repeats unchanged display frames about every 100ms; MP4 timestamps
+    must span approximately their arrival time rather than nominal 30fps.
+    """
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg/ffprobe unavailable")
+    encoded = subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=30",
+        "-frames:v", "12", "-c:v", "libx264", "-preset", "ultrafast",
+        "-x264-params", "aud=1:keyint=30:scenecut=0",
+        "-pix_fmt", "yuv420p", "-f", "h264", "pipe:1",
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=True).stdout
+    aud = bytes((0, 0, 0, 1, 9))
+    starts = []
+    offset = 0
+    while (found := encoded.find(aud, offset)) >= 0:
+        starts.append(found)
+        offset = found + len(aud)
+    assert len(starts) == 12
+    # Preserve SPS/PPS prefix in the first access unit.
+    packets = [encoded[:starts[1]]] + [
+        encoded[starts[i]:starts[i + 1]] for i in range(1, len(starts) - 1)
+    ] + [encoded[starts[-1]:]]
+    assert len(packets) == 12
+    output_path = tmp_path / "sparse-idle.mp4"
+    with output_path.open("wb") as output:
+        process = subprocess.Popen(
+            ["ffmpeg", *FFMPEG_MSE_ARGS],
+            stdin=subprocess.PIPE, stdout=output, stderr=subprocess.PIPE,
+        )
+        try:
+            for packet in packets:
+                process.stdin.write(packet)
+                process.stdin.flush()
+                time.sleep(0.10)
+            process.stdin.close()
+            error = process.stderr.read()
+            assert process.wait(timeout=10) == 0, error.decode("utf-8", "replace")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+    reported = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries", "packet=pts_time",
+        "-select_streams", "v:0", "-of", "csv=p=0", str(output_path),
+    ], capture_output=True, text=True, timeout=10, check=True)
+    pts = [float(v) for v in reported.stdout.splitlines() if v.strip()]
+    assert len(pts) == 12
+    assert pts[-1] - pts[0] >= 0.75, (
+        f"Sparse source time compressed: first={pts[0]}, last={pts[-1]}"
+    )
+    assert b"moof" in output_path.read_bytes()
