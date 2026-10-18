@@ -109,4 +109,57 @@ assert.equal(idleVideo.listeners.get('waiting').length,0);
 assert.equal(idleVideo.listeners.get('stalled').length,0);
 assert.deepEqual(errors,[]);
 
+
+// Regression: source buffer append proceeds while chunks continue arriving.
+// The live-edge maintenance MUST run even with a non-empty queue; the old
+// early-return layout would leave a stalled playhead behind indefinitely.
+const streamVideo=new VideoMock();
+const streamPlayer=api.create('mse',streamVideo,{onError:e=>errors.push(e)});
+streamPlayer.initialize({format:'fmp4',mime});
+MediaSourceMock.last.open();
+const streamSB=MediaSourceMock.last.source;
+streamSB.appendBuffer=function(data){
+  this.received.push(Buffer.from(data));
+  this.updating=true; // mimic the asynchronous real SourceBuffer.
+};
+streamVideo.currentTime=0.1;
+streamSB.buffered=buffered([[0,22]]);
+streamPlayer.append(chunk);
+streamPlayer.append(chunk);
+assert.equal(streamSB.received.length,1);
+assert.equal(streamPlayer.queue.length,1);
+streamSB.updating=false;
+streamSB.emit('updateend');
+assert(streamVideo.currentTime>21.7,'the playhead must catch up even while another chunk is queued');
+assert.equal(streamSB.received.length,2);
+assert.equal(streamPlayer.queue.length,0);
+// Do not discard scrcpy's default ~10s keyframe dependency with an 8s window.
+// Async trim must complete before the pending chunk is appended.
+streamSB.buffered=buffered([[0,32]]);
+streamVideo.currentTime=31.7;
+streamSB.updating=false;
+let trimmedTo=null;
+streamSB.remove=function(begin,end){
+  trimmedTo=end;
+  this.updating=true;
+};
+streamPlayer.append(chunk);
+streamPlayer.append(chunk);
+streamSB.updating=false;
+streamSB.emit('updateend');
+assert(trimmedTo>15&&trimmedTo<=16,
+  'retain 16s of the video timeline, including a previous random access frame');
+assert.equal(streamPlayer.queue.length,1,'do not append while buffer removal is active');
+streamSB.buffered=buffered([[trimmedTo,32]]);
+streamSB.updating=false;
+streamSB.emit('updateend');
+assert.equal(streamPlayer.queue.length,0,'resume queued append after async trim');
+const streamDiag=streamPlayer.diagnostics();
+assert.equal(streamDiag.sourceRanges,1);
+assert(streamDiag.appendCalls>=4);
+assert(streamDiag.completedUpdates>=3);
+assert(streamDiag.rangeEnd===32);
+assert.deepEqual(errors,[]);
+streamPlayer.destroy();
+
 console.log('MSE adapter contract and reserved WebCodecs stub: OK');
