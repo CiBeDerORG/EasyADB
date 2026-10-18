@@ -89,6 +89,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2LiveInfo" class="status" role="status" aria-live="polite" hidden></div>
+  <div id="m2LiveTraffic" class="status" role="status" hidden></div>
   <div id="m2LiveDiag" class="status" role="status" hidden></div>
   <p class="hint">当前播放引擎：MSE（WebCodecs 接口已预留，尚未实现、不可选择）。</p>
   <label for="liveProfile">实时画面档位（需手动开始）</label><select id="liveProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d"><option value="baseline">基础 · 最大边1600 / 8 Mbps / 30 FPS</option><option value="native">原生 · 不限制尺寸 / 16 Mbps / 30 FPS</option></select>
@@ -145,12 +146,13 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </dialog>
 </main>
 <script src="/m2-player.js"></script>
+<script src="/m2-traffic.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false,shotUrl=null;
 let liveWS=null,livePlayer=null,liveDeviceId=null,liveReceivedError=false;
 let liveWsOpenedAt=0,liveLastBytesAt=0,liveFirstBytesAt=0,liveVideoFrameAt=0,liveVideoFrames=0,liveAdbCheckMs=null;
-let liveFrameCallbackId=null;
+let liveFrameCallbackId=null,liveTraffic=null;
 const groupOpen=new Map();
 const labels={idle:'待手动连接',connected:'已连接',disconnected:'未连接',connecting:'连接中',checking:'检查中',error:'异常'};
 function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
@@ -166,6 +168,7 @@ function clearShot(){
  $('m2VideoInfo').hidden=true;$('m2VideoInfo').textContent='';
  $('m2LiveInfo').hidden=true;$('m2LiveInfo').textContent='';
  $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
+ $('m2LiveTraffic').hidden=true;$('m2LiveTraffic').textContent='';liveTraffic=null;
  if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
@@ -443,8 +446,18 @@ $('m2Preflight').addEventListener('click',async()=>{
 function liveStatus(text,kind=''){
  const el=$('m2LiveInfo');el.hidden=false;el.textContent=text;el.className='status '+kind;
 }
-// Session-only diagnostics: ages measure activity, not phone-screen content.
+// The existing one-second diagnostics clock also samples throughput; no timer
+// runs after the page or the explicitly opened stream closes.
+function updateLiveTraffic(finished=false){
+ if(!liveTraffic)return;
+ const stats=liveTraffic.sample(performance.now());
+ const el=$('m2LiveTraffic');
+ el.hidden=false;
+ el.textContent=EasyADBTraffic.format(stats,finished)+
+   '｜仅统计视频载荷，不含协议开销';
+}
 function liveDiagnostic(diag){
+ updateLiveTraffic();
  const video=$('liveVideo');
  const elapsed=age=>age===null||age===undefined?'尚未收到':(age/1000).toFixed(1)+'s';
  const browserAge=liveLastBytesAt?performance.now()-liveLastBytesAt:null;
@@ -479,6 +492,7 @@ function liveDiagnostic(diag){
   '｜MP4 初始化耗时：'+elapsed(diag.init_ready_ms)+
   '｜手机编码包：'+diag.phone_packets+' / 距今 '+elapsed(diag.phone_idle_ms)+
   '｜FNOS MP4 读取：'+diag.mux_chunks+' / 完整媒体分片：'+(diag.media_fragments??'—')+' / 距今 '+elapsed(diag.mux_idle_ms)+
+  '｜WS已发视频：'+(typeof diag.ws_video_bytes==='number'?EasyADBTraffic.size(diag.ws_video_bytes):'—')+
   '｜浏览器收包：'+elapsed(browserAge)+
   '｜实际渲染：'+(liveVideoFrameAt?liveVideoFrames+' 帧 / 距今 '+elapsed(frameAge):'尚无渲染帧或浏览器不支持计数')+
   '｜video缓冲余量：'+buffer+
@@ -487,6 +501,7 @@ function liveDiagnostic(diag){
 }
 function stopLive(){
  const ws=liveWS;liveWS=null;liveDeviceId=null;
+ if(ws&&liveTraffic)updateLiveTraffic(true);
  const video=$('liveVideo');
  if(liveFrameCallbackId!==null&&typeof video.cancelVideoFrameCallback==='function'){
   try{video.cancelVideoFrameCallback(liveFrameCallbackId);}catch{}
@@ -513,7 +528,9 @@ function startLive(){
  liveReceivedError=false;
  liveWsOpenedAt=0;liveLastBytesAt=0;liveFirstBytesAt=0;
  liveVideoFrameAt=0;liveVideoFrames=0;liveAdbCheckMs=null;
+ liveTraffic=null;
  $('m2LiveDiag').hidden=true;$('m2LiveDiag').textContent='';
+ $('m2LiveTraffic').hidden=true;$('m2LiveTraffic').textContent='';
  try{
   livePlayer=EasyADBPlayers.create(playerMode,video,{
    onState:state=>{
@@ -525,6 +542,8 @@ function startLive(){
    onError:reason=>{liveReceivedError=true;liveStatus(reason,'error');stopLive();}
   });
  }catch(error){liveStatus(error.message,'error');return;}
+ liveTraffic=new EasyADBTraffic.Meter(performance.now());
+ updateLiveTraffic();
  const scheme=location.protocol==='https:'?'wss:':'ws:';
  const ws=new WebSocket(scheme+'//'+location.host+'/api/devices/'+encodeURIComponent(id)+'/m2/live');
  ws.binaryType='arraybuffer';liveWS=ws;liveDeviceId=id;
@@ -567,6 +586,8 @@ function startLive(){
   }
   liveLastBytesAt=performance.now();
   if(!liveFirstBytesAt)liveFirstBytesAt=liveLastBytesAt;
+  // Count actual binary bytes received, regardless of MSE append/decode time.
+  if(liveTraffic)liveTraffic.record(e.data.byteLength);
   try{livePlayer.append(new Uint8Array(e.data));}
   catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
  };
