@@ -67,3 +67,28 @@ def test_multiple_tracks_never_share_codec_config_or_frames():
         a.stop(); b.stop()
         await asyncio.sleep(0)
     asyncio.run(check())
+
+
+def test_manual_stop_unblocks_pending_webrtc_recv_without_waiting_for_adb_worker():
+    """Regression: RTCRtpSender awaits recv() when the phone is quiet.
+
+    The selected stream must wake its track immediately on manual stop,
+    before server awaits pc.close() and before slow ADB-forward cleanup.
+    """
+    from server.m2_live import LiveVideo
+
+    async def check():
+        track = ScrcpyH264Track(asyncio.get_running_loop())
+        live = LiveVideo("selected-only:5555", "baseline", video_engine="webrtc")
+        live.webrtc_track = track
+        waiting = asyncio.create_task(track.recv())
+        await asyncio.sleep(0)
+        assert not waiting.done()
+        await asyncio.wait_for(asyncio.to_thread(live.stop), 1)
+        with pytest.raises(MediaStreamError):
+            await asyncio.wait_for(waiting, 1)
+        assert track.closed
+        assert live.stop_event.is_set()
+        live.stop()  # repeated cleanup must not resurrect the waiting sender
+
+    asyncio.run(check())
