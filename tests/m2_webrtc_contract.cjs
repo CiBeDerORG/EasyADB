@@ -20,7 +20,8 @@ class Peer {
  async setLocalDescription(d){this.localDescription=d;}
  async setRemoteDescription(d){this.remoteDescription=d;}
  async getStats(){return new Map([['video',{type:'inbound-rtp',kind:'video',bytesReceived:1234,framesDecoded:8,framesDropped:1}]]);}
- async close(){this.connectionState='closed';}
+ // Match the browser API exactly: native close() is synchronous and returns undefined.
+ close(){this.connectionState='closed';this.closeCount=(this.closeCount||0)+1;}
  addEventListener(t,fn){this.handlers.set(t,fn);}
  removeEventListener(t){this.handlers.delete(t);}
 }
@@ -44,7 +45,17 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/m2-webrtc.js'),'u
  let rx=0;await p.pollStats(n=>rx+=n);
  assert.equal(rx,1234);assert.equal(p.diagnostics().webrtcFrames,8);
  await p.pollStats(n=>rx+=n);assert.equal(rx,1234,'stats must be deltas, not double-counted');
- p.destroy();assert.equal(video.srcObject,null);
+ assert.equal(typeof Peer.last.close(), 'undefined','native close has no Promise');
+ // Restore the active state to emulate a browser that was still connected.
+ Peer.last.connectionState='connected';Peer.last.closeCount=0;
+ assert.doesNotThrow(()=>p.destroy(),'native synchronous close must never interrupt card cleanup');
+ assert.equal(Peer.last.closeCount,1,'peer closed exactly once');
+ assert.equal(Peer.last.ontrack,null);
+ assert.equal(Peer.last.onconnectionstatechange,null);
+ assert.equal(video.srcObject,null);
+ assert.equal(video.handlers.has('playing'),false);
+ assert.doesNotThrow(()=>p.destroy(),'destroy remains idempotent');
+ assert.equal(Peer.last.closeCount,1,'repeat destroy must not close peer twice');
  assert.deepEqual(errs,[]);
  console.log('WebRTC player offer/answer, H264, stats and cleanup: OK');
 })().catch(e=>{console.error(e);process.exitCode=1;});
