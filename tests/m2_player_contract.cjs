@@ -74,4 +74,39 @@ assert.throws(()=>player.initialize({format:'fmp4',mime}),/已经初始化或已
 const unsupported=api.create('mse',new VideoMock());
 assert.throws(()=>unsupported.initialize({format:'fmp4',mime:'video/mp4; codecs="avc1.DEAD00"'}),/不支持/);
 unsupported.destroy();
+
+// Sparse Android stream: when an idle display resumes after a long timestamp
+// gap, seek into the LATEST playable range, not into the gap after range 0.
+const idleVideo=new VideoMock();
+const idlePlayer=api.create('mse',idleVideo,{onError:e=>errors.push(e)});
+idlePlayer.initialize({format:'fmp4',mime});
+MediaSourceMock.last.open();
+const idleSB=MediaSourceMock.last.source;
+const buffered=(ranges)=>({
+  length:ranges.length,start:i=>ranges[i][0],end:i=>ranges[i][1]
+});
+idleSB.buffered=buffered([[0,0.95]]);
+idleVideo.currentTime=0.55;
+idlePlayer._pump();
+assert.equal(idleVideo.currentTime,0.55); // legitimate static picture, do NOT seek constantly
+idleVideo.currentTime=0.94;
+idleVideo.emit('waiting');
+assert.equal(idlePlayer._waitingAtEdge,true);
+idleSB.buffered=buffered([[0,0.95],[8,8.18]]);
+idleSB.emit('updateend');
+assert(idleVideo.currentTime>=8&&idleVideo.currentTime<8.18,
+  'must jump INSIDE latest range after a timestamp discontinuity');
+assert.equal(idlePlayer._waitingAtEdge,false);
+// When playback waits at the tail, another packet unblocks it without reconnecting.
+idleVideo.currentTime=8.16;
+idleVideo.emit('waiting');
+idleSB.buffered=buffered([[0,0.95],[8,8.34]]);
+idleSB.emit('updateend');
+assert(idleVideo.currentTime>=8.2&&idleVideo.currentTime<8.34,
+  'resume slightly behind the new live edge after waiting');
+idlePlayer.destroy();
+assert.equal(idleVideo.listeners.get('waiting').length,0);
+assert.equal(idleVideo.listeners.get('stalled').length,0);
+assert.deepEqual(errors,[]);
+
 console.log('MSE adapter contract and reserved WebCodecs stub: OK');
