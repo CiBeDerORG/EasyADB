@@ -30,7 +30,7 @@ const root={
  })},
  EasyADBTouch:{create:()=>({enable(){},disable(){},destroy(){}})},
  EasyADBTraffic:{Meter:class{record(){} sample(){return{mbps:0,totalBytes:0};}},size:()=> '0 MiB'},
- EasyADBMetrics:{QualityMeter:class{recordBytes(){} sample(){return{};}},format:()=>'',fmt:()=> '—'}
+ EasyADBMetrics:{QualityMeter:class{recordBytes(){} sample(){return{};}},format:()=>'',fmt:()=> '—',advice:()=> ''}
 };
 root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
@@ -62,6 +62,10 @@ b.emit('init',{session_id:'session-b',width:720,height:1280,mime:'video/mp4; cod
  format:'fmp4',control_available:true,requested:{max_size:1600,video_bit_rate:8000000,max_fps:30}});
 const ca=multi.cards.get('id-1'),cb=multi.cards.get('id-2');
 assert.equal(ca.state,'playing');assert.equal(cb.state,'playing');
+a.emit('diagnostic',{session_id:'session-a',proc_cpu_pct:5,proc_rss_mib:20});
+assert.equal(JSON.parse(a.sent.at(-1)).type,'heartbeat');
+assert.equal(JSON.parse(a.sent.at(-1)).session_id,'session-a');
+assert.equal(b.sent.length,1,'a diagnostic must not ping card B');
 ca.toggle.fire('click');assert.equal(JSON.parse(a.sent.at(-1)).session_id,'session-a');
 assert.equal(b.sent.length,1,'card A control must not leak to card B');
 a.emit('control_enabled',{session_id:'session-a'});assert.equal(ca.enabled,true);assert.equal(cb.enabled,false);
