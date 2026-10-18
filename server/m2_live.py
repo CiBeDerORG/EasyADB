@@ -181,7 +181,8 @@ class LiveVideo:
         self.session_id = secrets.token_hex(12)
         self.server_file = Path(server_file) if server_file is not None else SERVER_FILE
         self.stop_event = threading.Event()
-        self.finished = threading.Event()
+        self.finished = threading.Event()  # worker terminated, not necessarily fully cleaned
+        self.cleanup_complete = False  # only true after all owned resources are released
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
         self.video_sock = None
@@ -405,6 +406,7 @@ class LiveVideo:
         remote = f"/data/local/tmp/easyadb-live-{scid}.jar"
         abstract = f"localabstract:scrcpy_{scid}"
         port = None
+        remote_pushed = False
         feeder = None
         failure = None
         try:
@@ -415,6 +417,7 @@ class LiveVideo:
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
                 self._phase_set("推送 scrcpy-server")
                 _run_adb(self.serial, "push", str(self.server_file), remote)
+                remote_pushed = True
                 self._phase_set("创建 ADB 视频转发")
                 port_text = _run_adb(self.serial, "forward", "tcp:0", abstract)
                 if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
@@ -561,33 +564,51 @@ class LiveVideo:
             failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
         finally:
             self._phase_set("结束并清理视频会话")
-            # The registry may retire this session only after resources are
-            # released. Never leave finished unset if an individual cleanup
-            # operation unexpectedly fails; keep cleaning remaining resources.
+            # finished means the worker is terminal; cleanup_complete is the
+            # stronger promise required before the device slot can be reused.
+            # Attempt EVERY owned-resource cleanup even when one step fails.
+            cleaned = True
             try:
-                self.stop()
+                try:
+                    self.stop()
+                except (OSError, ValueError):
+                    cleaned = False
                 if feeder:
                     feeder.join(timeout=3)
+                    if feeder.is_alive():
+                        cleaned = False
                 for proc in (self.ffmpeg_proc, self.adb_proc):
                     if proc is not None:
                         try:
                             proc.wait(timeout=3)
                         except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.wait(timeout=2)
+                            try:
+                                proc.kill()
+                                proc.wait(timeout=2)
+                            except (OSError, subprocess.TimeoutExpired):
+                                cleaned = False
+                        except (OSError, ValueError):
+                            cleaned = False
                 if port is not None:
                     try:
                         _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
                     except VideoProbeError:
-                        pass
-                try:
-                    _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
-                except VideoProbeError:
-                    pass
+                        cleaned = False
+                if remote_pushed:
+                    try:
+                        _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
+                    except VideoProbeError:
+                        cleaned = False
             finally:
+                self.cleanup_complete = cleaned
                 if failure:
                     try:
                         self.events.put_nowait(("error", failure))
+                    except queue.Full:
+                        pass
+                if not cleaned:
+                    try:
+                        self.events.put_nowait(("error", "本轮资源清理未全部确认，设备会话保持占用以避免并发冲突"))
                     except queue.Full:
                         pass
                 try:
@@ -595,6 +616,7 @@ class LiveVideo:
                 except queue.Full:
                     pass
                 self.finished.set()
+
 
 
 class LiveRegistry:
@@ -610,11 +632,17 @@ class LiveRegistry:
                 # If a bounded WS cleanup timed out but the worker eventually
                 # finished, retire it only AFTER its resources have gone.
                 finished = getattr(old, "finished", None)
-                if finished is None or not finished.is_set():
+                if finished is None or not finished.is_set() or not getattr(old, "cleanup_complete", True):
                     return False
                 self.sessions.pop(device_id, None)
             self.sessions[device_id] = session
             return True
+
+    @staticmethod
+    def is_cleaned(session):
+        finished = getattr(session, "finished", None)
+        return bool(finished is not None and finished.is_set()
+                    and getattr(session, "cleanup_complete", True))
 
     def release(self, device_id, session):
         with self.lock:
