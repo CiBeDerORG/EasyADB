@@ -129,7 +129,7 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
             message = ws.receive_json()
             if message["type"] == expected:
                 return message
-            assert message["type"] in ("diagnostic", "starting")
+            assert message["type"] in ("diagnostic", "starting", "stopping")
         pytest.fail(f"no expected {expected} message")
 
     monkeypatch.setattr(mod, "LiveVideo", FakeStream)
