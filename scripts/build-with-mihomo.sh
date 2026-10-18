@@ -9,7 +9,7 @@ MIHOMO_CONTAINER="${MIHOMO_CONTAINER:-mihomo}"
 BUILDER=easyadb-proxy
 BUILDER_CONTAINER=buildx_buildkit_easyadb-proxy0
 BUILDKIT_IMAGE=moby/buildkit:buildx-stable-1
-PROXY="${EASYADB_BUILD_PROXY:-http://mihomo:7890}"
+. scripts/proxy-config.sh
 
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
   echo "ERROR: existing Docker network $NETWORK was not found." >&2
@@ -56,7 +56,7 @@ if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
     exit 1
   fi
 else
-  echo "Creating isolated BuildKit builder on $NETWORK (proxy: $PROXY)..."
+  echo "Creating isolated BuildKit builder on $NETWORK with configured Mihomo authentication..."
   docker buildx create --name "$BUILDER" --driver docker-container \
     --driver-opt "image=$BUILDKIT_IMAGE" \
     --driver-opt "network=$NETWORK" \
@@ -65,7 +65,7 @@ else
 fi
 
 docker buildx inspect --bootstrap "$BUILDER"
-echo "Building EasyADB with $PROXY..."
+echo "Building EasyADB via Mihomo..."
 docker buildx build --builder "$BUILDER" --load --progress=plain \
   --tag easyadb:local \
   --build-arg "HTTP_PROXY=$PROXY" \
