@@ -6,6 +6,7 @@ recording. Every stream is owned by exactly one authenticated WebSocket.
 import os
 import queue
 import secrets
+import select
 import socket
 import struct
 import subprocess
@@ -255,7 +256,15 @@ class LiveVideo:
                 feeder.start()
                 init_buffer = bytearray()
                 has_init = False
+                init_started = time.monotonic()
                 while not self.stop_event.is_set():
+                    if not has_init and time.monotonic() - init_started > 25:
+                        raise VideoProbeError("FFmpeg 25 秒内未生成 MP4 初始化段，请检查编码器或屏幕状态")
+                    # Avoid indefinitely blocking on a quiet/failed encoder,
+                    # so stop/route switch can release its session promptly.
+                    ready, _, _ = select.select([mux.stdout], [], [], 0.5)
+                    if not ready:
+                        continue
                     data = os.read(mux.stdout.fileno(), 32768)
                     if not data:
                         if not self.stop_event.is_set():
