@@ -108,3 +108,47 @@ def test_direct_compose_is_standalone_and_preserves_persistent_paths():
         line for line in direct.splitlines() if not line.lstrip().startswith("#")
     )
     assert "network_mode: host" not in direct
+
+
+
+def test_default_mode_still_uses_original_mihomo_builder(tmp_path):
+    project, env = setup_fake_deploy(tmp_path)
+    scripts = project / "scripts"
+    (scripts / "proxy-config.sh").write_text("PROXY=http://mihomo:7890\n")
+    (scripts / "proxy-host.sh").write_text(
+        "HOST_PROXY=http://127.0.0.1:7890\nMIHOMO_IP=192.0.2.11\n"
+    )
+    (tmp_path / "bin" / "docker").write_text("""#!/bin/sh
+printf '%s\\n' "$*" >> "$EASYADB_TEST_LOG"
+case "$1" in
+  network)
+    [ "$2" = inspect ] && exit 0 ;;
+  inspect)
+    case "$3" in
+      *State.Running*) echo true; exit 0 ;;
+      *NetworkSettings.Networks*) echo yes; exit 0 ;;
+    esac ;;
+  buildx)
+    case "$2" in
+      version|create|build) exit 0 ;;
+      inspect) exit 1 ;;
+    esac ;;
+  image)
+    [ "$2" = inspect ] && exit 0 ;;
+  compose)
+    [ "$2" = up ] && exit 0 ;;
+esac
+exit 74
+""")
+    (tmp_path / "bin" / "docker").chmod(0o755)
+    result = invoke(project, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = (tmp_path / "calls.log").read_text().splitlines()
+    assert calls[0] == "update-m1"
+    assert "network inspect proxy-net" in calls
+    assert "buildx version" in calls
+    assert "image inspect moby/buildkit:buildx-stable-1" in calls
+    assert any(call.startswith("buildx create --name easyadb-proxy ") for call in calls)
+    assert any(call.startswith("buildx build --builder easyadb-proxy ") for call in calls)
+    assert calls[-1] == "compose up -d --no-build"
+    assert not any("compose.no-proxy.yaml" in call for call in calls)
