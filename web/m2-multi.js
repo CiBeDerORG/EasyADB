@@ -267,7 +267,10 @@ class MultiView{
   if(!this.opening)return;
   const next=this.launchQueue.shift();
   if(!next){
-   this.opening=false;this.updatePicker();return;
+   this.opening=false;
+   // Startup queue is settled: release any stale FAB reconnect-disable state.
+   for(const card of this.cards.values())card.refresh?.();
+   this.updatePicker();return;
   }
   this.open(next.device,next.quality,()=>this._launchNext(),next.lowLatency,null,next.screenOff);
  }
