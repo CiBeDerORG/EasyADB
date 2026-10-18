@@ -76,12 +76,16 @@ fi
 
 echo "Building EasyADB via Mihomo..."
 # Force the host-side Buildx CLI's registry token exchange through Mihomo too.
-# Docker API traffic continues over its Unix socket. Never echo HOST_PROXY.
+# Dockerfile RUN workers do not inherit proxy-net DNS; --add-host gives them
+# a build-scoped 'mihomo' entry with the current bridge IP, without host mode
+# or saving it in .env. Docker API traffic continues over the Unix socket.
+# Never echo HOST_PROXY (it includes credentials).
 HTTP_PROXY="$HOST_PROXY" HTTPS_PROXY="$HOST_PROXY" \
 http_proxy="$HOST_PROXY" https_proxy="$HOST_PROXY" \
 NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1' \
 docker buildx build --builder "$BUILDER" --load --progress=plain \
   --tag easyadb:local \
+  --add-host "mihomo:${MIHOMO_IP}" \
   --build-arg "HTTP_PROXY=$PROXY" \
   --build-arg "HTTPS_PROXY=$PROXY" \
   --build-arg "http_proxy=$PROXY" \
