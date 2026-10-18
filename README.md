@@ -53,6 +53,35 @@ sudo docker image inspect moby/buildkit:buildx-stable-1
 
 ---
 
+### 遇到 HTTP 407：代理要求认证
+
+如果 bootstrap 检查 Registry 时显示 `CONNECT tunnel failed, response 407`，说明已经访问到代理，但 CONNECT 请求被代理认证拒绝（也可能来自其上游代理），不是 Docker 构建网络不通。**部署页面的 `external-controller-cors` / trusted Web origins 仅控制管理 API 跨域访问，与 mixed-port 7890 的认证无关。**
+
+先检查来源网络 CIDR（不要猜测网段）：
+
+```sh
+sudo docker network inspect proxy-net --format 'Subnet={{(index .IPAM.Config 0).Subnet}} Gateway={{(index .IPAM.Config 0).Gateway}}'
+```
+
+在真正运行中的 Mihomo 配置中检查 `authentication` 与 `skip-auth-prefixes`。若你信任整个 `proxy-net`，可以在 `skip-auth-prefixes` 中**追加实际的 Subnet CIDR**（例如检测结果确实为 `172.19.0.0/16` 时）：
+
+```yaml
+skip-auth-prefixes:
+  - 172.19.0.0/16
+```
+
+与 `authentication`、`allow-lan` 同级配置并重载 Mihomo；不要加到 `external-controller-cors` 下，也不要使用 `0.0.0.0/0` 来绕开认证。该网段内所有容器都将跳过代理认证，不希望如此时请保留认证并为客户端单独配置代理凭据。
+
+复测：
+
+```sh
+sudo curl -sS -i -x http://172.19.0.2:7890 https://registry-1.docker.io/v2/
+```
+
+把示例 IP 换成脚本报告的 Mihomo 实际 IP。出现 Registry 的 HTTP 401 和 `UNAUTHORIZED` 是正常的未登录 Registry 响应，**不同于 Proxy 407**。如果 Mihomo 并未启用本地 `authentication` 但仍返回 407，检查当前选中的上游 HTTP 代理是否要求认证。
+
+---
+ 
 ## 检查
 
 ```sh
