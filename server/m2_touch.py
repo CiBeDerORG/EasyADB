@@ -22,7 +22,7 @@ def encode_touch(payload, expected_size, pressed):
     }:
         raise InvalidTouch("触摸字段无效")
     action = payload["action"]
-    if action not in ACTIONS:
+    if type(action) is not str or action not in ACTIONS:
         raise InvalidTouch("不支持的触摸动作")
     width, height = expected_size
     if not 0 < width <= 8192 or not 0 < height <= 8192:
