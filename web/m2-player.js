@@ -18,12 +18,28 @@ class MSEPlayer {
     this.queue=[];
     this.pendingBytes=0;
     this.closed=false;
+    this._lastBufferedEnd=0;
+    this._waitingAtEdge=false;
     this._onSourceOpen=null;
     this._onUpdateEnd=null;
     this._onSourceError=null;
-    this._onPlaying=()=>{if(!this.closed)this.onState('playing');};
+    this._onPlaying=()=>{if(!this.closed){this._waitingAtEdge=false;this.onState('playing');}};
     this._onVideoError=()=>{if(!this.closed)this.onError('浏览器视频解码失败，请尝试基础档或更新浏览器。');};
+    // A still Android screen may provide fewer frames than moving content.
+    // A video at the buffered edge is allowed to wait: recover only AFTER a
+    // newer fragment arrives; never inject touches or restart ADB.
+    this._onWaiting=()=>{
+      if(this.closed)return;
+      const sb=this.sourceBuffer;
+      try{
+        const ranges=sb&&sb.buffered;
+        this._waitingAtEdge=!ranges||!ranges.length||
+          this.video.currentTime>=ranges.end(ranges.length-1)-0.15;
+      }catch{this._waitingAtEdge=true;}
+    };
     this.video.addEventListener('playing',this._onPlaying);
+    this.video.addEventListener('waiting',this._onWaiting);
+    this.video.addEventListener('stalled',this._onWaiting);
     this.video.addEventListener('error',this._onVideoError);
   }
   initialize(metadata){
@@ -85,11 +101,26 @@ class MSEPlayer {
     try{
       const ranges=sb.buffered;
       if(!ranges.length)return;
-      const start=ranges.start(0), end=ranges.end(ranges.length-1);
-      // Stay near the live edge, rather than playing a long stale buffer.
-      if(end-this.video.currentTime>2.5 || this.video.currentTime<start){
-        this.video.currentTime=Math.max(start,end-0.45);
+      const start=ranges.start(0);
+      const latest=ranges.length-1;
+      const latestStart=ranges.start(latest), end=ranges.end(latest);
+      const position=this.video.currentTime;
+      const newer=end>this._lastBufferedEnd+0.015;
+      // For sparse video, new media may begin after a real timestamp gap.
+      // Seeking relative to the FIRST range mistakenly targets that gap.
+      // Stay within the newest playable range and avoid aggressive seeking
+      // while the display is legitimately idle.
+      const outsideLatest=position<latestStart-0.03;
+      const fallingBehind=end-position>2.5;
+      const recovering=this._waitingAtEdge && newer &&
+        position>=this._lastBufferedEnd-0.15;
+      if(outsideLatest||fallingBehind||recovering){
+        const target=Math.max(latestStart,end-(recovering?0.08:0.15));
+        if(Math.abs(target-position)>0.02)this.video.currentTime=target;
+        this._waitingAtEdge=false;
       }
+      this._lastBufferedEnd=end;
+      // Bound old memory without removing media near the current playhead.
       const oldEnd=Math.min(end-8,this.video.currentTime-0.7);
       if(oldEnd>start && end-start>12)sb.remove(0,oldEnd);
     }catch(error){
@@ -108,6 +139,8 @@ class MSEPlayer {
     if(this.closed)return;
     this.closed=true;
     this.video.removeEventListener('playing',this._onPlaying);
+    this.video.removeEventListener('waiting',this._onWaiting);
+    this.video.removeEventListener('stalled',this._onWaiting);
     this.video.removeEventListener('error',this._onVideoError);
     const ms=this.mediaSource,sb=this.sourceBuffer;
     if(ms&&this._onSourceOpen)ms.removeEventListener('sourceopen',this._onSourceOpen);
