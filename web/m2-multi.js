@@ -268,13 +268,27 @@ class MultiView{
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name),make('span','muted',d.selected_serial));
+  const screen=make('div','multi-screen');
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;
   video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
+  screen.append(video);
+  // Size the screen to the encoded aspect ratio; 72vh is a height cap,
+  // not a forced letterboxed media box.
+  const fitScreen=(width,height)=>{
+   if(!(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0))return;
+   screen.style.aspectRatio=width+' / '+height;
+   screen.style.width='min(100%, '+(72*width/height).toFixed(4)+'vh)';
+  };
+  fitScreen(9,16); // placeholder until init metadata arrives
+  video.addEventListener('loadedmetadata',()=>{
+   if(!card.closed&&video.videoWidth>0&&video.videoHeight>0)
+    fitScreen(video.videoWidth,video.videoHeight);
+  });
   const state=make('div','status','正在建立本轮会话…');
   const stats=make('div','muted','等待浏览器诊断…');
   const qualityLine=make('div','muted','本设备画质：'+briefQuality(this.getChoice(d.id))+
    (lowLatency?' / 低延迟播放实验已开启':'')+'（本轮固定）');
-  const detail=make('details','multi-log'),summary=make('summary','','本设备诊断日志 / MSE / 资源详情');
+  const detail=make('div','multi-log');
   const initInfo=make('div','muted',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
   const diagnostic=make('div','multi-check-log','等待本轮视频统计…');
   const eventLog=make('div','multi-check-log','等待本轮会话日志…');
@@ -283,26 +297,114 @@ class MultiView{
    xiaomiTitle=make('summary','','小米 / 澎湃 OS：画面正常但无法控制？'),
    xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
   xiaomi.append(xiaomiTitle,xiaomiHelp);
-  detail.append(summary,initInfo,diagnostic,eventLog,history,xiaomi);
-  const buttons=make('div','buttons');
-  const toggle=make('button','secondary','启用远程控制'),stop=make('button','danger','停止此路');
-  toggle.type='button';stop.type='button';toggle.disabled=true;
-  buttons.append(toggle,stop);
-  const form=make('form','multi-text'),input=make('input'),submit=make('button','','发送文字');
-  input.type='text';input.maxLength=300;input.autocomplete='off';input.placeholder='仅 ASCII，先启用此设备控制';
-  submit.type='submit';input.disabled=true;submit.disabled=true;form.append(input,submit);
-  const keys=make('div','buttons');
-  const nav=[];
+  detail.append(make('h4','','会话与画质'),qualityLine,state,stats,initInfo,
+   make('h4','','MSE / 资源详情'),diagnostic,
+   make('h4','','本轮事件日志'),eventLog,
+   make('h4','','本页历史'),history,xiaomi);
+  const logPanel=make('section','multi-log-panel');logPanel.hidden=true;
+  logPanel.setAttribute('role','dialog');logPanel.setAttribute('aria-label',d.name+' 悬浮日志');
+  const logHead=make('div','multi-log-head'),logClose=make('button','secondary multi-log-close','×');
+  logClose.type='button';logClose.title='关闭悬浮日志';logClose.setAttribute('aria-label','关闭悬浮日志');
+  const stop=make('button','danger','停止此路');stop.type='button';
+  logHead.append(make('strong','','本设备诊断日志'),stop,logClose);
+  logPanel.append(logHead,detail);screen.append(logPanel);
+  const fab=make('div','multi-fab');
+  fab.setAttribute('aria-label',d.name+' 画面悬浮控制');
+  const icon=(cls,glyph,label)=>{
+   const b=make('button','fab-action '+cls,glyph);b.type='button';
+   b.title=label;b.setAttribute('aria-label',label);return b;
+  };
+  const main=make('button','fab-main','☰');main.type='button';
+  main.setAttribute('aria-label','展开悬浮操作');main.setAttribute('aria-expanded','false');
+  main.title='展开悬浮操作';
+  const logButton=icon('fab-up','☷','查看日志');
+  const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
+  const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
+  const form=make('form','multi-text-panel');form.hidden=true;
+  form.setAttribute('aria-label','本设备文字与按键输入');
+  const input=make('input'),submit=make('button','','发送');
+  input.type='text';input.maxLength=300;input.autocomplete='off';
+  input.placeholder='仅 ASCII，先启用此设备控制';
+  submit.type='submit';input.disabled=true;submit.disabled=true;
+  const textHead=make('div','multi-text-head'),textClose=make('button','secondary','×');
+  textClose.type='button';textClose.setAttribute('aria-label','关闭文字输入');
+  textHead.append(make('span','','文字输入'),textClose);
+  const textEntry=make('div','multi-text-entry');textEntry.append(input,submit);
+  const textKeys=make('div','multi-text-keys'),nav=[];
+  const glyphs={back:'↩',home:'⌂',recents:'▣',enter:'↵',backspace:'⌫'};
+  const positions={back:'fab-nav-back',home:'fab-nav-home',recents:'fab-nav-recents'};
   for(const [key,label] of KEYS){
-   const btn=make('button','secondary',label);btn.type='button';btn.disabled=true;
-   btn.addEventListener('click',()=>this.sendInput(card,'nav_key',{key}));
-   keys.append(btn);nav.push(btn);
+   const btn=key==='enter'||key==='backspace'
+    ?make('button','secondary',glyphs[key]+' '+label)
+    :icon('fab-down '+positions[key],glyphs[key],label);
+   btn.type='button';btn.disabled=true;
+   btn.setAttribute('aria-label',label);
+   if(key==='enter'||key==='backspace')textKeys.append(btn);
+   else{btn.hidden=true;fab.append(btn);}
+   btn.addEventListener('click',()=>{
+    if(btn.disabled)return;
+    this.sendInput(card,'nav_key',{key});resetMenuTimer();
+   });
+   nav.push(btn);
   }
+  form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
-  box.append(header,qualityLine,video,state,stats,buttons,form,keys,keyStatus,detail);
-  this.grid.append(box);
-  Object.assign(card,{box,video,stateEl:state,statsEl:stats,toggle,stop,input,submit,nav,keyStatus,
-   initInfo,diagnostic,eventLog,historyEl:history});
+  detail.append(make('h4','','远控输入状态'),keyStatus);
+  fab.append(logButton,toggle,textButton,main,form);
+  screen.append(fab);box.append(header,screen);this.grid.append(box);
+  Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
+   qualityLine,form,fab,main,logButton,logPanel,logClose,toggle,stop,
+   textButton,textClose,textKeys,input,submit,nav,keyStatus,
+   initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
+   menuTimer:null});
+  const collapseMenu=()=>{
+   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
+   card.menuOpen=false;card.textOpen=false;form.hidden=true;
+   fab.className='multi-fab'+(card.enabled?' is-control-enabled':'');
+   main.setAttribute('aria-expanded','false');main.setAttribute('aria-label','展开悬浮操作');
+   main.title='展开悬浮操作';
+  };
+  const resetMenuTimer=()=>{
+   if(card.menuTimer!==null)root.clearTimeout(card.menuTimer);
+   card.menuTimer=null;
+   if(card.menuOpen&&!card.closed)card.menuTimer=root.setTimeout(()=>{
+    card.menuTimer=null;collapseMenu();
+   },5000);
+  };
+  card.collapseMenu=collapseMenu;card.resetMenuTimer=resetMenuTimer;
+  main.addEventListener('click',()=>{
+   if(card.closed)return;
+   if(card.menuOpen){collapseMenu();return;}
+   card.menuOpen=true;fab.className='multi-fab is-open'+(card.enabled?' is-control-enabled':'');
+   main.setAttribute('aria-expanded','true');main.setAttribute('aria-label','收起悬浮操作');
+   main.title='收起悬浮操作';resetMenuTimer();
+  });
+  logButton.addEventListener('click',()=>{
+   if(!card.menuOpen||card.closed)return;
+   collapseMenu();logPanel.hidden=false;
+  });
+  logClose.addEventListener('click',()=>{logPanel.hidden=true;});
+  textButton.addEventListener('click',()=>{
+   if(textButton.disabled||!card.menuOpen)return;
+   card.textOpen=!card.textOpen;form.hidden=!card.textOpen;resetMenuTimer();
+   if(card.textOpen)input.focus();
+  });
+  textClose.addEventListener('click',()=>{
+   card.textOpen=false;form.hidden=true;resetMenuTimer();
+  });
+  for(const e of [form,input,submit,textKeys]){
+   e.addEventListener('pointerdown',resetMenuTimer);
+   e.addEventListener('keydown',resetMenuTimer);
+  }
+  input.addEventListener('input',resetMenuTimer);
+  toggle.addEventListener('pointerdown',resetMenuTimer);
+  logButton.addEventListener('pointerdown',resetMenuTimer);
+  card.refreshMenu=()=>{
+   fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
+    (card.enabled?' is-control-enabled':'');
+   for(const b of nav.slice(0,3))b.hidden=!card.enabled;
+   if(!card.enabled){card.textOpen=false;form.hidden=true;}
+  };
   this.cards.set(card.id,card);
   this.updatePicker();
   card.settleLaunch=()=>{
@@ -330,10 +432,14 @@ class MultiView{
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
    toggle.disabled=!canToggle;
-   toggle.textContent=card.pending?'正在确认…':card.enabled?'关闭远程控制':'启用远程控制';
+   toggle.title=card.pending?'正在确认…':card.enabled?'关闭远控':'启用远控';
+   toggle.setAttribute('aria-label',toggle.title);
+   toggle.setAttribute('aria-pressed',String(card.enabled));
    const canInput=canToggle&&card.enabled&&!card.lastInput;
    input.disabled=!canInput;submit.disabled=!canInput;
+   textButton.disabled=!canInput;
    nav.forEach(b=>b.disabled=!canInput);
+   card.refreshMenu();
    stop.disabled=card.closed||card.state==='stopping';
   };
   card.refresh=refresh;
@@ -430,6 +536,7 @@ class MultiView{
     }else if(m.type==='init'){
      card.ready=m.control_available===true;
      card.size={width:m.width,height:m.height};
+     card.fitScreen(m.width,m.height);
      mark('编码 '+m.width+'×'+m.height+' · 请求上限 '+
       (m.requested?((m.requested.max_size||'原生')+' / '+
         m.requested.video_bit_rate/1000000+' Mbps / '+m.requested.max_fps+' FPS'):'—'));
@@ -515,7 +622,8 @@ class MultiView{
   });
   stop.addEventListener('click',()=>this.stop(card));
   form.addEventListener('submit',ev=>{
-   ev.preventDefault();
+   ev.preventDefault();resetMenuTimer();
+   if(submit.disabled)return;
    const value=input.value;
    if(!/^[\x20-\x7e]{1,300}$/.test(value)){
     keyStatus.textContent='仅支持 1～300 字节的 ASCII 可打印字符';return;
@@ -583,6 +691,8 @@ class MultiView{
  end(card,clean){
   if(card.closed)return;
   card.closed=true;
+  if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
+  card.menuOpen=false;card.textOpen=false;
   if(card.touch){card.touch.destroy();card.touch=null;}
   if(card.frameCallback!==undefined&&typeof card.video.cancelVideoFrameCallback==='function')
    card.video.cancelVideoFrameCallback(card.frameCallback);

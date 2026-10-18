@@ -18,7 +18,13 @@ class El{
   if(this.parent){const siblings=this.parent.children;const i=siblings.indexOf(this);if(i!==-1)siblings.splice(i,1);this.parent=null;}
  }
  setAttribute(name,value){this[name]=value;}
+ focus(){this.focused=true;}
  fire(name,ev={}){for(const fn of this.events[name]||[])fn({preventDefault(){},...ev});}
+}
+const timers=new Map();let nextTimer=1;
+function advanceMenuTimers(){
+ const due=[...timers.entries()];timers.clear();
+ for(const [,fn] of due)fn();
 }
 const sockets=[];
 class WS{
@@ -32,6 +38,8 @@ class WS{
 let clock=0;
 const root={
  document:{createElement:tag=>new El(tag)},WebSocket:WS,
+ setTimeout(fn,ms){assert.equal(ms,5000);const id=nextTimer++;timers.set(id,fn);return id;},
+ clearTimeout(id){timers.delete(id);},
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
  EasyADBPlayers:{create:(_type,_video,cbs)=>({
@@ -238,17 +246,46 @@ assert.equal(quality(0,'max_fps').disabled,true);
 assert.equal(ca.toggle.disabled,false,'control independent of video playing');
 assert.equal(ca.quality.profile,'custom');
 assert.equal(ca.lowLatency,true,'local player setting is pinned to device A only');
-assert.match(ca.box.children[1].textContent,/自定义/);
+assert.match(ca.qualityLine.textContent,/自定义/);
+assert.equal(ca.screen.style.aspectRatio,'720 / 1280');
+assert.equal(ca.screen.style.width,'min(100%, 40.5000vh)');
+assert.equal(ca.logPanel.hidden,true,'diagnostics start hidden inside video');
+assert.equal(ca.menuOpen,false);
+assert.equal(ca.nav.slice(0,3).every(b=>b.hidden),true,'navigation hidden before remote control');
+ca.main.fire('click');assert.equal(ca.main['aria-expanded'],'true');
+assert.equal(ca.menuOpen,true);
+ca.main.fire('click');assert.equal(ca.menuOpen,false,'second tap collapses menu');
+ca.main.fire('click');advanceMenuTimers();
+assert.equal(ca.menuOpen,false,'menu auto folds at five seconds');
+assert.equal(ca.main['aria-expanded'],'false');
+ca.main.fire('click');ca.logButton.fire('click');
+assert.equal(ca.logPanel.hidden,false,'upward log action opens overlay');
+assert.equal(ca.menuOpen,false,'opening log folds floating menu');
+ca.logClose.fire('click');assert.equal(ca.logPanel.hidden,true,'log panel closes independently');
 a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
  mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
 assert.match(ca.diagnostic.textContent,/手机编码包 9/);
 assert.match(ca.diagnostic.textContent,/完整分片 3/);
 assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
+ca.main.fire('click');
 ca.toggle.fire('click');a.emit('control_enabled',{session_id:'only-one'});
 assert.equal(ca.enabled,true);
+assert.equal(ca.nav.slice(0,3).every(b=>!b.hidden&&!b.disabled),true,
+ 'downward back/home/recents appear only after remote enabled');
+ca.textButton.fire('click');
+assert.equal(ca.form.hidden,false,'left keyboard action reveals text, send, enter and backspace');
+assert.equal(ca.nav[3].disabled,false);assert.equal(ca.nav[4].disabled,false);
+ca.nav[0].fire('click');assert.equal(JSON.parse(a.sent.at(-1)).key,'back');
+a.emit('input_accepted',{session_id:'only-one'});
+ca.nav[3].fire('click');assert.equal(JSON.parse(a.sent.at(-1)).key,'enter');
+a.emit('input_accepted',{session_id:'only-one'});
+ca.nav[4].fire('click');assert.equal(JSON.parse(a.sent.at(-1)).key,'backspace');
+a.emit('input_accepted',{session_id:'only-one'});
+ca.textClose.fire('click');assert.equal(ca.form.hidden,true);
 ca.stop.fire('click');assert.equal(a.sent.at(-1),'stop');
 a.emit('ended',{session_id:'only-one',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
+assert.equal(timers.size,0,'teardown clears floating menu timer');
 assert.equal(grid.children.length,0,'terminal session must REMOVE its old video DOM card');
 assert.equal(batchSelected.has('id-1'),true,'left-side selection survives clean stop');
 assert.match(ca.historyEl.textContent,/最近画质/);
@@ -281,7 +318,7 @@ cc.toggle.fire('click');c.emit('touch_error',{session_id:'second-b',message:'not
 assert.equal(cc.pending,false);assert.equal(cc.toggle.disabled,false);
 cc.toggle.fire('click');c.emit('control_enabled',{session_id:'second-b'});
 assert.equal(cc.enabled,true);
-cb.input.value='Hello';cb.box.children[6].fire('submit');
+cb.input.value='Hello';cb.form.fire('submit');
 assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
 assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
 c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
@@ -290,6 +327,8 @@ c.emit('diagnostic',{session_id:'second-b',stage:'streaming',
  control_warning:'android_input_permission'});
 assert.equal(cc.permissionWarningShown,true);
 assert.equal(cc.enabled,false,'Android denial disables only this device control');
+assert.equal(cc.nav.slice(0,3).every(b=>b.hidden),true,'input denial hides nav');
+assert.equal(cc.form.hidden,true,'input denial closes text entry');
 assert.equal(cc.toggle.disabled,true,'do not imply refused Android input still works');
 assert(c.sent.some(msg=>msg.includes('"type":"control_disable"')));
 c.emit('control_disabled',{session_id:'second-b'});
@@ -496,4 +535,5 @@ async function waitForCheck(id){
  console.log('M2 independent row live status/start/stop/queue-cancel: OK');
  console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');
  console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
+console.log('M2 aspect-correct video and 5s radial floating controls: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});
