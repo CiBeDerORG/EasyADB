@@ -144,22 +144,30 @@ assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
 // preflight and probe on a chosen device are independent and explicit.
 multi.closeAll();assert.equal(multi.cards.size,0);
 const preButton=picker.children[1].children[2].children[0];
-const probeButton=picker.children[1].children[2].children[1];
-preButton.fire('click');
-Promise.resolve().then(()=>{
+async function waitForCheck(id){
+ // Each explicit check updates the picker asynchronously; don't test a stale
+ // detached button while the previous request still has checking=true.
+ for(let i=0;i<16&&multi.checking.has(id);i++)await Promise.resolve();
+ assert.equal(multi.checking.has(id),false,'device check must settle before next click');
+}
+(async()=>{
+ preButton.fire('click');
+ await waitForCheck('id-2');
  assert.equal(calls[0][0],'preflight');
  assert.equal(calls[0][1],'id-2');
  assert.match(multi.probeResults.get('id-2'),/M2 能力预检/);
+ // updatePicker() replaces the DOM; choose the button on the CURRENT card.
+ const probeButton=picker.children[1].children[2].children[1];
+ assert.equal(probeButton.disabled,false);
  probeButton.fire('click');
- return Promise.resolve();
-}).then(()=>{
+ await waitForCheck('id-2');
  assert.equal(calls[1][0],'probe');
  assert.equal(calls[1][1],'id-2');
  assert.match(multi.probeResults.get('id-2'),/视频实验/);
- assert.match(multi.probeResults.get('id-2'),/M2 能力预检/,'later probe must retain prior device-specific log');
- assert.equal(multi.probeResults.has('id-1'),false,'logs never bleed into another device');
+ assert.match(multi.probeResults.get('id-2'),/M2 能力预检/,'probe retains earlier log');
+ assert.equal(multi.probeResults.has('id-1'),false,'device logs stay isolated');
  for(let i=0;i<4;i++)select(i);
  assert.equal(checkbox(4).disabled,true);
  assert.equal(startButton.disabled,false);
  console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
-}).catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error=>{console.error(error);process.exitCode=1;});
