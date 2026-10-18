@@ -221,6 +221,18 @@ class MultiView{
   if(!additions.length)return false;
   return this._startDevices(additions);
  }
+ startLabFor(id,experiment){
+  // The lab uses the same per-device MSE card, never a second transport.
+  const d=(this.getDevices()||[]).find(item=>item.id===id);
+  if(!d||!this.isAdbReady(d)||this.isBusyFor(id)||this.opening||
+     this.cards.size>=MAX_DEVICES||this.getManagementBusy?.()||!this.getToken())return false;
+  if(!experiment||!["new","new_settings","display"].includes(experiment.mode))return false;
+  const choice=this.getChoice(id);
+  this.lastLiveStatus.delete(id);
+  this.open(d,qualityPayload(choice),null,choice.low_latency===true,experiment);
+  this.updatePicker();
+  return true;
+ }
  _startDevices(additions){
   if(this.opening||this.getManagementBusy?.())return false;
   if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
@@ -252,12 +264,12 @@ class MultiView{
   }
   this.open(next.device,next.quality,()=>this._launchNext(),next.lowLatency);
  }
- open(d,quality,nextLaunch,lowLatency=false){
+ open(d,quality,nextLaunch,lowLatency=false,experiment=null){
   if(this.cards.has(d.id)){ // Never create a second video/WS for this device.
    if(nextLaunch)nextLaunch();
    return;
   }
-  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,
+  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,experiment,
    ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    keepSelected:false,
@@ -267,7 +279,8 @@ class MultiView{
    permissionWarningShown:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
-  header.append(make('strong','',d.name),make('span','muted',d.selected_serial));
+  header.append(make('strong','',d.name+(experiment?' · 电脑模式实验':'')),
+   make('span','muted',d.selected_serial+(experiment?.mode==='display'?' · Display '+experiment.display_id:'')));
   const screen=make('div','multi-screen');
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;
   video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
@@ -471,6 +484,7 @@ class MultiView{
     const payload={token:this.getToken(),player:'mse',selected_serial:card.serial,
       profile:quality.profile};
     if(quality.quality)payload.quality=quality.quality;
+    if(card.experiment)payload.display_experiment=card.experiment;
     ws.send(JSON.stringify(payload));
    };
    ws.onmessage=ev=>{
@@ -489,6 +503,10 @@ class MultiView{
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
      this.updatePicker();
+    }else if(m.type==='lab_notice'){
+     mark(m.message||'显示器实验结果待确认');
+     this.status(d.name+'：'+(m.message||'显示器实验已执行')+
+      (Number.isInteger(m.display_id)?'（Display '+m.display_id+'）':''));
     }else if(m.type==='diagnostic'){
      if(card.session&&m.session_id===card.session&&card.state!=='stopping'&&
         ws.readyState===WebSocket.OPEN){
