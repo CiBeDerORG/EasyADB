@@ -53,8 +53,10 @@ def _read_exact(sock, count, deadline):
         sock.settimeout(min(1.5, remain))
         try:
             block = sock.recv(count - len(chunks))
-        except socket.timeout as exc:
-            raise VideoProbeError("接收 scrcpy 编码数据超时") from exc
+        except socket.timeout:
+            # A slow encoder may not emit anything for a short interval.
+            # Respect the overall deadline rather than prematurely failing.
+            continue
         except OSError as exc:
             raise VideoProbeError("scrcpy 视频连接中断") from exc
         if not block:
@@ -187,7 +189,8 @@ def probe_video(serial, profile="baseline", server_file=None):
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as exc:
             raise VideoProbeError("无法启动手机端 scrcpy 进程") from exc
-        deadline = started + PROBE_SECONDS
+        # Bound the transport/encoder phase independently from ADB push time.
+        deadline = time.monotonic() + PROBE_SECONDS
         with _connect_forwarded(port, child, deadline) as video:
             result = read_scrcpy_sample(video, deadline)
         return {
