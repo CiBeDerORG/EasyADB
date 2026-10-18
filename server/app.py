@@ -1,5 +1,9 @@
 """EasyADB: persistent multi-device wireless ADB connection management."""
+import asyncio
 import ipaddress
+import json
+import queue
+from urllib.parse import urlsplit
 import os
 import re
 import secrets
@@ -10,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -18,6 +22,7 @@ from .devices import DeviceManager, selected_address
 from .store import DeviceStore
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
+from .m2_live import LiveRegistry, LiveVideo
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -39,12 +44,16 @@ def adb(*args, timeout=15, input_text=None):
 
 
 manager = DeviceManager(store, adb)
+live_registry = LiveRegistry()
 
 
 @asynccontextmanager
 async def lifespan(_app):
     store.initialize()
-    yield
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(live_registry.stop_all)
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -231,6 +240,7 @@ def update_group(group_name: str, payload: GroupInput):
     if result is None:
         raise HTTPException(404, "找不到该分组")
     for device_id in old_members:
+        live_registry.stop_for(device_id)
         manager.clear(device_id)
     return result
 
@@ -243,6 +253,7 @@ def delete_group(group_name: str):
     if result is None:
         raise HTTPException(404, "找不到该分组")
     for device_id in result["device_ids"]:
+        live_registry.stop_for(device_id)
         manager.clear(device_id)
     return {"deleted": True, "moved_count": result["moved_count"]}
 
@@ -278,6 +289,7 @@ def update_device(device_id: str, payload: DeviceInput):
     if not updated:
         raise HTTPException(404, "找不到该设备")
     if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
+        live_registry.stop_for(device_id)
         manager.clear(device_id)
     return manager.snapshot(updated)
 
@@ -287,6 +299,7 @@ def delete_device(device_id: str):
     get_device(device_id)
     if not store.delete(device_id):
         raise HTTPException(404, "找不到该设备")
+    live_registry.stop_for(device_id)
     manager.clear(device_id)
     # Deliberately don't adb disconnect: other clients may be using the target.
     return {"deleted": True}
@@ -305,6 +318,7 @@ def select_device_route(device_id: str, payload: RouteInput):
             raise HTTPException(409, str(exc)) from None
         if not result:
             raise HTTPException(404, "找不到该设备")
+        live_registry.stop_for(device_id)
         manager.clear(device_id)
         return manager.snapshot(result)
 
@@ -352,6 +366,101 @@ def m2_video_probe(device_id: str, payload: VideoProbeInput):
             return probe_video(serial, profile=payload.profile)
         except VideoProbeError as exc:
             raise HTTPException(502, str(exc)) from None
+
+
+@app.websocket("/api/devices/{device_id}/m2/live")
+async def m2_live_video(websocket: WebSocket, device_id: str):
+    """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
+    not URL/query string/handshake; no ambient cookie-based device access.
+    """
+    origin = websocket.headers.get("origin", "")
+    host = websocket.headers.get("host", "")
+    origin_url = urlsplit(origin)
+    if not host or not origin or origin_url.scheme not in ("http", "https") or origin_url.netloc != host:
+        await websocket.close(code=1008, reason="来源地址不匹配")
+        return
+    await websocket.accept()
+    stream = None
+    receiver = None
+    try:
+        try:
+            initial = await asyncio.wait_for(websocket.receive_json(), timeout=8)
+        except (asyncio.TimeoutError, ValueError, TypeError):
+            await websocket.close(code=1008, reason="未收到有效认证信息")
+            return
+        supplied = initial.get("token") if isinstance(initial, dict) else None
+        if not isinstance(supplied, str) or not secrets.compare_digest(supplied, TOKEN):
+            await websocket.close(code=1008, reason="访问密钥错误")
+            return
+        profile = initial.get("profile")
+        if profile not in ("baseline", "native"):
+            await websocket.send_json({"type": "error", "message": "视频档位无效"})
+            return
+        device = store.get(device_id)
+        serial = selected_address(device) if device else None
+        if not serial or serial != initial.get("selected_serial") or manager.serial_for(device) != serial:
+            await websocket.send_json({"type": "error", "message": "请先手动连接当前选择的设备"})
+            return
+        if not await asyncio.to_thread(is_connected, serial):
+            await websocket.send_json({"type": "error", "message": "当前选择的 ADB 地址已离线"})
+            return
+        # Guard again after the potentially slow ADB check; NEVER auto-connect.
+        current = store.get(device_id)
+        if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
+            await websocket.send_json({"type": "error", "message": "当前选择的 IP 已改变，请重新开启投屏"})
+            return
+        stream = LiveVideo(serial, profile=profile)
+        if not live_registry.reserve(device_id, stream):
+            await websocket.send_json({"type": "error", "message": "这台设备已有实时投屏会话，请先停止原会话"})
+            return
+        stream.start()
+        await websocket.send_json({"type": "starting", "selected_serial": serial})
+
+        async def receive_commands():
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    if message == "stop":
+                        break
+                    # Intentionally ignore ALL control/input messages in M2-00-E.
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            finally:
+                stream.stop()
+
+        receiver = asyncio.create_task(receive_commands())
+        while not stream.stop_event.is_set():
+            current = store.get(device_id)
+            if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
+                await websocket.send_json({"type": "error", "message": "设备连接地址已变更，投屏已停止"})
+                break
+            try:
+                kind, payload = await asyncio.to_thread(stream.events.get, True, 0.35)
+            except queue.Empty:
+                continue
+            if kind == "init":
+                await websocket.send_json({"type": "init", **payload})
+            elif kind == "bytes":
+                await websocket.send_bytes(payload)
+            elif kind == "error":
+                await websocket.send_json({"type": "error", "message": payload})
+                break
+            elif kind == "end":
+                break
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        if stream:
+            stream.stop()
+            if receiver:
+                receiver.cancel()
+                await asyncio.gather(receiver, return_exceptions=True)
+            await asyncio.to_thread(stream.join, 8)
+            live_registry.release(device_id, stream)
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 @app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
