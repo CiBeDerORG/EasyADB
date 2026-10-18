@@ -23,7 +23,7 @@ esac
 # The old script previously dropped positional arguments at this boundary.
 cd "$(dirname "$0")/.."
 if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
-  sh scripts/update-m1.sh
+  sh scripts/update-m2.sh
   EASYADB_UPDATED=1
   export EASYADB_UPDATED
   exec sh scripts/build-with-mihomo.sh "$@"
