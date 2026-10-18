@@ -116,7 +116,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </section>
 <div class="workspace">
  <section class="panel inventory-panel" aria-label="设备管理">
-  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：手动连接、地址选择、投屏勾选与独立画质。勾选任意 1～4 台后手动开始。</p></div>
+  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：勾选任意 1～4 台，投屏期间可继续添加、手动连接其他设备，勾选新设备后点击「追加投屏」；只锁定正在运行的设备自身连接配置，同时最多四路。</p></div>
    <div class="buttons" style="margin:0">
     <button type="button" id="multiStart" disabled>开始投屏</button>
     <button type="button" class="danger" id="multiStop" disabled>停止全部投屏</button>
@@ -245,7 +245,7 @@ function render(){
     row.append(elem('span','muted',label+'：'+ip+':'+d.port));
     const change=action(chosen?'✓ 当前选择':'⇄ 切换',()=>switchRoute(d.id,route),
                         'secondary address-switch'+(chosen?' selected':''));
-    change.disabled=loading||chosen;
+    change.disabled=loading||chosen||(multiView&&multiView.isBusyFor(d.id));
     change.setAttribute('aria-label','将'+d.name+'的当前连接设为'+label+' '+ip+':'+d.port);
     const controls=elem('div','address-controls');
     controls.append(change);
@@ -266,8 +266,12 @@ function render(){
    if(d.model||d.android_version)primary.append(elem('div','muted',[d.model,d.android_version?'Android '+d.android_version:''].filter(Boolean).join(' · ')));
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted',d.last_error));
    const actions=elem('div','item-actions');
-   actions.append(action('连接',()=>runConnect(d.id)));
-   actions.append(action('编辑',()=>edit(d.id)),action('删除',()=>remove(d.id),'danger'));
+   const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
+   const connect=action('连接',()=>runConnect(d.id));
+   const change=action('编辑',()=>edit(d.id));
+   const removeButton=action('删除',()=>remove(d.id),'danger');
+   connect.disabled=change.disabled=removeButton.disabled=loading||locked;
+   actions.append(connect,change,removeButton);
    primary.append(actions);item.append(primary);
    const quality=elem('div','device-quality');
    const row=qualityRows.get(d.id);
@@ -276,14 +280,18 @@ function render(){
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);shell.append(section);
-  if(key!=='ungrouped')shell.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
+  if(key!=='ungrouped'){
+   const config=action('设置',()=>openGroup(g.title),'secondary group-edit');
+   config.disabled=loading||g.items.some(d=>multiView&&multiView.isBusyFor(d.id));
+   shell.append(config);
+  }
   list.append(shell);
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
  $('refreshAll').disabled=loading||!loaded||(multiView&&multiView.hasActive());
  $('newDevice').disabled=loading||!loaded;
- $('newGroup').disabled=loading||!loaded||(multiView&&multiView.hasActive());
+ $('newGroup').disabled=loading||!loaded;
 }
 async function load(quiet=false){
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
@@ -305,6 +313,10 @@ function modalMessage(text,kind='error',id='formMessage'){
 function closeModal(){if(loading)return;$('deviceDialog').close();}
 function openModal(id=null){
  if(loading||!loaded)return;
+ if(id&&multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请停止此路并完成清理后再修改配置。','error');
+  return;
+ }
  reset();const d=id?devices.find(x=>x.id===id):null;
  if(id&&!d)return;
  const options=$('groupNames');options.replaceChildren();
@@ -322,6 +334,10 @@ function edit(id){openModal(id);}
 function openGroup(name=null){
  if(loading||!loaded)return;
  const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
+ if(g&&devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+  message('该分组包含正在投屏的设备：可新建分组，但修改此分组请先停止相关设备。','error');
+  return;
+ }
  editingGroup=g?g.name:null;
  $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
  $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
@@ -345,7 +361,10 @@ function openFirstPair(id){
 function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
 async function switchRoute(id,route){
  if(loading)return;
- if(multiView&&multiView.hasActive()){message('请先停止全部同屏，再切换设备连接地址。','error');return;}loading=true;render();
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路再切换其连接地址。','error');return;
+ }
+ loading=true;render();
  message('正在保存当前连接地址…');
  try{
   const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
@@ -359,7 +378,10 @@ async function switchRoute(id,route){
 }
 async function runConnect(id){
  if(loading)return;
- if(multiView&&multiView.hasActive()){message('请先停止全部同屏，再修改设备连接。','error');return;}select(id);loading=true;render();message('正在连接所选设备…');
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路；可继续连接其他设备。','error');return;
+ }
+ select(id);loading=true;render();message('正在连接所选设备…');
  try{
   const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
   devices=devices.map(x=>x.id===id?d:x);message(d.name+' 已连接','ok');
@@ -368,7 +390,9 @@ async function runConnect(id){
  finally{loading=false;render();}
 }
 async function remove(id){
- if(multiView&&multiView.hasActive()){message('请先停止全部同屏，再删除设备。','error');return;}
+ if(multiView&&multiView.isBusyFor(id)){
+  message('这台设备正在投屏或启动中，请先停止此路并完成清理后再删除。','error');return;
+ }
  const d=devices.find(x=>x.id===id);if(!d||loading||!confirm('从列表删除「'+d.name+'」？不会清除手机端 ADB 配对授权。'))return;
  loading=true;render();
  try{await api('/api/devices/'+encodeURIComponent(id),{method:'DELETE'});if(selected===id)selected=null;if(editing===id && !$('deviceDialog').open)reset();await load(true);message('设备已从列表删除','ok');}
@@ -411,6 +435,10 @@ $('firstPairForm').addEventListener('submit',async ev=>{
 $('deleteGroup').addEventListener('click',async()=>{
  if(loading||!editingGroup)return;
  const name=editingGroup;
+ if(devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+  modalMessage('该分组包含正在投屏的设备，请先停止这些设备，再删除分组。','error','groupMessage');
+  return;
+ }
  const count=devices.filter(d=>d.group_name===name).length;
  const detail=count?'列表中的 '+count+' 台设备会移入「未分组」。':'这是一个空分组。';
  if(!confirm('确认删除分组「'+name+'」？\n'+detail+'\n设备记录和 ADB 授权会保留，原分组内网 IP 映射会取消。'))return;
@@ -428,7 +456,12 @@ $('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();}
 $('groupDialog').addEventListener('close',()=>{editingGroup=null;});
 $('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
 $('groupForm').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;loading=true;render();
+ ev.preventDefault();if(loading)return;
+ if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&multiView&&multiView.isBusyFor(d.id))){
+  modalMessage('该分组包含正在投屏的设备，请先停止这些设备再修改；新建分组不受限制。','error','groupMessage');
+  return;
+ }
+ loading=true;render();
  const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
  try{
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
@@ -444,7 +477,11 @@ $('deviceDialog').addEventListener('click',ev=>{
  if(ev.target===$('deviceDialog')&&!loading)closeModal();
 });
 $('form').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;loading=true;render();
+ ev.preventDefault();if(loading)return;
+ if(editing&&multiView&&multiView.isBusyFor(editing)){
+  modalMessage('该设备正处于本轮投屏或启动中，请先停止此路再修改；新建其它设备不受限制。');return;
+ }
+ loading=true;render();
  const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
@@ -471,6 +508,7 @@ multiView=EasyADBMulti.create({
  picker:$('multiPicker'),grid:$('multiGrid'),startButton:$('multiStart'),
  stopButton:$('multiStop'),info:$('multiInfo'),
  getDevices:()=>devices,getToken:()=>$('token').value.trim(),
+ getManagementBusy:()=>loading,
  onDeviceDisconnected:()=>load(true), // reload saved state only; never adb connect
  runPreflight:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/preflight',{method:'POST'})).json(),
  runVideoProbe:async(id,profile)=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{

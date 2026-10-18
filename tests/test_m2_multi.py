@@ -174,3 +174,52 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
         assert "勾选任意 1～4 台" in html
+
+
+def test_new_device_and_group_do_not_interrupt_another_live_session(monkeypatch, tmp_path):
+    """A live reservation belongs to ONE device; unrelated CRUD stays usable."""
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    mod.store = DeviceStore(str(tmp_path / "append.sqlite3"))
+    mod.manager = DeviceManager(mod.store, mod.adb)
+    mod.live_registry = LiveRegistry()
+
+    class Running:
+        def __init__(self):
+            self.finished = threading.Event()
+            self.cleanup_complete = False
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+            self.cleanup_complete = True
+            self.finished.set()
+
+        def join(self, timeout=8):
+            self.finished.wait(timeout)
+
+    with TestClient(mod.app) as client:
+        first = client.post("/api/devices", headers=AUTH,
+                            json={"name": "A", "ip": "10.20.0.1", "port": 5555})
+        assert first.status_code == 201
+        a_id = first.json()["id"]
+        stream = Running()
+        assert mod.live_registry.reserve(a_id, stream)
+
+        second = client.post("/api/devices", headers=AUTH,
+                             json={"name": "B", "ip": "10.20.0.2", "port": 5555})
+        assert second.status_code == 201
+        assert second.json()["id"] != a_id
+
+        group = client.post("/api/groups", headers=AUTH, json={"name": "New group"})
+        assert group.status_code == 201
+        assert mod.live_registry.sessions[a_id] is stream
+        assert stream.stopped is False
+        assert stream.finished.is_set() is False
+
+        # The browser may connect B explicitly later; creating it never
+        # starts a video session or reconnects it in the background.
+        assert set(mod.live_registry.sessions) == {a_id}
+    assert stream.stopped is True  # only TestClient shutdown stops the worker
+    mod.live_registry.release(a_id, stream)
+    assert not mod.live_registry.sessions

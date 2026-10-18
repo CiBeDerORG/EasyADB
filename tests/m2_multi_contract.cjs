@@ -51,7 +51,7 @@ const root={
 };root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
-assert.match(page,/勾选任意 1～4 台/);
+assert.match(page,/同时最多四路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
 assert.match(page,/class="workspace"/);
@@ -67,6 +67,11 @@ assert.match(page,/grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 assert.match(page,/runPreflight:async id/);
 assert.match(page,/runVideoProbe:async\(id,profile\)/);
 assert.doesNotMatch(page,/id="multiProfile"/,'no global multiview quality selector');
+assert.match(page,/getManagementBusy:\(\)=>loading/);
+assert.match(page,/newDevice'\)\.disabled=loading\|\|!loaded/);
+assert.match(page,/newGroup'\)\.disabled=loading\|\|!loaded/);
+assert.doesNotMatch(page,/请先停止全部同屏，再/,'no global session lock for CRUD');
+assert.match(page,/multiView\.isBusyFor\(id\)/,'mutations guard their own device only');
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
@@ -92,7 +97,7 @@ assert.equal(startButton.disabled,true,'empty selection cannot start');
 assert.equal(checkbox(0).disabled,false);
 select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
-assert.match(startButton.textContent,/已选 1/);
+assert.match(startButton.textContent,/待新增 1/);
 assert.equal(checkbox(1).checked,false);
 assert.equal(quality(0).value,'economy');
 assert.equal(quality(1).value,'economy');
@@ -224,5 +229,72 @@ async function waitForCheck(id){
  for(let i=0;i<4;i++)select(i);
  assert.equal(checkbox(4).disabled,true);
  assert.equal(startButton.disabled,false);
+ // A live device must NOT impose a whole-page lock. Start one, add another
+ // logical device to the loaded list, then append it without touching A.
+ multi.selected.clear();multi.updatePicker();
+ select(0);startButton.fire('click');
+ const liveA=sockets.at(-1);liveA.open();liveA.emit('starting',{session_id:'append-A'});
+ init(liveA,'append-A');
+ const liveCardA=multi.cards.get('id-1'),originalPlayer=liveCardA.player;
+ liveCardA.toggle.fire('click');liveA.emit('control_enabled',{session_id:'append-A'});
+ assert.equal(liveCardA.enabled,true);
+ assert.equal(startButton.disabled,true,'no new selected device: do not restart A');
+ const socketCount=sockets.length;multi.start();
+ assert.equal(sockets.length,socketCount,'start with existing-only selection is inert');
+ // Simulate POST /api/devices followed by load(true) without closing A.
+ devices.push({id:'id-6',name:'Phone 6',status:'connected',
+  selected_serial:'10.10.0.6:5555',active_serial:'10.10.0.6:5555'});
+ multi.updatePicker();
+ assert.equal(checkbox(0).disabled,true,'active A cannot be unchecked mid-stream');
+ assert.equal(checkbox(5).disabled,false,'new device can be checked while A runs');
+ select(5);
+ assert.equal(startButton.disabled,false);
+ assert.match(startButton.textContent,/追加投屏/);
+ startButton.fire('click');
+ assert.equal(sockets.length,socketCount+1,'append opens exactly ONE new WS');
+ const liveF=sockets.at(-1);liveF.open();
+ assert.equal(JSON.parse(liveF.sent[0]).selected_serial,devices[5].selected_serial);
+ liveF.emit('starting',{session_id:'append-F'});init(liveF,'append-F');
+ assert.equal(multi.cards.size,2);
+ assert.equal(grid.children.length,2);
+ assert.equal(multi.cards.get('id-1'),liveCardA,'existing A card identity never changes');
+ assert.equal(liveCardA.player,originalPlayer,'existing A MSE never reinitializes');
+ assert.equal(liveCardA.enabled,true,'append preserves existing remote control');
+ assert.equal(liveA.readyState,WS.OPEN,'existing WS was not closed');
+ assert.equal(liveA.sent.filter(x=>x.includes('"type":"control_disable"')).length,0);
+ // Appending up to four must be sequential and never duplicate existing slots.
+ select(1);select(2);
+ startButton.fire('click');
+ const liveB=sockets.at(-1);liveB.open();liveB.emit('starting',{session_id:'append-B'});
+ assert.equal(multi.cards.size,3,'wait for B init before opening C');
+ init(liveB,'append-B');
+ const liveC=sockets.at(-1);liveC.open();liveC.emit('starting',{session_id:'append-C'});
+ init(liveC,'append-C');
+ assert.equal(multi.cards.size,4);
+ assert.equal(grid.children.length,4);
+ assert.equal(checkbox(3).disabled,true,'fifth concurrent device unavailable');
+ assert.equal(startButton.disabled,true,'full four-slot pool');
+ multi.start();assert.equal(multi.cards.size,4,'cannot duplicate any running card');
+ // A single confirmed stop frees ONE slot; the three others remain intact.
+ multi.stopFor('id-6');assert.equal(liveF.sent.at(-1),'stop');
+ liveF.emit('ended',{session_id:'append-F',cleanup_complete:true});
+ assert.equal(multi.cards.size,3);
+ assert.equal(multi.cards.get('id-1'),liveCardA);
+ assert.equal(multi.selected.has('id-6'),false,
+  'single stop unchecks F so a later append never silently restarts F');
+ select(3);assert.equal(startButton.disabled,false);
+ startButton.fire('click');
+ const liveD=sockets.at(-1);liveD.open();liveD.emit('starting',{session_id:'append-D'});
+ init(liveD,'append-D');
+ assert.equal(multi.cards.size,4);
+ assert.equal(multi.cards.get('id-1'),liveCardA);
+ assert.equal(grid.children.length,4);
+ multi.stopAll();
+ for(const [ws,sid] of [[liveA,'append-A'],[liveB,'append-B'],[liveC,'append-C'],[liveD,'append-D']])
+  ws.emit('ended',{session_id:sid,cleanup_complete:true});
+ assert.equal(multi.cards.size,0);
+ assert.equal(grid.children.length,0,'full stop removes every owned live DOM card');
+ assert.equal(sockets.length,socketCount+4,'only four additional sessions ever created');
+ console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');
  console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
 })().catch(error=>{console.error(error);process.exitCode=1;});
