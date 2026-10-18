@@ -166,4 +166,28 @@ assert(streamDiag.rangeEnd===32);
 assert.deepEqual(errors,[]);
 streamPlayer.destroy();
 
+// Busy multi-view decoder: batch ONLY already pending complete MP4 fragments.
+// Do not hold a lone frame waiting for a future frame (quiet Android screen).
+const multiVideo=new VideoMock();
+const multiPlayer=api.create('mse',multiVideo,{lowOverhead:true,onError:e=>errors.push(e)});
+multiPlayer.initialize({format:'fmp4',mime});
+MediaSourceMock.last.open();
+const multiSB=MediaSourceMock.last.source;
+multiSB.appendBuffer=function(data){
+ this.received.push(Buffer.from(data));this.updating=true;
+};
+multiPlayer.append(new Uint8Array([1,2]));
+assert.equal(multiSB.received.length,1,'a lone fragment appends immediately');
+multiPlayer.append(new Uint8Array([3,4]));
+multiPlayer.append(new Uint8Array([5,6]));
+multiPlayer.append(new Uint8Array([7,8]));
+assert.equal(multiPlayer.queue.length,3);
+multiSB.updating=false;multiSB.emit('updateend');
+assert.equal(multiSB.received.length,2,'queued fragments use one SourceBuffer append');
+assert.deepEqual([...multiSB.received[1]],[3,4,5,6,7,8]);
+assert.equal(multiPlayer.pendingBytes,0);
+assert.equal(multiPlayer.diagnostics().appendCalls,2);
+multiPlayer.destroy();
+assert.deepEqual(errors,[]);
+
 console.log('MSE adapter contract and reserved WebCodecs stub: OK');

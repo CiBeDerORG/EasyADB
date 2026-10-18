@@ -6,6 +6,10 @@
 (function(root){
 'use strict';
 const MAX_PENDING_BYTES = 12 * 1024 * 1024;
+// Merge only already queued, complete fMP4 fragments. No frame-wait timer:
+// a single quiet-screen fragment is appended immediately, while a busy
+// multi-view decoder needs fewer SourceBuffer append/updateend cycles.
+const MAX_COALESCED_BYTES = 256 * 1024;
 
 class MSEPlayer {
   constructor(video, callbacks={}){
@@ -17,6 +21,7 @@ class MSEPlayer {
     this.objectUrl=null;
     this.queue=[];
     this.pendingBytes=0;
+    this._maxAppendChunks=callbacks.lowOverhead===true?4:1;
     this.closed=false;
     this._lastBufferedEnd=0;
     this._waitingAtEdge=false;
@@ -143,8 +148,20 @@ class MSEPlayer {
     if(this._maintainLivePosition())return;
     if(this.closed||sb.updating)return;
     if(this.queue.length){
-      const next=this.queue.shift();
-      this.pendingBytes-=next.byteLength;
+      const parts=[this.queue.shift()];
+      let combinedBytes=parts[0].byteLength;
+      while(parts.length<this._maxAppendChunks&&this.queue.length&&
+            combinedBytes+this.queue[0].byteLength<=MAX_COALESCED_BYTES){
+        const part=this.queue.shift();
+        parts.push(part);combinedBytes+=part.byteLength;
+      }
+      this.pendingBytes-=combinedBytes;
+      const next=parts.length===1?parts[0]:(()=>{
+        const combined=new Uint8Array(combinedBytes);
+        let offset=0;
+        for(const part of parts){combined.set(part,offset);offset+=part.byteLength;}
+        return combined;
+      })();
       try{
         sb.appendBuffer(next);
         this._appendCalls++;

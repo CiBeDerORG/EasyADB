@@ -16,7 +16,7 @@ const fmt=v=>root.EasyADBMetrics.fmt(v);
 class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,getQuality,getSoloActive,onChange}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,getQuality,getSoloActive,onChange});
-  this.selected=new Set();this.cards=new Map();this.opening=false;
+  this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   startButton.addEventListener('click',()=>this.start());
   stopButton.addEventListener('click',()=>this.stopAll());
   this.updatePicker();
@@ -63,16 +63,28 @@ class MultiView{
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return;}
   const quality=this.getQuality();
   this.opening=true;
-  try{
-   for(const d of selected)this.open(d,quality);
-   this.status('已明确请求开启 '+selected.length+' 路独立投屏；控制需逐台手动启用。');
-  }finally{this.opening=false;this.updatePicker();this.onChange();}
+  // One explicit user request, staggered by authenticated server "init"
+  // completion. Avoid pushing/initializing 2-4 scrcpy+FFmpeg pipelines
+  // at the same instant; do not create timers or background reconnect jobs.
+  this.launchQueue=selected.map(d=>({device:d,quality}));
+  this.status('正在依次启动 '+selected.length+' 路独立投屏；每路控制仍需手动启用。');
+  this._launchNext();
+  this.updatePicker();this.onChange();
  }
- open(d,quality){
+ _launchNext(){
+  if(!this.opening)return;
+  const next=this.launchQueue.shift();
+  if(!next){
+   this.opening=false;this.updatePicker();this.onChange();return;
+  }
+  this.open(next.device,next.quality,()=>this._launchNext());
+ }
+ open(d,quality,nextLaunch){
   const card={id:d.id,serial:d.selected_serial,name:d.name,quality,ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    touch:null,player:null,video:null,meter:new root.EasyADBTraffic.Meter(performance.now()),
-   metrics:new root.EasyADBMetrics.QualityMeter(performance.now()),lastInput:false};
+   metrics:new root.EasyADBMetrics.QualityMeter(performance.now()),lastInput:false,
+   startSettled:false,nextLaunch};
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name),make('span','muted',d.selected_serial));
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;
@@ -98,11 +110,19 @@ class MultiView{
   this.grid.append(box);
   Object.assign(card,{box,video,stateEl:state,statsEl:stats,toggle,stop,input,submit,nav,keyStatus});
   this.cards.set(card.id,card);
+  card.settleLaunch=()=>{
+   if(card.startSettled)return;
+   card.startSettled=true;
+   if(this.opening&&card.nextLaunch)card.nextLaunch();
+  };
   const mark=(msg,error=false)=>{
    state.textContent=msg;state.className='status'+(error?' error':'');
   };
   const refresh=()=>{
-   const canToggle=!card.closed&&card.ready&&card.state==='playing'&&!card.pending&&
+   // Control readiness belongs to scrcpy's control socket, not to the
+   // browser decoder's "playing" event (which may be delayed/throttled).
+   const canToggle=!card.closed&&card.ready&&
+    (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
    toggle.disabled=!canToggle;
    toggle.textContent=card.pending?'正在确认…':card.enabled?'关闭远程控制':'启用远程控制';
@@ -114,10 +134,11 @@ class MultiView{
   card.refresh=refresh;
   try{
    card.player=root.EasyADBPlayers.create('mse',video,{
+    lowOverhead:true,
     onState:stage=>{
      if(card.closed)return;
-     if(stage==='ready')mark('MSE 已就绪，等待首帧…');
-     if(stage==='playing'){
+     if(stage==='ready'){if(card.state!=='stopping'){card.state='ready';mark('MSE 已就绪，控制通道可单独开启；等待首帧…');refresh();}}
+     if(stage==='playing'&&card.state!=='stopping'){
       card.state='playing';mark('画面播放中（此路独立会话）');refresh();
      }
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
@@ -173,16 +194,22 @@ class MultiView{
         m.requested.video_bit_rate/1000000+' Mbps / '+m.requested.max_fps+' FPS'):'—'));
      try{
       card.touch=root.EasyADBTouch.create(video,p=>{
-       if(!card.closed&&card.enabled&&card.session&&card.state==='playing'&&
+       if(!card.closed&&card.enabled&&card.session&&
+          (card.state==='ready'||card.state==='playing')&&
           ws.readyState===WebSocket.OPEN){
         ws.send(JSON.stringify({...p,session_id:card.session}));
        }
       });
       card.player.initialize(m);
+      // Control remains independent of the playback "playing" event.
+      if(card.state==='connecting')card.state='ready';
+      refresh();
+      card.settleLaunch(); // start next phone only after this pipeline initialized
      }catch(e){mark(e.message,true);this.end(card,false);}
     }else if(m.type==='control_enabled'){
      try{
-      if(!card.ready||!card.touch||card.state!=='playing')throw Error('画面未就绪');
+      if(!card.ready||!card.touch||
+         (card.state!=='ready'&&card.state!=='playing'))throw Error('控制通道未就绪');
       card.touch.enable(card.size);card.enabled=true;card.pending=false;
       keyStatus.textContent='已启用：此卡的鼠标、文字和导航仅作用于 '+card.name;refresh();
      }catch(e){mark(e.message,true);this.end(card,false);}
@@ -198,6 +225,9 @@ class MultiView{
      card.lastInput=false;keyStatus.textContent=m.message||'输入失败';refresh();
      if(m.code==='adb_disconnected'){mark('ADB 已断开，请手动重新连接',true);this.end(card,false);}
     }else if(m.type==='touch_error'){
+     // A rejected early control_enable must release the pending UI latch.
+     // Otherwise this card's button stays disabled forever.
+     card.pending=false;refresh();
      keyStatus.textContent=m.message||'触摸失败';
      if(m.code==='adb_disconnected'){mark('ADB 已断开，请手动重新连接',true);this.end(card,false);}
     }else if(m.type==='stopping'){
@@ -216,11 +246,13 @@ class MultiView{
   toggle.addEventListener('click',()=>{
    if(toggle.disabled||!card.session||card.closed)return;
    card.pending=true;
-   if(card.enabled){
-    if(card.touch)card.touch.disable();card.enabled=false;
-    card.ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));
-   }else card.ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));
-   refresh();
+   try{
+    if(card.enabled){
+     if(card.touch)card.touch.disable();card.enabled=false;
+     card.ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));
+    }else card.ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));
+    refresh();
+   }catch(e){mark('控制请求发送失败：'+e.message,true);this.end(card,false);}
   });
   stop.addEventListener('click',()=>this.stop(card));
   form.addEventListener('submit',ev=>{
@@ -235,7 +267,7 @@ class MultiView{
  }
  sendInput(card,type,body){
   if(card.closed||!card.enabled||card.pending||card.lastInput||
-     card.state!=='playing'||!card.session||!card.ws||
+     (card.state!=='ready'&&card.state!=='playing')||!card.session||!card.ws||
      card.ws.readyState!==WebSocket.OPEN)return;
   card.lastInput=true;card.refresh();
   try{card.ws.send(JSON.stringify({type,session_id:card.session,...body}));}
@@ -252,8 +284,16 @@ class MultiView{
   }else this.end(card,false);
  }
  stopFor(id){const card=this.cards.get(id);if(card)this.stop(card);}
- stopAll(){for(const card of this.cards.values())this.stop(card);}
- closeAll(){for(const card of [...this.cards.values()])this.end(card,false);}
+ stopAll(){
+  this.opening=false;this.launchQueue=[];
+  for(const card of [...this.cards.values()])this.stop(card);
+  this.updatePicker();
+ }
+ closeAll(){
+  this.opening=false;this.launchQueue=[];
+  for(const card of [...this.cards.values()])this.end(card,false);
+  this.updatePicker();
+ }
  end(card,clean){
   if(card.closed)return;
   card.closed=true;
@@ -270,6 +310,7 @@ class MultiView{
   remove.type='button';remove.addEventListener('click',()=>card.box.remove());
   card.box.append(remove);
   this.cards.delete(card.id);this.selected.delete(card.id);
+  card.settleLaunch(); // early failure: clean this card before launching next
   this.updatePicker();this.onChange();
  }
 }
