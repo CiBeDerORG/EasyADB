@@ -83,14 +83,55 @@ def test_socket_read_is_stoppable_without_a_background_reconnect():
         remote.close()
 
 
-def test_http_nas_player_has_only_mse_not_webcodecs():
-    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
+def test_http_nas_player_uses_mse_adapter_and_reserves_webcodecs_interface():
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "web" / "index.html").read_text()
+    adapter = (root / "web" / "m2-player.js").read_text()
     assert 'id="liveVideo"' in html and 'id="liveStart"' in html
-    assert 'id="liveStop"' in html and "new MediaSource()" in html
-    assert "MediaSource.isTypeSupported(mime)" in html
-    assert "new WebSocket(" in html and "ws.send(JSON.stringify({token:" in html
-    assert "new VideoDecoder" not in html
+    assert 'id="liveStop"' in html and '<script src="/m2-player.js"></script>' in html
+    assert "EasyADBPlayers.create(playerMode,video" in html
+    assert "new MediaSource()" in adapter
+    assert "MediaSource.isTypeSupported(mime)" in adapter
+    assert "new WebSocket(" in html and "player:playerMode" in html
+    assert "new VideoDecoder" not in adapter and "new VideoDecoder" not in html
+    assert "WebCodecsPlayer.implemented" in adapter
+    assert "format!=='fmp4'" in adapter
     assert "window.addEventListener('beforeunload',stopLive)" in html
+
+
+def test_js_adapter_is_served_as_javascript_without_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    mod.store = DeviceStore(str(tmp_path / "db.sqlite3"))
+    mod.manager = DeviceManager(mod.store, mod.adb)
+    with TestClient(mod.app) as client:
+        response = client.get("/m2-player.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/javascript")
+        assert "EasyADBPlayers" in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+
+def test_websocket_fails_closed_for_reserved_player_before_opening_adb(monkeypatch, tmp_path):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    mod.store = DeviceStore(str(tmp_path / "db.sqlite3"))
+    mod.manager = DeviceManager(mod.store, mod.adb)
+    mod.live_registry = LiveRegistry()
+    monkeypatch.setattr(mod, "is_connected", lambda serial: (_ for _ in ()).throw(
+        AssertionError("must reject unfinished player before ADB")))
+    with TestClient(mod.app) as client:
+        d = client.post("/api/devices", headers=AUTH, json={
+            "name": "Phone", "ip": "10.10.30.206", "port": 40455
+        }).json()
+        path = f"/api/devices/{d['id']}/m2/live"
+        with client.websocket_connect(path, headers={"origin": "http://testserver"}) as ws:
+            ws.send_json({"token": "local-test-token-123", "profile": "baseline",
+                          "selected_serial": d["selected_serial"], "player": "webcodecs"})
+            response = ws.receive_json()
+            assert response["type"] == "error"
+            assert "WebCodecs" in response["message"]
+        assert not mod.live_registry.sessions
 
 
 def test_live_websocket_rejects_auth_and_stale_selected_address(monkeypatch, tmp_path):
