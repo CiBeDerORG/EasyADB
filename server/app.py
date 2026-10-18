@@ -97,6 +97,11 @@ class RouteInput(BaseModel):
     route: str
 
 
+class TempAddressInput(BaseModel):
+    ip: str | None = None
+    port: int | None = None
+
+
 class VideoProbeInput(BaseModel):
     profile: Literal['baseline', 'native'] = 'baseline'
 
@@ -344,13 +349,42 @@ def delete_device(device_id: str):
     return {"deleted": True}
 
 
+@app.put("/api/devices/{device_id}/temp-address", dependencies=[Depends(authorize)])
+def set_device_temp_address(device_id: str, payload: TempAddressInput):
+    # Persist only; editing/removing the selected route invalidates cached ADB.
+    # Reject while a server-side live slot is owned (including cleanup).
+    with manager._device_lock(device_id):
+        get_device(device_id)
+        with live_registry.lock:
+            session = live_registry.sessions.get(device_id)
+            if session is not None and not live_registry.is_cleaned(session):
+                raise HTTPException(409, "该设备正在投屏或清理，请结束后修改临时地址")
+        if payload.ip is None and payload.port is None:
+            ip, port = None, None
+        elif payload.ip is None or payload.port is None:
+            raise HTTPException(400, "临时 IP 与端口必须同时填写")
+        else:
+            serial = address(payload.ip, payload.port)
+            ip, port = serial.rsplit(":", 1)[0], payload.port
+        try:
+            result = store.set_temp_address(device_id, ip, port)
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "临时地址已存在") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        if result is None:
+            raise HTTPException(404, "找不到该设备")
+        manager.clear(device_id)
+        return manager.snapshot(result)
+
+
 @app.put("/api/devices/{device_id}/route", dependencies=[Depends(authorize)])
 def select_device_route(device_id: str, payload: RouteInput):
     # Use the same lock as connect, refresh and screenshot. Switching changes
     # persisted preference only; no hidden adb connect or automatic fallback.
     with manager._device_lock(device_id):
-        if payload.route not in ("mesh", "lan"):
-            raise HTTPException(400, "请选择组网 IP 或内网 IP")
+        if payload.route not in ("mesh", "lan", "temp"):
+            raise HTTPException(400, "请选择组网 IP、内网 IP 或临时 IP")
         try:
             result = store.select_route(device_id, payload.route)
         except ValueError as exc:
