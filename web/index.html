@@ -109,13 +109,11 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-live button{margin:0;min-width:120px}
 .multi-latency{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
 .multi-help{margin-top:12px}.multi-help .muted{margin-top:8px}
-.multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:12px;min-width:0}
-.multi-grid[data-count="1"]{grid-template-columns:minmax(0,1fr)}
-.multi-grid[data-count="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}
-.multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
-.multi-card{border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:12px;min-width:0}
+.multi-grid{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start;gap:18px;margin-top:12px;min-width:0;width:100%}
+.multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;width:100%;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
+.multi-card{flex:0 1 auto;width:386px;max-width:100%;border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:12px;min-width:0}
 .multi-card .heading{margin-bottom:9px;flex-wrap:wrap}
-.multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:min(100%,40.5vh);margin:0 auto;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
+.multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
 .multi-video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent;touch-action:auto}
 .multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(54px,32%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
 .multi-fab.is-open{right:12px}
@@ -149,7 +147,6 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 @media(prefers-reduced-motion:reduce){.multi-fab,.multi-fab .fab-action{transition:none}}
 @media(max-width:1050px){
  .item{grid-template-columns:minmax(0,1fr)}.device-quality{border-left:0;border-top:1px solid #34445e;padding-left:0;padding-top:12px}
- .multi-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:780px){
   .panel{padding:16px}body{padding:14px 10px}
@@ -158,7 +155,6 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  .inventory-panel>.heading{align-items:flex-start;flex-direction:column}
 }
 @media(max-width:480px){
- .multi-grid{grid-template-columns:1fr}
  .multi-custom{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 </style>
@@ -191,7 +187,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="multiPicker" hidden aria-hidden="true"></div>
  </section>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
-  <div class="heading"><div><h2>实时画面</h2><p class="hint">画面按手机实际编码比例显示；点击右侧半隐藏按钮展开操作，上方日志、左侧远控与输入、下方导航（启用远控后出现）。批量停止仅影响已选设备。</p></div></div>
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">每路画面按对应手机实际投屏像素宽度展示；可容纳的画面尽量横向排列，空间不够时自动换行，窄屏下等比例缩小。点击画面右侧半隐藏按钮展开操作。批量停止仅影响已选设备。</p></div></div>
   <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「批量投屏」，或在对应设备行单独开启画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
