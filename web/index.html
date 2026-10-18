@@ -133,7 +133,7 @@ function render(){
   if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',items:[]});
   grouped.get(key).items.push(d);
  }
- const keys=[...grouped.keys()].sort((a,b)=>a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
+ const keys=[...grouped.keys()].sort((a,b)=>a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
  for(const key of keys){
   const group=grouped.get(key);
