@@ -145,15 +145,16 @@ streamSB.remove=function(begin,end){
 };
 streamPlayer.append(chunk);
 streamPlayer.append(chunk);
-streamSB.updating=false;
-streamSB.emit('updateend');
 assert(trimmedTo>15&&trimmedTo<=16,
   'retain 16s of the video timeline, including a previous random access frame');
-assert.equal(streamPlayer.queue.length,1,'do not append while buffer removal is active');
+assert.equal(streamPlayer.queue.length,2,'do not append while buffer removal is active');
 streamSB.buffered=buffered([[trimmedTo,32]]);
 streamSB.updating=false;
 streamSB.emit('updateend');
-assert.equal(streamPlayer.queue.length,0,'resume queued append after async trim');
+assert.equal(streamPlayer.queue.length,1,'resume one pending append after async trim');
+streamSB.updating=false;
+streamSB.emit('updateend');
+assert.equal(streamPlayer.queue.length,0,'resume remaining queued append');
 const streamDiag=streamPlayer.diagnostics();
 assert.equal(streamDiag.sourceRanges,1);
 assert(streamDiag.appendCalls>=4);
