@@ -215,8 +215,8 @@ class MultiView{
    card.pending=true;
    if(card.enabled){
     if(card.touch)card.touch.disable();card.enabled=false;
-    ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));
-   }else ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));
+    card.ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));
+   }else card.ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));
    refresh();
   });
   stop.addEventListener('click',()=>this.stop(card));
