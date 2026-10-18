@@ -21,6 +21,8 @@ def encode_touch(payload, expected_size, pressed):
         "type", "session_id", "action", "x", "y", "width", "height"
     }:
         raise InvalidTouch("触摸字段无效")
+    if payload["type"] != "touch":
+        raise InvalidTouch("只允许发送本轮触摸事件")
     action = payload["action"]
     if type(action) is not str or action not in ACTIONS:
         raise InvalidTouch("不支持的触摸动作")
