@@ -81,11 +81,12 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
  <section class="panel">
   <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
-   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button id="shotButton" disabled>刷新截图</button></div>
+   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="shotButton" disabled>刷新截图</button></div>
   </div>
   <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"></div>
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
-  <p class="hint">M2-00 预检只在点击后读取当前已连接设备的基础 ADB 信息，不启动视频流、不自动连接。截图仍按需获取。</p>
+  <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
+  <p class="hint">「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。浏览器实时解码仍待实现。</p>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -151,6 +152,7 @@ async function api(path,options={}){
 function clearShot(){
  $('shot').hidden=true;$('shot').removeAttribute('src');$('placeholder').hidden=false;
  $('m2PreflightInfo').hidden=true;$('m2PreflightInfo').textContent='';
+ $('m2VideoInfo').hidden=true;$('m2VideoInfo').textContent='';
  if(shotUrl){URL.revokeObjectURL(shotUrl);shotUrl=null;}
 }
 function elem(tag,className,text){
@@ -229,6 +231,8 @@ function render(){
  $('connect').disabled=loading||!d;
  $('shotButton').disabled=loading||!d||d.status!=='connected';
  $('m2Preflight').disabled=loading||!d||d.status!=='connected';
+ $('m2VideoBaseline').disabled=loading||!d||d.status!=='connected';
+ $('m2VideoNative').disabled=loading||!d||d.status!=='connected';
  $('refreshAll').disabled=loading||!loaded;
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded;
@@ -419,6 +423,31 @@ $('m2Preflight').addEventListener('click',async()=>{
  }catch(e){if(selected===id){info.textContent=e.message;info.className='status error';info.hidden=false;}message(e.message,'error');}
  finally{loading=false;render();}
 });
+async function runVideoProbe(profile){
+ const id=selected;if(!id||loading)return;
+ loading=true;render();
+ const info=$('m2VideoInfo');info.hidden=false;
+ info.className='status';info.textContent='正在运行限时 scrcpy H.264 编码链路实验，请保持手机屏幕开启…';
+ message('正在验证手机 → FNOS 的真实视频编码数据…');
+ try{
+  const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{
+   method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile})
+  })).json();
+  if(selected!==id)return;
+  info.textContent='scrcpy '+d.scrcpy_version+' · '+(profile==='native'?'原生参数':'基础参数')+
+   ' · 编码：'+d.codec+' · 实际尺寸：'+d.encoded_width+'×'+d.encoded_height+
+   ' · 视频帧：'+d.media_packets+' · 关键帧：'+d.key_frames+
+   ' · 配置包：'+d.configuration_packets+
+   ' · 收到字节：'+d.sample_bytes+
+   ' · 实验耗时：'+d.elapsed_ms+'ms。'+
+   (d.continuous_frames?'已收到连续编码帧。':'已收到首个编码帧。')+
+   '浏览器实时解码尚未验证。';
+  info.className='status ok';message('已收到真实 H.264 视频数据；尚未实现浏览器实时画面','ok');
+ }catch(e){if(selected===id){info.textContent=e.message;info.className='status error';info.hidden=false;}message(e.message,'error');}
+ finally{loading=false;render();}
+}
+$('m2VideoBaseline').addEventListener('click',()=>runVideoProbe('baseline'));
+$('m2VideoNative').addEventListener('click',()=>runVideoProbe('native'));
 $('shotButton').addEventListener('click',async()=>{
  const id=selected;if(!id||loading)return;loading=true;render();message('正在获取截图…');
  try{
