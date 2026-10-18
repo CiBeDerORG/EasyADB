@@ -262,7 +262,10 @@ class LiveVideo:
                     control.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
-                control.close()
+                try:
+                    control.close()
+                except OSError:
+                    pass
         if sock:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
