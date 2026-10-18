@@ -395,6 +395,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     await websocket.accept()
     stream = None
     receiver = None
+    requested_stop = asyncio.Event()
+    manual_stop = False
     try:
         try:
             initial = await asyncio.wait_for(websocket.receive_json(), timeout=8)
@@ -441,19 +443,22 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
-        await websocket.send_json({"type": "starting", "selected_serial": serial,
-                                   "adb_check_ms": adb_check_ms})
+        await websocket.send_json({"type": "starting", "session_id": stream.session_id,
+                                   "selected_serial": serial, "adb_check_ms": adb_check_ms})
 
         async def receive_commands():
+            nonlocal manual_stop
             try:
                 while True:
                     message = await websocket.receive_text()
                     if message == "stop":
+                        manual_stop = True
                         break
-                    # Intentionally ignore ALL control/input messages in M2-00-E.
+                    # Other input/control commands are NOT enabled by M2-01.
             except (WebSocketDisconnect, RuntimeError):
                 pass
             finally:
+                requested_stop.set()
                 stream.stop()
 
         receiver = asyncio.create_task(receive_commands())
@@ -463,11 +468,19 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         ws_video_chunks = 0
         next_diagnostic = 0.0
         while True:
+            # Stop receives priority over queued old video fragments. The
+            # browser waits for an "ended" message sent after cleanup/release.
+            if requested_stop.is_set():
+                if manual_stop:
+                    await websocket.send_json({"type": "stopping",
+                                               "session_id": stream.session_id})
+                break
             # Diagnostics exist only during this explicitly opened WebSocket;
             # metadata only; no extra ADB work or phone-screen bytes in logs.
             now = time.monotonic()
             if now >= next_diagnostic and not stream.finished.is_set():
-                await websocket.send_json({"type": "diagnostic", **stream.diagnostics(),
+                await websocket.send_json({"type": "diagnostic", "session_id": stream.session_id,
+                                           **stream.diagnostics(),
                                            "ws_video_bytes": ws_video_bytes,
                                            "ws_video_chunks": ws_video_chunks})
                 next_diagnostic = now + 1.0
@@ -482,7 +495,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             except queue.Empty:
                 continue
             if kind == "init":
-                await websocket.send_json({"type": "init", "player": "mse", "format": "fmp4", **payload})
+                await websocket.send_json({"type": "init", "session_id": stream.session_id,
+                                           "player": "mse", "format": "fmp4", **payload})
             elif kind == "bytes":
                 await websocket.send_bytes(payload)
                 ws_video_bytes += len(payload)
@@ -500,8 +514,27 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if receiver:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
-            await asyncio.to_thread(stream.join, 8)
-            live_registry.release(device_id, stream)
+            await asyncio.to_thread(stream.join, 20)
+            if stream.finished.is_set():
+                # A completed terminal message means this same device ID is
+                # available for a new explicitly requested session.
+                live_registry.release(device_id, stream)
+                if manual_stop:
+                    try:
+                        await websocket.send_json({"type": "ended",
+                                                   "session_id": stream.session_id,
+                                                   "reason": "manual",
+                                                   "cleanup_complete": True})
+                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        pass
+            elif manual_stop:
+                # Fail closed: registry continues to reserve a worker whose
+                # cleanup has not finished. reserve() retires it once finished.
+                try:
+                    await websocket.send_json({"type": "error",
+                                               "message": "视频会话清理超时，稍后重试；不会同时启动第二路视频"})
+                except (WebSocketDisconnect, RuntimeError, OSError):
+                    pass
         try:
             await websocket.close()
         except RuntimeError:
