@@ -493,6 +493,11 @@ class LiveVideo:
                                 self._emit(("error", str(exc)))
                             except (VideoProbeError, StreamStopped):
                                 pass
+                            finally:
+                                # Do not wait for FFmpeg stdout/EOF to eventually
+                                # notice a dead ADB media socket. Stop all input
+                                # immediately; the owner thread runs final cleanup.
+                                self.stop_event.set()
                     finally:
                         if mux.stdin:
                             try:
