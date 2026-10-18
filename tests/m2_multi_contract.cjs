@@ -84,7 +84,8 @@ const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
   encoded_height:1280,media_packets:3,key_frames:1,sample_bytes:1024,elapsed_ms:150};}
 });
 const checkbox=i=>picker.children[i].children[0].children[0];
-const quality=i=>picker.children[i].children[1];
+const quality=(i,key)=>picker.children[i].children[1].children[
+ ({max_size:0,video_bit_rate:1,max_fps:2})[key]].children[0];
 const liveRow=i=>picker.children[i].children.find(node=>node.className==='multi-live');
 const liveButton=i=>liveRow(i).children[1];
 const liveStatus=i=>liveRow(i).children[0].textContent;
@@ -105,26 +106,43 @@ select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
 assert.match(startButton.textContent,/待新增 1/);
 assert.equal(checkbox(1).checked,false);
-assert.equal(quality(0).value,'economy');
-assert.equal(quality(1).value,'economy');
+assert.equal(multi.getChoice('id-1').profile,'custom');
+assert.equal(quality(0,'max_size').value,'960');
+assert.equal(quality(0,'video_bit_rate').value,'3000000');
+assert.equal(quality(0,'max_fps').value,'24');
+assert.equal(quality(1,'max_size').value,'960');
+assert.equal(quality(1,'video_bit_rate').value,'3000000');
+assert.equal(quality(1,'max_fps').value,'24');
+assert.equal(picker.children[0].children[2].hidden,true,'hide probe actions only');
+assert.equal(picker.children[0].children[3].hidden,true,'hide probe log only');
+assert.match(page,/\.multi-choice>\.buttons\[hidden\],\.multi-choice>\.multi-probe-log\[hidden\]/);
 const latency0=picker.children[0].children.at(-1).children[0];
 assert.equal(latency0.checked,false,'low latency stays off by default');
 latency0.checked=true;latency0.fire('change');
 assert.equal(multi.getChoice('id-1').low_latency,true);
 assert.equal(multi.getChoice('id-2').low_latency,false);
-// Editing one device never overwrites another.
-quality(0).value='custom';quality(0).fire('change');
-assert.equal(multi.getChoice('id-1').profile,'custom');
-assert.equal(multi.getChoice('id-1').video_bit_rate,4000000,'custom default allowlisted');
-assert.equal(multi.getChoice('id-2').profile,'economy');
-let custom=picker.children[0].children[2];
-const bitrate=custom.children[1].children[0];
-bitrate.value='12000000';bitrate.fire('change');
+// The three fields can be changed independently, per device, including 3 Mbps.
+const setQuality=(i,key,value)=>{
+ const field=quality(i,key);field.value=String(value);field.fire('change');
+};
+setQuality(0,'video_bit_rate',12000000);
 assert.equal(multi.getChoice('id-1').video_bit_rate,12000000);
+assert.equal(multi.getChoice('id-1').max_size,960);
+assert.equal(multi.getChoice('id-1').max_fps,24);
+setQuality(0,'max_size',1280);
+setQuality(0,'max_fps',15);
+assert.equal(multi.getChoice('id-1').max_size,1280);
+assert.equal(multi.getChoice('id-1').max_fps,15);
+assert.equal(multi.getChoice('id-2').video_bit_rate,3000000,'device B remains at default');
+assert.equal(multi.getChoice('id-2').max_size,960);
+assert.equal(multi.getChoice('id-2').max_fps,24);
 // one selected must create ONLY its own WS with exact per-device quality.
 startButton.fire('click');assert.equal(sockets.length,1);
 const a=sockets[0];a.open();const pa=JSON.parse(a.sent[0]);
-assert.equal(pa.profile,'custom');assert.equal(pa.quality.video_bit_rate,12000000);
+assert.equal(pa.profile,'custom');
+assert.equal(pa.quality.video_bit_rate,12000000);
+assert.equal(pa.quality.max_size,1280);
+assert.equal(pa.quality.max_fps,15);
 assert.equal(pa.selected_serial,devices[0].selected_serial);
 assert.equal(multi.cards.size,1);
 assert.equal(grid.children.length,1);
@@ -132,6 +150,9 @@ a.emit('starting',{session_id:'only-one'});
 assert.equal(sockets.length,1);
 init(a,'only-one');
 const ca=multi.cards.get('id-1');
+assert.equal(quality(0,'max_size').disabled,true,'no hot switching while streaming');
+assert.equal(quality(0,'video_bit_rate').disabled,true);
+assert.equal(quality(0,'max_fps').disabled,true);
 assert.equal(ca.toggle.disabled,false,'control independent of video playing');
 assert.equal(ca.quality.profile,'custom');
 assert.equal(ca.lowLatency,true,'local player setting is pinned to device A only');
@@ -151,7 +172,9 @@ assert.equal(multi.selected.has('id-1'),true,'explicit selection survives clean 
 assert.match(ca.historyEl.textContent,/最近画质/);
 // selection is available again, no automatic start and no all-selected rule.
 assert.equal(sockets.length,1);
-quality(1).value='baseline';quality(1).fire('change');
+setQuality(1,'video_bit_rate',8000000);
+setQuality(1,'max_fps',30);
+assert.equal(multi.getChoice('id-1').video_bit_rate,12000000);
 select(0);select(1);
 assert.equal(startButton.disabled,false);
 startButton.fire('click');assert.equal(sockets.length,2,'sequential first launch');
@@ -160,7 +183,11 @@ b.emit('starting',{session_id:'second-a'});
 assert.equal(sockets.length,2,'starting alone does not start next');
 init(b,'second-a');
 assert.equal(sockets.length,3);
-const c=sockets.at(-1);c.open();assert.equal(JSON.parse(c.sent[0]).profile,'baseline');
+const c=sockets.at(-1);c.open();
+assert.equal(JSON.parse(c.sent[0]).profile,'custom');
+assert.equal(JSON.parse(c.sent[0]).quality.video_bit_rate,8000000);
+assert.equal(JSON.parse(c.sent[0]).quality.max_fps,30);
+assert.equal(JSON.parse(c.sent[0]).quality.max_size,960);
 c.emit('starting',{session_id:'second-b'});init(c,'second-b');
 const cb=multi.cards.get('id-1'),cc=multi.cards.get('id-2');
 assert.equal(cc.toggle.disabled,false);

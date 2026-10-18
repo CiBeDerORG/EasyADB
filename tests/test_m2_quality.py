@@ -60,9 +60,13 @@ def test_unrecognized_presets_or_overrides_are_rejected(profile, quality):
 def test_every_allowed_custom_option_is_explicitly_bounded():
     assert CUSTOM_CHOICES == {
         "max_size": (0, 960, 1280, 1600),
-        "video_bit_rate": (2_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000),
+        "video_bit_rate": (2_000_000, 3_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000),
         "max_fps": (15, 24, 30),
     }
+    # Every field is independent, including the visible 960 / 3 Mbps / 24 FPS default.
+    assert resolve_live_quality("custom", {
+        "max_size": 960, "video_bit_rate": 3_000_000, "max_fps": 24,
+    }) == LIVE_PROFILES["economy"]
     quality = resolve_live_quality("custom", {
         "max_size": 1280, "video_bit_rate": 4_000_000, "max_fps": 15,
     })
@@ -175,10 +179,14 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     assert 'id="multiPicker"' in page and 'id="multiGrid"' in page
     assert 'id="legacySolo"' not in page and 'id="liveProfile"' not in page
     assert 'id="multiProfile"' not in page
-    for name in ("economy", "baseline", "native", "custom"):
-        assert "'"+name+"'" in multi
+    assert "profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24" in multi
+    assert "actions.hidden=true" in multi and "details.hidden=true" in multi
+    assert ".multi-choice>.multi-probe-log[hidden]" in page
+    assert "choice(CHOICES,value.profile)" not in multi
+    assert "item.append(custom)" in multi
     for field in ("max_size", "video_bit_rate", "max_fps"):
         assert field in multi
+    assert "['3000000','3 Mbps']" in multi
     assert "qualityPayload(this.getChoice(d.id))" in multi
     # A running phone locks ONLY its own quality/route, not every device.
     assert "const busy=this.opening||this.getManagementBusy?.()" in multi

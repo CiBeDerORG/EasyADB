@@ -21,7 +21,7 @@ const CHOICES=[
 ];
 const CUSTOM={
  max_size:[['960','960'],['1280','1280'],['1600','1600'],['0','原生']],
- video_bit_rate:[['2000000','2 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps']],
+ video_bit_rate:[['2000000','2 Mbps'],['3000000','3 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps']],
  max_fps:[['15','15 FPS'],['24','24 FPS'],['30','30 FPS']]
 };
 const choice=(options,value)=>{
@@ -29,7 +29,7 @@ const choice=(options,value)=>{
  for(const [id,label] of options){const opt=make('option','',label);opt.value=id;opt.selected=id===String(value);select.append(opt);}
  select.value=String(value);return select;
 };
-const defaults=()=>({profile:'economy',max_size:960,video_bit_rate:4000000,max_fps:24,
+const defaults=()=>({profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24,
  low_latency:false});
 const qualityPayload=v=>v.profile==='custom'
  ?{profile:'custom',quality:{max_size:v.max_size,video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
@@ -107,21 +107,17 @@ class MultiView{
    item.append(main);
    if(!connected)item.classList.add('multi-unavailable');
    const value=this.getChoice(d.id);
-   const select=choice(CHOICES,value.profile);
-   select.setAttribute('aria-label',d.name+' 投屏画质');
-   select.disabled=busy||!connected;
-   select.addEventListener('change',()=>this.setChoice(d.id,{profile:select.value}));
-   item.append(select);
-   if(value.profile==='custom'){
-    const custom=make('div','multi-custom');
-    for(const [key,label] of [['max_size','最大边'],['video_bit_rate','目标码率'],['max_fps','最高帧率']]){
-     const field=make('label','',label),sel=choice(CUSTOM[key],value[key]);
-     sel.setAttribute('aria-label',d.name+' '+label);sel.disabled=busy||!connected;
-     sel.addEventListener('change',()=>this.setChoice(d.id,{[key]:Number(sel.value)}));
-     field.append(sel);custom.append(field);
-    }
-    item.append(custom);
+   // Three independent per-device settings, replacing the preset dropdown.
+   // Server still validates their complete numeric tuple as custom quality.
+   const custom=make('div','multi-custom');
+   for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率']]){
+    const field=make('label','',label),sel=choice(CUSTOM[key],value[key]);
+    sel.setAttribute('aria-label',d.name+' '+label);
+    sel.disabled=busy||!connected;
+    sel.addEventListener('change',()=>this.setChoice(d.id,{profile:'custom',[key]:Number(sel.value)}));
+    field.append(sel);custom.append(field);
    }
+   item.append(custom);
    const actions=make('div','buttons');
    for(const [kind,profile,label] of [['preflight',null,'能力预检'],['video','baseline','视频实验 · 基础'],['video','native','视频实验 · 原生']]){
     const b=make('button','secondary',label);b.type='button';
@@ -129,8 +125,12 @@ class MultiView{
     b.addEventListener('click',()=>this.checkDevice(d,kind,profile));
     actions.append(b);
    }
+   // Temporarily hide the three diagnostic actions, preserve their
+   // explicit handlers and API for later use. No background probes.
+   actions.hidden=true;
    item.append(actions);
    const details=make('details','multi-probe-log');
+   details.hidden=true;
    const summary=make('summary','','检测记录');
    const log=make('div','multi-check-log',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
    details.append(summary,log);item.append(details);
