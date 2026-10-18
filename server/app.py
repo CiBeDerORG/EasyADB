@@ -48,6 +48,12 @@ def adb(*args, timeout=15, input_text=None):
 manager = DeviceManager(store, adb)
 live_registry = LiveRegistry()
 
+# Only active, user-started WebSocket sessions have a watchdog. The client
+# acknowledges existing diagnostic events rather than running a hidden timer.
+LIVE_HEARTBEAT_TIMEOUT = 45.0
+LIVE_HEARTBEAT_CHECK_INTERVAL = 2.0
+LIVE_WS_SEND_TIMEOUT = 10.0
+
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -402,6 +408,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     await websocket.accept()
     stream = None
     receiver = None
+    watchdog = None
     requested_stop = asyncio.Event()
     touch_ready = asyncio.Event()
     manual_stop = False
@@ -460,8 +467,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         await websocket.send_json({"type": "starting", "session_id": stream.session_id,
                                    "selected_serial": serial, "adb_check_ms": adb_check_ms})
 
+        last_browser_ack = time.monotonic()
+
         async def receive_commands():
-            nonlocal manual_stop
+            nonlocal manual_stop, last_browser_ack
             control_enabled = False
             last_move = 0.0
             last_input = 0.0
@@ -478,7 +487,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     except ValueError:
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
-                        "control_enable", "control_disable", "touch", "input_text", "nav_key"
+                        "control_enable", "control_disable", "touch", "input_text", "nav_key",
+                        "heartbeat"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -488,6 +498,13 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             or manager.serial_for(current) != serial or requested_stop.is_set()):
                         break  # no implicit connect, IP fallback or stale-target injection
                     kind = message["type"]
+                    if kind == "heartbeat":
+                        # Diagnostic receipt proof for THIS session, not a
+                        # phone keepalive. Malformed/stale heartbeat fails closed.
+                        if set(message) != {"type", "session_id"}:
+                            break
+                        last_browser_ack = time.monotonic()
+                        continue
                     if kind == "control_enable":
                         if set(message) != {"type", "session_id"} or not touch_ready.is_set():
                             await websocket.send_json({"type": "touch_error", "message": "等待本轮视频与控制通道就绪"})
@@ -552,9 +569,22 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 pass
             finally:
                 requested_stop.set()
-                stream.stop()
+                await asyncio.to_thread(stream.stop)
+
+        async def watch_browser():
+            # A half-open TCP connection need not produce WebSocketDisconnect.
+            # Bound orphan sessions even when the browser dies without a FIN.
+            while not requested_stop.is_set():
+                await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
+                if requested_stop.is_set():
+                    return
+                if time.monotonic() - last_browser_ack >= LIVE_HEARTBEAT_TIMEOUT:
+                    requested_stop.set()
+                    await asyncio.to_thread(stream.stop)
+                    return
 
         receiver = asyncio.create_task(receive_commands())
+        watchdog = asyncio.create_task(watch_browser())
         # Transport payload-only accounting for THIS authenticated live session.
         # Excludes HTTP and network protocol framing/headers.
         ws_video_bytes = 0
@@ -565,17 +595,18 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             # browser waits for an "ended" message sent after cleanup/release.
             if requested_stop.is_set():
                 if manual_stop:
-                    await websocket.send_json({"type": "stopping",
-                                               "session_id": stream.session_id})
+                    await asyncio.wait_for(websocket.send_json({"type": "stopping",
+                                               "session_id": stream.session_id}), LIVE_WS_SEND_TIMEOUT)
                 break
             # Diagnostics exist only during this explicitly opened WebSocket;
             # metadata only; no extra ADB work or phone-screen bytes in logs.
             now = time.monotonic()
             if now >= next_diagnostic and not stream.finished.is_set():
-                await websocket.send_json({"type": "diagnostic", "session_id": stream.session_id,
-                                           **stream.diagnostics(),
-                                           "ws_video_bytes": ws_video_bytes,
-                                           "ws_video_chunks": ws_video_chunks})
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "diagnostic", "session_id": stream.session_id,
+                    **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
+                    "ws_video_chunks": ws_video_chunks
+                }), LIVE_WS_SEND_TIMEOUT)
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
                 break
@@ -588,12 +619,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             except queue.Empty:
                 continue
             if kind == "init":
-                await websocket.send_json({"type": "init", "session_id": stream.session_id,
-                                           "player": "mse", "format": "fmp4", **payload})
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "init", "session_id": stream.session_id,
+                    "player": "mse", "format": "fmp4", **payload
+                }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
             elif kind == "bytes":
-                await websocket.send_bytes(payload)
+                await asyncio.wait_for(websocket.send_bytes(payload), LIVE_WS_SEND_TIMEOUT)
                 ws_video_bytes += len(payload)
                 ws_video_chunks += 1
             elif kind == "error":
@@ -601,11 +634,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 break
             elif kind == "end":
                 break
-    except (WebSocketDisconnect, RuntimeError):
+    except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
+        if watchdog:
+            watchdog.cancel()
+            await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
-            stream.stop()
+            await asyncio.to_thread(stream.stop)
             if receiver:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
