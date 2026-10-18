@@ -44,7 +44,7 @@ EASYADB_BUILD_PROXY=http://mihomo:7890
 
 不要将真实 `.env` 提交到 GitHub。脚本不会主动打印完整代理 URL，但代理凭据可能保存在 BuildKit 构建器的 Docker 配置中，且具有 Docker 管理权限的人可以读取。
 
-检查 Mihomo 已加入 `proxy-net` 且允许同网络访问 `mixed-port: 7890`（如 `allow-lan: true`、`bind-address: '*'`）；不要把代理端口开放到公网。首次下载需 FNOS 自带 `curl`、`tar`、`sha256sum` 和可用的系统 CA 证书；目前 helper 支持 Linux amd64 / arm64。下载临时文件放在仓库 `.cache/`，操作完成后自动清理；磁盘紧张可通过 `EASYADB_BOOTSTRAP_CACHE` 指定别的目录。
+检查 Mihomo 已加入 `proxy-net` 且允许同网络访问 `mixed-port: 7890`（如 `allow-lan: true`、`bind-address: '*'`）；不要把代理端口开放到公网。首次下载需 FNOS 自带 `curl`、`tar`、`sha256sum` 和可用的系统 CA 证书；目前 helper 支持 Linux amd64 / arm64。大体积的下载文件保存在仓库 `.cache/`（完成后自动清理），磁盘紧张可通过 `EASYADB_BOOTSTRAP_CACHE` 指定其他目录。**若 FNOS 的 `/vol3` 数据卷设置了 `noexec`**，脚本会依次检测 `/tmp`、`/var/tmp`、`/root` 是否真正允许运行临时二进制文件，Crane 仅解压到通过检测的临时目录，避免在 `.cache` 直接执行时报 `Permission denied`。如均不可执行，可指定已存在的可写、可执行目录：`sudo EASYADB_EXEC_TMP=/path/on/exec/filesystem sh scripts/build-with-mihomo.sh`。不需要修改数据卷挂载参数。
 
 还可以只验证一次性镜像引导，不启动 EasyADB：
 
