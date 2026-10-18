@@ -41,6 +41,7 @@ class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
+  this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
   this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
   if(typeof root.fetch==='function'){
    this.engineReady=false;
@@ -188,8 +189,9 @@ class MultiView{
   const remaining=MAX_DEVICES-this.cards.size;
   this.startButton.disabled=this.opening||this.getManagementBusy?.()||available.length<1||
    available.length>remaining||available.some(d=>this.checking.has(d.id));
-  const selectedRunning=selectedDevices.filter(d=>this.isBusyFor(d.id));
-  this.stopButton.disabled=selectedRunning.length===0;
+  const selectedRunning=selectedDevices.filter(d=>this.cards.has(d.id)&&
+   this.cards.get(d.id).state!=='stopping');
+  this.stopButton.disabled=selectedRunning.length===0||Boolean(this.stopBatch);
   this.stopButton.textContent='批量停止投屏（'+selectedRunning.length+' 台）';
   this.startButton.textContent=(this.cards.size?'批量追加投屏':'批量投屏')+
    '（待新增 '+available.length+' 台 / 剩余 '+remaining+' 路）';
@@ -271,25 +273,34 @@ class MultiView{
   const isAppend=this.cards.size>0;
   for(const d of additions)this.lastLiveStatus.delete(d.id);
   this.opening=true;
-  // Only this explicit user-requested batch is launched sequentially.
-  // Never reopen/modify currently running WS, MSE or touch controller.
+  // Reserve the complete batch before creating cards. Every device opens
+  // its OWN WS immediately; each synchronous FastAPI startup / scrcpy worker
+  // proceeds concurrently. Do not wait for device A's first frame to start B.
   this.launchQueue=batch;
-  this.status((isAppend?'正在追加 ':'正在依次启动 ')+additions.length+
-   ' 路独立投屏；已经运行的设备保持原会话与远控。');
+  this.status((isAppend?'正在并发追加 ':'正在并发启动 ')+additions.length+
+   ' 路独立投屏；最多同时四路，已经运行的设备保持原会话与远控。');
   this._launchNext();
   this.updatePicker();
   return true;
  }
  _launchNext(){
   if(!this.opening)return;
-  const next=this.launchQueue.shift();
-  if(!next){
+  // A single JS event-loop turn atomically reserves and dispatches the batch.
+  // The sessions, offers, ADB processes and results then progress independently.
+  const pending=this.launchQueue.splice(0);
+  try{
+   for(const next of pending){
+    try{this.open(next.device,next.quality,null,next.lowLatency,null,next.screenOff);}
+    catch(error){
+     this.lastLiveStatus.set(next.device.id,'启动失败');
+     this.status(next.device.name+'：'+error.message,true);
+    }
+   }
+  }finally{
    this.opening=false;
-   // Startup queue is settled: release any stale FAB reconnect-disable state.
    for(const card of this.cards.values())card.refresh?.();
-   this.updatePicker();return;
+   this.updatePicker();
   }
-  this.open(next.device,next.quality,()=>this._launchNext(),next.lowLatency,null,next.screenOff);
  }
  open(d,quality,nextLaunch,lowLatency=false,experiment=null,screenOff=false){
   if(this.cards.has(d.id)){ // Never create a second video/WS for this device.
@@ -816,25 +827,29 @@ class MultiView{
   this.updatePicker();return true;
  }
  stopSelected(){
-  // Only the selected rows are stopped/cancelled. Unselected sessions and
-  // their player/control sockets remain untouched.
+  // Dispatch stop over ALL selected live sessions in this event-loop turn.
+  // Every WS independently reports cleanup; no phone waits for another.
   if(!this.getBatchSelection){this.stopAll();return;}
+  if(this.stopBatch)return;
   const picked=new Set(this.getBatchSelection());
-  if(!picked.size)return;
-  const canceled=this.launchQueue.filter(item=>picked.has(item.device.id));
-  this.launchQueue=this.launchQueue.filter(item=>!picked.has(item.device.id));
-  for(const item of canceled)this.lastLiveStatus.set(item.device.id,'已取消排队');
-  for(const [id,card] of [...this.cards])
-   if(picked.has(id))this.stop(card,true);
+  const targets=[...this.cards.values()].filter(c=>picked.has(c.id)&&
+   !c.closed&&c.state!=='stopping');
+  if(!targets.length)return;
+  this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
+  for(const card of targets)this.stop(card,true);
+  this.status('已并发发送 '+targets.length+' 路停止请求；各设备独立清理，不互相等待。');
   this.updatePicker();
  }
  stopAll(){
   this.opening=false;this.launchQueue=[];
-  for(const card of [...this.cards.values()])this.stop(card,true);
+  const targets=[...this.cards.values()].filter(c=>!c.closed&&c.state!=='stopping');
+  if(targets.length&&!this.stopBatch)
+   this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
+  for(const card of targets)this.stop(card,true);
   this.updatePicker();
  }
  closeAll(){
-  this.opening=false;this.launchQueue=[];
+  this.opening=false;this.launchQueue=[];this.stopBatch=null;
   for(const card of [...this.cards.values()])this.end(card,false);
   this.updatePicker();
  }
@@ -868,6 +883,14 @@ class MultiView{
   // Remove the terminal DOM node NOW: deleting only the registry entry left a
   // stale video card behind, so a second Start visually duplicated streams.
   card.box.remove();
+  if(this.stopBatch?.pending.has(card.id)){
+   const batch=this.stopBatch;
+   batch.pending.delete(card.id);
+   if(clean)batch.clean++;else batch.failed++;
+   this.status('批量停止进度：'+(batch.total-batch.pending.size)+' / '+batch.total+
+    ' 台；已确认清理 '+batch.clean+' 台，未确认 '+batch.failed+' 台。',batch.failed>0);
+   if(!batch.pending.size)this.stopBatch=null;
+  }
   this.lastLiveStatus.set(card.id,clean?'已停止':
    (card.lastFailure?'异常结束':'已结束 · 清理未确认'));
   if(!card.keepSelected&&this.cards.size>1)this.dropBatchSelection(card.id);
