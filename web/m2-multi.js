@@ -299,6 +299,7 @@ class MultiView{
   const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,experiment,
    engine:this.videoEngine,
    screenOff:screenOff===true&&!experiment,reconnectRequested:false,wakePending:false,
+   stopTimer:null,
    ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    keepSelected:false,
@@ -783,6 +784,19 @@ class MultiView{
   if(card.touch){card.touch.disable();}
   card.enabled=false;card.pending=false;card.lastInput=false;
   card.state='stopping';card.refresh();this.updatePicker();
+  if(card.engine==='webrtc'){
+   // Hide controls immediately while the server is cleaning this media peer.
+   // A timeout is NOT cleanup confirmation: never auto-reconnect on it.
+   card.collapseMenu();card.fab.hidden=true;card.logPanel.hidden=true;
+   card.stopTimer=root.setTimeout(()=>{
+    card.stopTimer=null;
+    if(card.closed||card.state!=='stopping')return;
+    card.reconnectRequested=false;
+    mark('WebRTC 停止确认超时；服务端资源未确认释放，请检查 NAS 日志',true);
+    this.status(card.name+'：停止确认超时，页面已移除旧画面；不代表服务端资源已释放，不会自动重连。',true);
+    this.end(card,false);
+   },40000);
+  }
   if(card.ws&&card.ws.readyState===WebSocket.OPEN){
    try{card.ws.send('stop');card.stateEl.textContent='正在请求服务端停止并清理…';}
    catch{this.end(card,false);}
@@ -825,6 +839,7 @@ class MultiView{
  end(card,clean){
   if(card.closed)return;
   card.closed=true;
+  if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
   card.menuOpen=false;card.textOpen=false;
   if(card.touch){card.touch.destroy();card.touch=null;}
