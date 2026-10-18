@@ -566,6 +566,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             offline = await confirm_live_adb_loss(device_id, serial)
                             await websocket.send_json({
                                 "type": "touch_error", "session_id": stream.session_id,
+                                "code": "adb_disconnected" if offline else "control_failed",
                                 "message": ("ADB 连接已中断，请手动重新连接"
                                             if offline else str(exc))
                             })
@@ -598,6 +599,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             offline = await confirm_live_adb_loss(device_id, serial)
                             await websocket.send_json({
                                 "type": "input_error", "session_id": stream.session_id,
+                                "code": "adb_disconnected" if offline else "control_failed",
                                 "message": ("ADB 连接已中断，请手动重新连接"
                                             if offline else str(exc))
                             })
