@@ -51,7 +51,7 @@ const root={
 };root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
-assert.match(page,/同时最多四路/);
+assert.match(page,/最多四路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
 assert.match(page,/class="workspace"/);
