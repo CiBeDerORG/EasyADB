@@ -474,9 +474,11 @@ function startLive(){
  const scheme=location.protocol==='https:'?'wss:':'ws:';
  const ws=new WebSocket(scheme+'//'+location.host+'/api/devices/'+encodeURIComponent(id)+'/m2/live');
  ws.binaryType='arraybuffer';liveWS=ws;liveDeviceId=id;
+ let wsOpened=false, receivedStarting=false;
  liveStatus('正在验证会话并启动手机端视频编码…');render();
  ws.onopen=()=>{
   if(liveWS!==ws)return;
+  wsOpened=true;
   ws.send(JSON.stringify({
    token:$('token').value.trim(),profile:$('liveProfile').value,
    selected_serial:serial,player:playerMode
@@ -486,7 +488,7 @@ function startLive(){
   if(liveWS!==ws)return;
   if(typeof e.data==='string'){
    let msg;try{msg=JSON.parse(e.data);}catch{liveReceivedError=true;liveStatus('视频服务端返回了无效消息。','error');stopLive();return;}
-   if(msg.type==='starting')liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…');
+   if(msg.type==='starting'){receivedStarting=true;liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…');}
    else if(msg.type==='init'){
     try{
      if(msg.player!==playerMode){throw Error('视频服务端播放器协议不匹配');}
@@ -499,12 +501,23 @@ function startLive(){
   try{livePlayer.append(new Uint8Array(e.data));}
   catch(error){liveReceivedError=true;liveStatus(error.message,'error');stopLive();}
  };
- ws.onerror=()=>{if(liveWS===ws){liveReceivedError=true;liveStatus('实时视频 WebSocket 发生网络错误。','error');}};
- ws.onclose=()=>{
-  if(liveWS===ws){
-   const failed=liveReceivedError;
-   stopLive();
-   if(!failed)liveStatus('实时视频连接已结束。需要时请手动重新开始。');
+ ws.onerror=()=>{
+  if(liveWS!==ws)return;
+  liveReceivedError=true;
+  if(!wsOpened)liveStatus('实时视频 WebSocket 握手失败：请检查服务端是否具备 WS 协议支持，以及访问入口是否允许 Upgrade。','error');
+  else if(!receivedStarting)liveStatus('WebSocket 已连接，但会话认证或初始化阶段异常；请查看 FNOS 服务日志。','error');
+  else liveStatus('视频传输连接中断；请查看 FNOS 服务日志。','error');
+ };
+ ws.onclose=event=>{
+  if(liveWS!==ws)return;
+  const failed=liveReceivedError;
+  stopLive();
+  if(!failed){
+   const details='（关闭代码 '+event.code+(event.reason?'：'+event.reason:'')+'）';
+   liveStatus('实时视频连接已结束'+details+'。需要时请手动重新开始。');
+  }else if(event.code!==1006&&event.code!==1005){
+   const info=$('m2LiveInfo');
+   info.textContent+='（关闭代码 '+event.code+(event.reason?'：'+event.reason:'')+'）';
   }
  };
 }
