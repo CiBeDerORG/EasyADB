@@ -1,6 +1,7 @@
 """M2-00-E: fMP4 init, no-WebCodecs UI, one-shot WebSocket authorization."""
 import importlib
 import queue
+import shutil
 import socket
 import struct
 import subprocess
@@ -15,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from server.devices import DeviceManager
 from server.store import DeviceStore
 from server.m2_live import (
-    LiveRegistry, LiveVideo, StreamStopped, _socket_read, parse_init_segments,
+    FFMPEG_MSE_ARGS, LiveRegistry, LiveVideo, StreamStopped, _socket_read, parse_init_segments,
 )
 
 AUTH = {"X-EasyADB-Token": "local-test-token-123"}
@@ -188,3 +189,29 @@ def test_manual_device_ip_switch_interrupts_live_session(monkeypatch, tmp_path):
         assert result.status_code == 200
         assert running.stopped
         mod.live_registry.release(device["id"], running)
+
+
+def test_real_ffmpeg_copy_remux_produces_mse_init_and_media_fragments():
+    """Runs the same -c:v copy command as production on short synthetic H.264."""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg not installed on this local development environment")
+    encoded = subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=30",
+        "-frames:v", "12", "-c:v", "libx264", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", "-f", "h264", "pipe:1",
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=True).stdout
+    assert encoded.startswith(b"\\x00\\x00\\x00\\x01") or encoded.startswith(b"\\x00\\x00\\x01")
+    fragmented = subprocess.run(
+        ["ffmpeg", *FFMPEG_MSE_ARGS], input=encoded,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=20, check=True,
+    ).stdout
+    parsed = parse_init_segments(fragmented)
+    assert parsed is not None
+    end, initialization, mime = parsed
+    assert b"ftyp" in initialization[:16]
+    assert b"moov" in initialization
+    assert mime.startswith('video/mp4; codecs="avc1.')
+    assert b"moof" in fragmented[end:]
+    assert b"mdat" in fragmented[end:]
