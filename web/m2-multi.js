@@ -38,7 +38,7 @@ const briefQuality=v=>v.profile==='custom'
  ?'自定义 · '+(v.max_size||'原生')+' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
- constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy}){
+ constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
@@ -94,17 +94,8 @@ class MultiView{
     this.isBusyFor(d.id)||this.checking.has(d.id);
    const item=make('div','multi-choice');
    item.setAttribute('data-device-id',d.id);
-   const main=make('label','multi-choice-label');
-   const check=make('input');check.type='checkbox';check.value=d.id;
-   check.checked=this.selected.has(d.id);
-   check.disabled=active||!connected||busy||(!check.checked&&this.selected.size>=MAX_DEVICES);
-   check.addEventListener('change',()=>{
-    if(check.checked)this.selected.add(d.id);else this.selected.delete(d.id);
-    this.updatePicker();
-   });
-   main.append(check,make('span','',active?'已在投屏 · '+d.name:
-    connected?'参与本轮投屏 · '+d.name:'手动连接后可选择投屏'));
-   item.append(main);
+   // Batch selection comes from the existing left-hand device checkbox.
+   // The device management page prepends its ADB status badge here.
    if(!connected)item.classList.add('multi-unavailable');
    const value=this.getChoice(d.id);
    // Three independent per-device settings, replacing the preset dropdown.
@@ -164,7 +155,8 @@ class MultiView{
   }
   // Existing cards, including pending stop/cleanup, retain their server slots.
   // Start may append ONLY newly checked devices, up to the remaining capacity.
-  const available=[...this.selected].filter(id=>ids.has(id)&&!this.cards.has(id));
+  const picked=this.getBatchSelection?this.getBatchSelection():this.selected;
+  const available=[...picked].filter(id=>ids.has(id)&&!this.cards.has(id));
   const remaining=MAX_DEVICES-this.cards.size;
   this.startButton.disabled=this.opening||this.getManagementBusy?.()||available.length<1||
    available.length>remaining||available.some(id=>this.checking.has(id));
@@ -176,6 +168,10 @@ class MultiView{
  }
 
  hasActive(){return this.cards.size>0;}
+ dropBatchSelection(id){
+  if(this.getBatchSelection)this.onBatchSelectionRemove?.(id);
+  else this.selected.delete(id);
+ }
  isBusyFor(id){
   // Includes an opened card during stopping and an unstarted queued item.
   return this.cards.has(id)||this.launchQueue.some(item=>item.device.id===id);
@@ -203,13 +199,15 @@ class MultiView{
   if(!d)return false;
   const started=this._startDevices([d]);
   if(started){
-   this.selected.add(id);this.updatePicker();
+   if(!this.getBatchSelection)this.selected.add(id);
+   this.updatePicker();
   }
   return started;
  }
  start(){
   const ds=this.getDevices()||[];
-  const additions=[...this.selected].filter(id=>!this.isBusyFor(id))
+  const picked=this.getBatchSelection?this.getBatchSelection():this.selected;
+  const additions=[...picked].filter(id=>!this.isBusyFor(id))
    .map(id=>ds.find(d=>d.id===id));
   if(!additions.length)return false;
   return this._startDevices(additions);
@@ -547,7 +545,7 @@ class MultiView{
   const before=this.launchQueue.length;
   this.launchQueue=this.launchQueue.filter(item=>item.device.id!==id);
   if(before===this.launchQueue.length)return false;
-  this.selected.delete(id);
+  this.dropBatchSelection(id);
   this.lastLiveStatus.set(id,'已取消排队');
   this.updatePicker();return true;
  }
@@ -590,7 +588,7 @@ class MultiView{
   card.box.remove();
   this.lastLiveStatus.set(card.id,clean?'已停止':
    (card.lastFailure?'异常结束':'已结束 · 清理未确认'));
-  if(!card.keepSelected&&this.cards.size>1)this.selected.delete(card.id);
+  if(!card.keepSelected&&this.cards.size>1)this.dropBatchSelection(card.id);
   this.cards.delete(card.id);
   // Full stop keeps the previous selection; stopping one live card
   // alongside others unchecks only that card. Nothing auto-starts.
