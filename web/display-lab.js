@@ -20,11 +20,13 @@ function create({dialog,getDevice,api,multiView}){
   }
   $('labStop').disabled=!d||!busy;
   $('labPending').textContent=pending?'系统副屏实验待恢复（请勿删除或切换设备线路）':'暂无待恢复的副屏设置';
+  const chosen=select.value;
   select.replaceChildren();
   for(const id of ids.filter(id=>id>0)){
    const option=document.createElement('option');option.value=String(id);
    option.textContent='Display '+id;select.append(option);
   }
+  if(ids.includes(Number(chosen)))select.value=chosen;
   const output=report.slice(-40).map(x=>'['+x.at+'] '+x.action+' · '+x.detail);
   logs.textContent=output.join('\n')||'暂无操作记录';
   raw.textContent=excerpt||'尚未扫描显示器';
