@@ -28,6 +28,10 @@ from .m2_quality import resolve_live_quality
 from .m2_touch import InvalidTouch
 from .display_lab import DisplayLab, LabError
 
+VIDEO_ENGINE = os.getenv("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
+if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
+    raise RuntimeError("EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs")
+
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
     raise RuntimeError("Set EASYADB_TOKEN to a unique token of at least 12 characters")
@@ -554,6 +558,12 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
     return True
 
 
+@app.get("/api/m2/video-engine")
+def m2_video_engine():
+    # Public capability metadata contains no token, serial, network or device data.
+    return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
+
+
 @app.websocket("/api/devices/{device_id}/m2/live")
 async def m2_live_video(websocket: WebSocket, device_id: str):
     """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
@@ -567,6 +577,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         return
     await websocket.accept()
     stream = None
+    pc = None  # one WebRTC peer per authenticated, explicitly started WS
     receiver = None
     watchdog = None
     requested_stop = asyncio.Event()
@@ -582,10 +593,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if not isinstance(supplied, str) or not secrets.compare_digest(supplied, TOKEN):
             await websocket.close(code=1008, reason="访问密钥错误")
             return
-        # Reserve a future raw H264/WebCodecs path without advertising a
-        # nonfunctional decoder or passing fMP4 bytes into VideoDecoder.
-        if initial.get("player", "mse") != "mse":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现；当前只支持 MSE。"})
+        if VIDEO_ENGINE == "webcodecs":
+            await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 mse 或 webrtc"})
+            return
+        if initial.get("player", "mse") != VIDEO_ENGINE:
+            await websocket.send_json({"type": "error", "message": "播放器与服务器 EASYADB_VIDEO_ENGINE 配置不一致，请刷新网页"})
             return
         profile = initial.get("profile")
         try:
@@ -658,6 +670,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         options["display_source"] = experiment
                     if screen_off:
                         options["screen_off"] = True
+                    if VIDEO_ENGINE == "webrtc":
+                        options["video_engine"] = "webrtc"
                     candidate = LiveVideo(serial, profile=profile, **options)
                 if candidate is None:
                     pass
@@ -665,12 +679,18 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
-                    try:
-                        stream.start()
-                    except (RuntimeError, OSError):
-                        live_registry.release(device_id, candidate)
-                        stream = None
-                        error = "视频会话未能启动，请稍后重试"
+                    if VIDEO_ENGINE == "webrtc":
+                        # Do not start capture until the offer is authenticated
+                        # and an SDP answer has been sent to this same WS.
+                        from .m2_webrtc import ScrcpyH264Track
+                        stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
+                    else:
+                        try:
+                            stream.start()
+                        except (RuntimeError, OSError):
+                            live_registry.release(device_id, candidate)
+                            stream = None
+                            error = "视频会话未能启动，请稍后重试"
 
         if error:
             await websocket.send_json({"type": "error", "message": error})
@@ -681,13 +701,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                              serial, "启动实验视频：" + str(experiment))
         await asyncio.wait_for(websocket.send_json({
             "type": "starting", "session_id": stream.session_id,
-            "selected_serial": serial, "adb_check_ms": adb_check_ms
+            "selected_serial": serial, "adb_check_ms": adb_check_ms,
+            "player": VIDEO_ENGINE
         }), LIVE_WS_SEND_TIMEOUT)
 
         last_browser_ack = time.monotonic()
 
         async def receive_commands():
-            nonlocal manual_stop, last_browser_ack
+            nonlocal manual_stop, last_browser_ack, pc
             control_enabled = False
             last_move = 0.0
             last_input = 0.0
@@ -697,15 +718,15 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     if raw == "stop":
                         manual_stop = True
                         break
-                    if len(raw) > 1024:
-                        break  # fail closed for oversized/unrecognized control traffic
+                    if len(raw) > (32768 if VIDEO_ENGINE == "webrtc" else 1024):
+                        break  # allow one bounded WebRTC SDP offer, not arbitrary commands
                     try:
                         message = json.loads(raw)
                     except ValueError:
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
                         "control_enable", "control_disable", "touch", "input_text", "nav_key",
-                        "wake", "heartbeat"
+                        "wake", "heartbeat", "webrtc_offer"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -715,6 +736,45 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             or manager.serial_for(current) != serial or requested_stop.is_set()):
                         break  # no implicit connect, IP fallback or stale-target injection
                     kind = message["type"]
+                    if kind == "webrtc_offer":
+                        if (VIDEO_ENGINE != "webrtc" or pc is not None or
+                                set(message) != {"type", "session_id", "sdp"} or
+                                not isinstance(message["sdp"], str) or
+                                not 100 <= len(message["sdp"]) <= 24000 or
+                                "m=video " not in message["sdp"] or
+                                "a=recvonly" not in message["sdp"]):
+                            break
+                        try:
+                            from aiortc import (RTCPeerConnection, RTCConfiguration,
+                                                RTCSessionDescription, RTCRtpSender)
+                            pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+                            sender = pc.addTrack(stream.webrtc_track)
+                            transceiver = next(t for t in pc.getTransceivers() if t.sender is sender)
+                            h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
+                                    if c.mimeType.lower() == "video/h264"]
+                            if not h264:
+                                raise RuntimeError("服务器 WebRTC 不支持 H.264")
+                            transceiver.setCodecPreferences(h264)
+                            @pc.on("connectionstatechange")
+                            async def on_peer_state():
+                                if pc.connectionState in ("failed", "closed"):
+                                    requested_stop.set()
+                                    await asyncio.to_thread(stream.stop)
+                            await asyncio.wait_for(pc.setRemoteDescription(
+                                RTCSessionDescription(sdp=message["sdp"], type="offer")), timeout=12)
+                            answer = await asyncio.wait_for(pc.createAnswer(), timeout=12)
+                            await asyncio.wait_for(pc.setLocalDescription(answer), timeout=15)
+                            await asyncio.wait_for(websocket.send_json({
+                                "type": "webrtc_answer", "session_id": stream.session_id,
+                                "sdp": pc.localDescription.sdp
+                            }), LIVE_WS_SEND_TIMEOUT)
+                            stream.start()
+                            last_browser_ack = time.monotonic()
+                        except Exception:
+                            await websocket.send_json({"type": "error", "session_id": stream.session_id,
+                                "message": "WebRTC SDP/ICE 协商失败，请检查浏览器 H.264 支持及 NAS UDP 网络"})
+                            break
+                        continue
                     if kind == "heartbeat":
                         # Diagnostic receipt proof for THIS session, not a
                         # phone keepalive. Malformed/stale heartbeat fails closed.
@@ -835,6 +895,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
                 if requested_stop.is_set():
                     return
+                if VIDEO_ENGINE == "webrtc" and stream.thread is None and time.monotonic() - stream._born > 25:
+                    requested_stop.set()
+                    await asyncio.to_thread(stream.stop)
+                    return
                 if time.monotonic() - last_browser_ack >= LIVE_HEARTBEAT_TIMEOUT:
                     requested_stop.set()
                     await asyncio.to_thread(stream.stop)
@@ -862,7 +926,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "diagnostic", "session_id": stream.session_id,
                     **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
-                    "ws_video_chunks": ws_video_chunks
+                    "ws_video_chunks": ws_video_chunks,
+                    "webrtc_sent_frames": (stream.webrtc_track.sent_frames
+                        if stream.webrtc_track is not None else None),
+                    "webrtc_dropped_frames": (stream.webrtc_track.dropped_frames
+                        if stream.webrtc_track is not None else None)
                 }), LIVE_WS_SEND_TIMEOUT)
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
@@ -888,7 +956,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if kind == "init":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
-                    "player": "mse", "format": "fmp4",
+                    "player": VIDEO_ENGINE,
+                    **({"format": "fmp4"} if VIDEO_ENGINE == "mse" else {}),
                     "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
@@ -928,6 +997,17 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             await asyncio.to_thread(stream.stop)
+            if pc is not None:
+                try:
+                    await asyncio.wait_for(pc.close(), 10)
+                except (RuntimeError, OSError, asyncio.TimeoutError):
+                    pass
+            if stream.thread is None:
+                # SDP failure never launched ADB or allocated a worker resource.
+                stream.cleanup_complete = True
+                stream.finished.set()
+                if stream.webrtc_track is not None:
+                    stream.webrtc_track.stop()
             if receiver:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
