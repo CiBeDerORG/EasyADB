@@ -63,8 +63,14 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .live-input .text-row input{min-width:0;flex:1}.live-input .text-row button{white-space:nowrap}
 .screen img[hidden],.screen .placeholder[hidden]{display:none}.placeholder{text-align:center;color:#9babc2;font-size:13px;line-height:1.8;padding:25px}
 details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cursor:pointer;font-weight:650}
-.multi-picker{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-.multi-choice{display:flex;align-items:center;gap:7px;background:#101a2a;border:1px solid #40536f;border-radius:8px;padding:7px 10px;margin:0;cursor:pointer}
+.multi-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px;margin-top:12px}
+.multi-choice{display:grid;gap:8px;background:#101a2a;border:1px solid #40536f;border-radius:9px;padding:12px;margin:0}
+.multi-choice-label{display:flex;align-items:center;gap:9px;margin:0;cursor:pointer}
+.multi-choice .multi-quality,.multi-choice .multi-custom select{max-width:100%;width:100%;height:36px;background:#172233;color:#fff;border:1px solid #50627d;border-radius:7px}
+.multi-custom{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.multi-custom label{min-width:0;margin:0}
+.multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:#adc3df;background:#172233;border-radius:7px;padding:8px}
+.multi-log{margin:10px 0 0}.multi-log .multi-check-log{max-height:260px;overflow:auto;margin:8px 0}
+#legacySolo{display:none!important}
 .multi-choice input{width:17px;height:17px;flex:none}.multi-unavailable{opacity:.55}
 .multi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;margin-top:12px}
 .multi-card{border:1px solid #40536f;border-radius:11px;background:#101a2a;padding:12px;min-width:0}
@@ -94,9 +100,18 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
  <section class="panel">
   <div class="heading"><div><h2 id="previewTitle">设备截图</h2><div class="muted" id="previewInfo">从左侧列表选择设备</div></div>
-   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button class="secondary" id="m2Preflight" type="button" disabled>M2 能力预检</button><button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验 · 基础</button><button class="secondary" id="m2VideoNative" type="button" disabled>视频实验 · 原生</button><button id="liveStart" type="button" disabled>开始实时画面</button><button class="secondary" id="liveTouchToggle" type="button" disabled>启用远程控制</button><button class="danger" id="liveStop" type="button" disabled>停止实时画面</button><button id="shotButton" disabled>刷新截图</button></div>
+   <div class="buttons" style="margin:0"><button class="secondary" id="connect" disabled>连接设备</button><button id="shotButton" disabled>刷新截图</button></div>
   </div>
   <div class="screen"><div class="placeholder" id="placeholder">选择设备并建立 ADB 连接后，<br>点击「刷新截图」即可查看手机画面。</div><img id="shot" hidden alt="所选 Android 设备当前截图"><video id="liveVideo" muted autoplay playsinline hidden aria-label="所选 Android 设备实时画面"></video></div>
+  <p class="hint">这里只保留设备连接与静态截图。投屏画质、能力预检、视频实验、实时控制和运行诊断均在下方各设备独立卡片中。</p>
+  <!-- Hidden backward-compatibility hooks; not shown in the active UI. -->
+  <div id="legacySolo" hidden>
+  <button class="secondary" id="m2Preflight" type="button" disabled>能力预检</button>
+  <button class="secondary" id="m2VideoBaseline" type="button" disabled>视频实验基础</button>
+  <button class="secondary" id="m2VideoNative" type="button" disabled>视频实验原生</button>
+  <button id="liveStart" type="button" disabled>开始实时画面</button>
+  <button class="secondary" id="liveTouchToggle" type="button" disabled>启用远程控制</button>
+  <button class="danger" id="liveStop" type="button" disabled>停止实时画面</button>
   <div id="m2PreflightInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2VideoInfo" class="status" role="status" aria-live="polite" hidden></div>
   <div id="m2LiveInfo" class="status" role="status" aria-live="polite" hidden></div>
@@ -137,23 +152,17 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    </div>
    <p class="hint">以上是向手机编码器请求的上限，不保证实际编码分辨率、实时帧率或网络吞吐恒定达到该数值。</p>
   </div>
-  <p class="hint">实时画质只在本轮手动开始时生效；调整档位不会中途热切换，也不会修改已有视频实验档位。 「视频实验」仅在点击后运行一次限时编码链路检测（基础：最大边 1600 / 8 Mbps / 30 FPS；原生：不限制分辨率 / 16 Mbps / 30 FPS），读取视频包数量及编码尺寸，不保存画面、不启动常驻投屏。实时画面使用 MSE + H.264 分片 MP4，兼容支持该格式的 HTTP 浏览器；不使用 WebCodecs。触摸控制必须单独点击「启用鼠标控制」，默认仅观看；当前支持单指点击/拖动、明确提交的 ASCII 文字和固定 Android 导航键；不支持中文输入法、音频或录制。</p>
+  <p class="hint">实时画面继续使用 MSE + H.264 分片 MP4，不使用 WebCodecs。</p>
+  </div>
  </section>
 </div>
 <section class="panel" style="margin-top:17px" id="multiPanel" aria-label="同一网页多设备同屏">
- <div class="heading"><div><h2>多设备同屏（同一个网页客户端）</h2><p class="hint">逐台手动连接后，勾选 2～4 台设备并明确点击开始；每个画面独立播放、独立控制，默认只观看。不支持多浏览器接管，也不自动重连。</p></div>
+ <div class="heading"><div><h2>设备投屏 / 多设备同屏（同一个网页客户端）</h2><p class="hint">逐台手动连接后，任意勾选 1～4 台，点击开始即只启动所选设备；每台画质、诊断、播放和远控独立，默认只观看。不支持多浏览器接管，也不自动重连。</p></div>
   <div class="buttons" style="margin:0"><button type="button" id="multiStart" disabled>开始同屏</button><button type="button" class="danger" id="multiStop" disabled>停止全部同屏</button></div>
  </div>
- <label for="multiProfile">同屏画质（独立于上方单设备画质，默认省流以降低多路负载）</label>
- <select id="multiProfile" style="background:#101a2a;color:#fff;padding:9px;border-radius:8px;border:1px solid #50627d">
-  <option value="economy" selected>省流（推荐）· 每路最大边 960 / 3 Mbps / 24 FPS</option>
-  <option value="baseline">基础 · 每路最大边 1600 / 8 Mbps / 30 FPS</option>
-  <option value="native">原生 · 每路不限制分辨率 / 16 Mbps / 30 FPS（高负载）</option>
-  <option value="inherit">使用上方单设备设置（包括自定义）</option>
- </select>
- <p class="hint">同屏仅在手动开始时读取画质，不会中途热切换；高画质同时运行多路可能超出 NAS、手机或浏览器处理能力。</p>
+ <p class="hint">每台设备独立配置省流 / 基础 / 原生 / 自定义画质；每台可单独执行能力预检或视频实验。只启动勾选的设备，不必全部选择。</p>
  <div id="multiPicker" class="multi-picker"></div>
- <div id="multiInfo" class="status" role="status" aria-live="polite">先加载设备并逐台手动连接，再选择至少两台设备。</div>
+ <div id="multiInfo" class="status" role="status" aria-live="polite">先加载设备并逐台手动连接，勾选至少一台即可开始，无须全选。</div>
  <div id="multiGrid" class="multi-grid"></div>
 </section>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -325,7 +334,6 @@ function render(){
  $('liveTextSend').disabled=!inputReady||!$('liveTextInput').value.length;
  for(const button of document.querySelectorAll('#liveNavButtons button[data-nav]'))button.disabled=!inputReady;
  $('liveProfile').disabled=loading||!!liveWS||(multiView&&(multiView.hasActive()||multiView.opening));
- $('multiProfile').disabled=loading||!!liveWS||(multiView&&(multiView.hasActive()||multiView.opening));
  const isCustom=$('liveProfile').value==='custom';
  $('liveCustomQuality').hidden=!isCustom;
  for(const id of ['liveQualitySize','liveQualityBitrate','liveQualityFps'])$(id).disabled=loading||!!liveWS||(multiView&&multiView.hasActive())||!isCustom;
@@ -968,18 +976,10 @@ multiView=EasyADBMulti.create({
  stopButton:$('multiStop'),info:$('multiInfo'),
  getDevices:()=>devices,getToken:()=>$('token').value.trim(),
  getSoloActive:()=>Boolean(liveWS),
- getQuality:()=>{
-  const choice=$('multiProfile').value;
-  if(choice!=='inherit')return {profile:choice};
-  return {
-   profile:$('liveProfile').value,
-   ...($('liveProfile').value==='custom'?{quality:{
-    max_size:Number($('liveQualitySize').value),
-    video_bit_rate:Number($('liveQualityBitrate').value),
-    max_fps:Number($('liveQualityFps').value)
-   }}:{})
-  };
- },
+ runPreflight:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/preflight',{method:'POST'})).json(),
+ runVideoProbe:async(id,profile)=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{
+  method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile})
+ })).json(),
  onChange:()=>render()
 });
 render();

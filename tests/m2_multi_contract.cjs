@@ -1,11 +1,10 @@
-/* M2-06 regression: deliberately no actual video 'playing' event. Control must
- * become available as soon as scrcpy init/control is ready, independently on
- * each card. Startup is staggered on completed server init, never a timer.
+/* M2-06 individual quality, diagnostics and 1–4 selected-device launch.
+ * Mock-only: never opens network, ADB, MediaSource or GitHub runner.
  */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 class El{
- constructor(tag){this.tagName=tag;this.children=[];this.events={};this.style={};this.classList={add(){}};this.value='';this.disabled=false;this.textContent='';}
+ constructor(tag){this.tagName=tag;this.children=[];this.events={};this.style={};this.classList={add(){}};this.value='';this.disabled=false;this.textContent='';this.checked=false;this.open=false;}
  addEventListener(name,fn){(this.events[name]??=[]).push(fn);}
  append(...items){this.children.push(...items);}
  replaceChildren(...items){this.children=[...items];}
@@ -25,110 +24,137 @@ class WS{
 let clock=0;
 const root={
  document:{createElement:tag=>new El(tag)},WebSocket:WS,
- location:{protocol:'http:',host:'nas.local'},
+ location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
  EasyADBPlayers:{create:(_type,_video,cbs)=>({
    initialize(){cbs.onState('ready');},append(){},
-   diagnostics(){return {queueBytes:0};},resume(){},destroy(){}
+   diagnostics(){return {queueBytes:0,sourceState:'open',sourceRanges:1,
+    rangeEnd:3,currentTime:2,queueChunks:0,appendCalls:4,completedUpdates:4,videoError:null};},
+   resume(){},destroy(){}
  })},
  EasyADBTouch:{create:()=>({enable(){},disable(){},destroy(){}})},
- EasyADBTraffic:{Meter:class{record(){} sample(){return{mbps:0,totalBytes:0};}},size:()=> '0 MiB'},
- EasyADBMetrics:{QualityMeter:class{recordBytes(){} sample(){return{};}},format:()=>'',fmt:()=> '—',advice:()=> ''}
-};
-root.window=root;
+ EasyADBTraffic:{Meter:class{
+  totalBytes=0;record(n){this.totalBytes+=n;}sample(){return{mbps:1,totalBytes:this.totalBytes};}},
+  size:x=>String(x)+'B'},
+ EasyADBMetrics:{QualityMeter:class{
+  samples=[];recordBytes(){} sample(){this.samples.push({});return{};}
+  summary(profile,device){return{profile,device,avgFps:24,avgReceiveMbps:1,avgCpuPct:3,avgRssMib:8,totalBytes:128};}},
+  format:()=>'',fmt:(v)=>Number.isFinite(v)?String(v):'—',advice:()=> ''}
+};root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
-const html=fs.readFileSync('web/index.html','utf8');
-assert.match(html,/<select id="multiProfile"[\s\S]*?<option value="economy" selected>/);
+const page=fs.readFileSync('web/index.html','utf8');
+assert.match(page,/任意勾选 1～4 台/);
+assert.match(page,/id="legacySolo" hidden/);
+assert.match(page,/runPreflight:async id/);
+assert.match(page,/runVideoProbe:async\(id,profile\)/);
+assert.doesNotMatch(page,/id="multiProfile"/,'no global multiview quality selector');
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
 let solo=false;
+const calls=[];
 const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
- getDevices:()=>devices,getToken:()=> 'token-test',getQuality:()=>({profile:'economy'}),
- getSoloActive:()=>solo,onChange(){}});
-function choose(n){for(let i=0;i<n;i++){const check=picker.children[i].children[0];check.checked=true;check.fire('change');}}
+ getDevices:()=>devices,getToken:()=> 'token-test',
+ getSoloActive:()=>solo,onChange(){},
+ runPreflight:async id=>{calls.push(['preflight',id]);return{selected_serial:'checked-'+id,model:'Test',android_sdk:35,cpu_abi:'arm64',display_size:'1080x2400'};},
+ runVideoProbe:async(id,p)=>{calls.push(['probe',id,p]);return{codec:'H.264',encoded_width:720,
+  encoded_height:1280,media_packets:3,key_frames:1,sample_bytes:1024,elapsed_ms:150};}
+});
+const checkbox=i=>picker.children[i].children[0].children[0];
+const quality=i=>picker.children[i].children[1];
+function select(i){const el=checkbox(i);el.checked=true;el.fire('change');}
 function init(ws,sid){
  ws.emit('init',{session_id:sid,width:720,height:1280,
   mime:'video/mp4; codecs="avc1.640028"',format:'fmp4',control_available:true,
   requested:{max_size:960,video_bit_rate:3000000,max_fps:24}});
 }
 assert.equal(root.EasyADBMulti.MAX_DEVICES,4);
-assert.equal(sockets.length,0,'no implicit device connection');
-choose(2);
-assert.equal(startButton.disabled,false);
-solo=true;multi.updatePicker();assert.equal(startButton.disabled,true,'solo prevents multiview');
-solo=false;multi.updatePicker();startButton.fire('click');
-assert.equal(sockets.length,1,'stagger concurrent scrcpy/FFmpeg starts');
-const a=sockets[0];a.open();
-assert.equal(JSON.parse(a.sent[0]).profile,'economy');
-assert.equal(sockets.length,1,'await first completed init before opening next');
-a.emit('starting',{session_id:'session-a'});
-assert.equal(sockets.length,1,'starting alone must not launch another encoder');
-init(a,'session-a');
-assert.equal(sockets.length,2,'completed first init launches second device');
-const b=sockets[1];b.open();b.emit('starting',{session_id:'session-b'});
-assert.notEqual(a.url,b.url);
-assert.equal(JSON.parse(a.sent[0]).selected_serial,devices[0].selected_serial);
-assert.equal(JSON.parse(b.sent[0]).selected_serial,devices[1].selected_serial);
-init(b,'session-b');
-const ca=multi.cards.get('id-1'),cb=multi.cards.get('id-2');
-assert.equal(ca.state,'ready');assert.equal(cb.state,'ready');
-assert.equal(ca.toggle.disabled,false);
-assert.equal(cb.toggle.disabled,false,'card B independent even without video playing');
-a.emit('diagnostic',{session_id:'session-a',proc_cpu_pct:5,proc_rss_mib:20});
-assert.equal(JSON.parse(a.sent.at(-1)).type,'heartbeat');
-assert.equal(JSON.parse(a.sent.at(-1)).session_id,'session-a');
-assert.equal(b.sent.length,1,'diagnostic receipt never pings card B');
-ca.toggle.fire('click');
-assert.equal(JSON.parse(a.sent.at(-1)).session_id,'session-a');
-assert.equal(b.sent.length,1,'card A control never leaks to card B');
-a.emit('control_enabled',{session_id:'session-a'});
-assert.equal(ca.enabled,true);assert.equal(cb.enabled,false);
-cb.toggle.fire('click');
-assert.equal(JSON.parse(b.sent.at(-1)).type,'control_enable');
-assert.equal(cb.pending,true);
-b.emit('touch_error',{session_id:'session-b',message:'暂未就绪'});
-assert.equal(cb.pending,false,'rejected control must reset pending latch');
-assert.equal(cb.toggle.disabled,false,'retry must be available');
-cb.toggle.fire('click');b.emit('control_enabled',{session_id:'session-b'});
-assert.equal(cb.enabled,true);
-ca.input.value='Hello';ca.box.children[5].fire('submit');
-assert.equal(JSON.parse(a.sent.at(-1)).text,'Hello');
-assert.equal(JSON.parse(a.sent.at(-1)).session_id,'session-a');
-assert.equal(b.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
-a.emit('input_accepted',{session_id:'session-a',kind:'input_text'});
-cb.nav[0].fire('click');
-assert.equal(JSON.parse(b.sent.at(-1)).key,'back');
-assert.equal(JSON.parse(b.sent.at(-1)).session_id,'session-b');
-b.emit('input_accepted',{session_id:'session-b',kind:'nav_key'});
+assert.equal(sockets.length,0);
+assert.equal(startButton.disabled,true,'empty selection cannot start');
+assert.equal(checkbox(0).disabled,false);
+select(0);
+assert.equal(startButton.disabled,false,'ONE selected device is enough');
+assert.match(startButton.textContent,/已选 1/);
+assert.equal(checkbox(1).checked,false);
+assert.equal(quality(0).value,'economy');
+assert.equal(quality(1).value,'economy');
+// Editing one device never overwrites another.
+quality(0).value='custom';quality(0).fire('change');
+assert.equal(multi.getChoice('id-1').profile,'custom');
+assert.equal(multi.getChoice('id-1').video_bit_rate,4000000,'custom default allowlisted');
+assert.equal(multi.getChoice('id-2').profile,'economy');
+let custom=picker.children[0].children[2];
+const bitrate=custom.children[1].children[0];
+bitrate.value='12000000';bitrate.fire('change');
+assert.equal(multi.getChoice('id-1').video_bit_rate,12000000);
+// one selected must create ONLY its own WS with exact per-device quality.
+startButton.fire('click');assert.equal(sockets.length,1);
+const a=sockets[0];a.open();const pa=JSON.parse(a.sent[0]);
+assert.equal(pa.profile,'custom');assert.equal(pa.quality.video_bit_rate,12000000);
+assert.equal(pa.selected_serial,devices[0].selected_serial);
+assert.equal(multi.cards.size,1);
+a.emit('starting',{session_id:'only-one'});
+assert.equal(sockets.length,1);
+init(a,'only-one');
+const ca=multi.cards.get('id-1');
+assert.equal(ca.toggle.disabled,false,'control independent of video playing');
+assert.equal(ca.quality.profile,'custom');
+assert.match(ca.box.children[1].textContent,/自定义/);
+a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
+ mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
+assert.match(ca.diagnostic.textContent,/手机编码包 9/);
+assert.match(ca.diagnostic.textContent,/完整分片 3/);
+assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
+ca.toggle.fire('click');a.emit('control_enabled',{session_id:'only-one'});
+assert.equal(ca.enabled,true);
 ca.stop.fire('click');assert.equal(a.sent.at(-1),'stop');
-a.emit('ended',{session_id:'session-a',cleanup_complete:true});
-assert.equal(multi.cards.has('id-1'),false);
-assert.equal(multi.cards.has('id-2'),true);
-multi.stopAll();assert.equal(b.sent.at(-1),'stop');
-b.emit('ended',{session_id:'session-b',cleanup_complete:true});
+a.emit('ended',{session_id:'only-one',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
-assert.equal(sockets.length,2,'stopping never auto reconnects');
-choose(4);
-assert.equal(picker.children[4].children[0].disabled,true,'fifth choice unavailable');
-startButton.fire('click');
-const four=[];
-for(let i=0;i<4;i++){
- assert.equal(sockets.length,3+i);
- const ws=sockets.at(-1);four.push(ws);ws.open();
- ws.emit('starting',{session_id:'four-'+i});
- assert.equal(sockets.length,3+i,'starting is not an init');
- init(ws,'four-'+i);
-}
-assert.equal(multi.cards.size,4);
-four[0].emit('error',{session_id:'four-0',message:'encoder failed'});
-assert.equal(multi.cards.size,3,'one-card failure must not stop others');
-assert.equal(multi.cards.get('id-2').closed,false);
+assert.match(ca.historyEl.textContent,/最近画质/);
+// selection is available again, no automatic start and no all-selected rule.
+assert.equal(sockets.length,1);
+quality(1).value='baseline';quality(1).fire('change');
+select(0);select(1);
+assert.equal(startButton.disabled,false);
+startButton.fire('click');assert.equal(sockets.length,2,'sequential first launch');
+const b=sockets.at(-1);b.open();assert.equal(JSON.parse(b.sent[0]).profile,'custom');
+b.emit('starting',{session_id:'second-a'});
+assert.equal(sockets.length,2,'starting alone does not start next');
+init(b,'second-a');
+assert.equal(sockets.length,3);
+const c=sockets.at(-1);c.open();assert.equal(JSON.parse(c.sent[0]).profile,'baseline');
+c.emit('starting',{session_id:'second-b'});init(c,'second-b');
+const cb=multi.cards.get('id-1'),cc=multi.cards.get('id-2');
+assert.equal(cc.toggle.disabled,false);
+cb.toggle.fire('click');b.emit('control_enabled',{session_id:'second-a'});
+cc.toggle.fire('click');c.emit('touch_error',{session_id:'second-b',message:'not ready'});
+assert.equal(cc.pending,false);assert.equal(cc.toggle.disabled,false);
+cc.toggle.fire('click');c.emit('control_enabled',{session_id:'second-b'});
+assert.equal(cc.enabled,true);
+cb.input.value='Hello';cb.box.children[6].fire('submit');
+assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
+assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
+c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
+assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
+// preflight and probe on a chosen device are independent and explicit.
 multi.closeAll();assert.equal(multi.cards.size,0);
-assert.equal(sockets.length,6,'closed cards never restart');
-// Cancelling an in-flight batch must not open the queued second phone.
-choose(2);startButton.fire('click');assert.equal(sockets.length,7);
-const pending=sockets.at(-1);pending.open();
-multi.stopAll();pending.close();
-assert.equal(sockets.length,7,'stop-all cancels not-yet-opened cards');
-console.log('M2 multi ready/control/independent-session/staggered startup: OK');
+const preButton=picker.children[1].children[2].children[0];
+const probeButton=picker.children[1].children[2].children[1];
+preButton.fire('click');
+Promise.resolve().then(()=>{
+ assert.equal(calls[0][0],'preflight');
+ assert.equal(calls[0][1],'id-2');
+ assert.match(multi.probeResults.get('id-2'),/M2 能力预检/);
+ probeButton.fire('click');
+ return Promise.resolve();
+}).then(()=>{
+ assert.equal(calls[1][0],'probe');
+ assert.equal(calls[1][1],'id-2');
+ assert.match(multi.probeResults.get('id-2'),/视频实验/);
+ assert.match(multi.probeResults.get('id-2'),/M2 能力预检/,'later probe must retain prior device-specific log');
+ assert.equal(multi.probeResults.has('id-1'),false,'logs never bleed into another device');
+ for(let i=0;i<4;i++)select(i);
+ assert.equal(checkbox(4).disabled,true);
+ assert.equal(startButton.disabled,false);
+ console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
+}).catch(error=>{console.error(error);process.exitCode=1;});

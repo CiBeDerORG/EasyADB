@@ -156,3 +156,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="multiPanel"' in html and 'id="multiGrid"' in html
         assert 'src="/m2-multi.js"' in html and 'src="/m2-metrics.js"' in html
         assert "multiView.closeAll()" in html
+        # Device screenshot has only connection and static capture controls.
+        # Live quality, preflight and media probe are now per-device.
+        assert 'id="legacySolo" hidden' in html
+        assert 'id="multiProfile"' not in html
+        assert "runPreflight:async id" in html
+        assert "runVideoProbe:async(id,profile)" in html
+        assert "任意勾选 1～4 台" in html
