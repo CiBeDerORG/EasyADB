@@ -183,6 +183,7 @@ class LiveVideo:
         self.stop_event = threading.Event()
         self.finished = threading.Event()  # worker terminated, not necessarily fully cleaned
         self.cleanup_complete = False  # only true after all owned resources are released
+        self._close_failed = False
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
         self.video_sock = None
@@ -277,7 +278,7 @@ class LiveVideo:
                     try:
                         control.close()
                     except OSError:
-                        pass
+                        self._close_failed = True
         if sock:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -286,7 +287,7 @@ class LiveVideo:
             try:
                 sock.close()
             except OSError:
-                pass
+                self._close_failed = True
         for proc in (mux, adb_proc):
             if proc is not None and proc.poll() is None:
                 try:
@@ -600,7 +601,7 @@ class LiveVideo:
                         _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
                     except VideoProbeError:
                         cleanup_ok = False
-                cleaned = cleanup_ok
+                cleaned = cleanup_ok and not self._close_failed
             finally:
                 self.cleanup_complete = cleaned
                 if failure:
