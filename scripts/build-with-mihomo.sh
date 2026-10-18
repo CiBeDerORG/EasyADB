@@ -3,7 +3,7 @@ set -eu
 
 # FNOS / Linux: build and run EasyADB without host networking.
 # Both the dedicated BuildKit container and EasyADB runtime join proxy-net.
-# Always use the Docker network alias, never discover or embed Mihomo's IP.
+# BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
 NETWORK=proxy-net
 MIHOMO_CONTAINER="${MIHOMO_CONTAINER:-mihomo}"
 BUILDER=easyadb-proxy
@@ -35,7 +35,7 @@ fi
 
 # Bootstrap from proxy-net without restarting/modifying FNOS Docker daemon.
 # The one-time helper uses an HTTP client on the host to download via the
-# Mihomo bridge IP and docker load; this main build continues to use DNS name.
+# Mihomo bridge IP and docker load; BuildKit RUN stages use the mihomo DNS name.
 if ! docker image inspect "$BUILDKIT_IMAGE" >/dev/null 2>&1; then
   echo "BuildKit image missing; bootstrapping through Mihomo..."
   sh scripts/bootstrap-buildkit-via-mihomo.sh
