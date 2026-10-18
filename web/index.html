@@ -107,7 +107,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
   <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。优先内网 IP，失败后回退组网 IP；留空仅使用组网 IP。</p>
   <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
-  <div class="modal-actions"><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
+  <div class="modal-actions"><button class="danger" id="deleteGroup" type="button" style="margin-right:auto" hidden>删除分组</button><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
  </form></div>
 </dialog>
 </main>
@@ -226,6 +226,7 @@ function openGroup(name=null){
  $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
  $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
  $('saveGroup').textContent=g?'保存修改':'保存分组';
+ $('deleteGroup').hidden=!g;
  if(g){$('groupName').value=g.name;$('groupPrefix').value=g.ip_prefix||'';}
  $('groupDialog').showModal();$('groupName').focus();
 }
@@ -249,6 +250,20 @@ $('load').addEventListener('click',()=>load());
 $('token').addEventListener('input',()=>{loaded=false;devices=[];groups=[];selected=null;clearShot();render();});
 $('newDevice').addEventListener('click',()=>openModal());
 $('newGroup').addEventListener('click',()=>openGroup());
+$('deleteGroup').addEventListener('click',async()=>{
+ if(loading||!editingGroup)return;
+ const name=editingGroup;
+ const count=devices.filter(d=>d.group_name===name).length;
+ const detail=count?'列表中的 '+count+' 台设备会移入「未分组」。':'这是一个空分组。';
+ if(!confirm('确认删除分组「'+name+'」？\n'+detail+'\n设备记录和 ADB 授权会保留，原分组内网 IP 映射会取消。'))return;
+ loading=true;render();
+ try{
+  const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
+  $('groupDialog').close();groupOpen.delete('named:'+name);
+  clearShot();await load(true);
+  message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
+ }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+});
 $('closeGroup').addEventListener('click',closeGroup);
 $('cancelGroup').addEventListener('click',closeGroup);
 $('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
