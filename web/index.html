@@ -256,7 +256,7 @@ $('shotButton').addEventListener('click',async()=>{
 $('pair').addEventListener('click',async()=>{
  if(loading)return;loading=true;render();message('正在配对…');
  try{
-  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
+  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim()||$('ip').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
   $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
  }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
 });
