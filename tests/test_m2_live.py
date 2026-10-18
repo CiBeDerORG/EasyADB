@@ -119,6 +119,93 @@ def test_live_registry_reserves_exclusively_and_stops_only_the_correct_session()
     assert two.stopped and two.joined
 
 
+def test_finished_old_worker_may_be_retired_but_active_worker_stays_exclusive():
+    registry = LiveRegistry()
+    old = LiveVideo("selected-only:5555", "baseline")
+    new = LiveVideo("selected-only:5555", "baseline")
+    assert old.session_id != new.session_id
+    assert registry.reserve("device-A", old)
+    assert not registry.reserve("device-A", new)
+    old.finished.set()
+    assert registry.reserve("device-A", new)
+    registry.release("device-A", old)
+    assert registry.sessions["device-A"] is new
+    registry.release("device-A", new)
+
+
+def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    mod.store = DeviceStore(str(tmp_path / "sessions.sqlite3"))
+    mod.manager = DeviceManager(mod.store, mod.adb)
+    mod.live_registry = LiveRegistry()
+    monkeypatch.setattr(mod, "is_connected", lambda serial: True)
+    created = []
+
+    class FakeStream:
+        def __init__(self, serial, profile):
+            self.session_id = f"test-session-{len(created)}"
+            self.serial, self.profile = serial, profile
+            self.finished = threading.Event()
+            self.events = queue.Queue()
+            self.started = False
+            self.joined = False
+            created.append(self)
+
+        def start(self): self.started = True
+        def stop(self): self.finished.set()
+        def join(self, timeout=20):
+            self.joined = True
+            self.finished.wait(timeout)
+        def diagnostics(self): return {"stage": "等待媒体流"}
+
+    monkeypatch.setattr(mod, "LiveVideo", FakeStream)
+    with TestClient(mod.app) as client:
+        d = client.post("/api/devices", headers=AUTH, json={
+            "name": "Phone", "ip": "10.10.30.206", "port": 40455,
+        }).json()
+        mod.manager._set_state(d["id"], "connected",
+                               serial=d["selected_serial"], route="mesh")
+        path = f"/api/devices/{d['id']}/m2/live"
+        origin = {"origin": "http://testserver"}
+        auth = {"token": "local-test-token-123", "player": "mse",
+                "profile": "baseline", "selected_serial": d["selected_serial"]}
+        with client.websocket_connect(path, headers=origin) as ws:
+            ws.send_json(auth)
+            starting = ws.receive_json()
+            assert starting["type"] == "starting"
+            assert starting["session_id"] == created[0].session_id
+            assert created[0].started
+            # A second browser cannot silently replace the active session.
+            with client.websocket_connect(path, headers=origin) as other:
+                other.send_json(auth)
+                assert "已有实时投屏" in other.receive_json()["message"]
+            ws.send_text("stop")
+            lifecycle = []
+            for _ in range(8):
+                message = ws.receive_json()
+                lifecycle.append(message["type"])
+                if message["type"] == "ended":
+                    assert message["cleanup_complete"] is True
+                    assert message["reason"] == "manual"
+                    assert message["session_id"] == starting["session_id"]
+                    break
+            assert "stopping" in lifecycle and lifecycle[-1] == "ended"
+            assert created[0].joined
+            assert d["id"] not in mod.live_registry.sessions
+        # Restart becomes possible only after the first worker was released.
+        with client.websocket_connect(path, headers=origin) as again:
+            again.send_json(auth)
+            assert again.receive_json()["type"] == "starting"
+            again.send_text("stop")
+            for _ in range(8):
+                if again.receive_json()["type"] == "ended":
+                    break
+            else:
+                pytest.fail("second session did not acknowledge cleanup")
+        assert created[1].joined
+
+
 def test_socket_read_is_stoppable_without_a_background_reconnect():
     local, remote = socket.socketpair()
     stop = threading.Event()
@@ -140,6 +227,10 @@ def test_http_nas_player_uses_mse_adapter_and_reserves_webcodecs_interface():
     assert "EasyADBPlayers.create(playerMode,video" in html
     assert 'id="m2LiveDiag"' in html
     assert 'id="m2LiveTraffic"' in html
+    assert 'id="m2SessionInfo"' in html
+    assert "liveSessionState('stopping')" in html
+    assert "msg.type==='ended'" in html
+    assert "msg.cleanup_complete!==true" in html
     assert '<script src="/m2-traffic.js"></script>' in html
     assert "liveTraffic.record(e.data.byteLength)" in html
     assert "if(ws&&liveTraffic)updateLiveTraffic(true)" in html
