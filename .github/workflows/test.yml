@@ -35,6 +35,7 @@ jobs:
           node --check web/display-lab.js
           node tests/m2_quality_metrics.cjs
           node tests/m2_multi_contract.cjs
+          node tests/m2_batch_connect.cjs
           node tests/m2_player_contract.cjs
           node tests/m2_webrtc_contract.cjs
           node tests/m2_traffic_meter.cjs
