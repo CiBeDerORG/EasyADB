@@ -1,7 +1,10 @@
 #!/bin/sh
 set -eu
 
-# Update only the EasyADB M2 branch, before doing any Docker work.
+# Update a known EasyADB development branch before doing Docker work.
+# Keep the M2 branch as the default, but NEVER silently switch an explicitly
+# checked-out display-lab experiment back to old M2 during normal builds.
+# EASYADB_SOURCE_BRANCH is an optional, strict allowlist override.
 # Keep Git under the original login user: root may not have their GitHub SSH key.
 TARGET_BRANCH=feat/m2-web-control
 
@@ -25,6 +28,24 @@ if ! git_as_owner rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+# Current checkout is read as the original login user (same owner as fetch).
+# For unattended builds preserve the explicit display-lab checkout by default.
+CURRENT="$(git_as_owner symbolic-ref --quiet --short HEAD || true)"
+SOURCE="${EASYADB_SOURCE_BRANCH:-$CURRENT}"
+case "$SOURCE" in
+  feat/display-mode-lab)
+    TARGET_BRANCH=feat/display-mode-lab ;;
+  feat/m2-web-control|"")
+    TARGET_BRANCH=feat/m2-web-control ;;
+  *)
+    if [ -n "${EASYADB_SOURCE_BRANCH:-}" ]; then
+      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2 and display-lab branches are allowed." >&2
+      exit 2
+    fi
+    # An unrelated checkout retains the original M2 default on an ordinary build.
+    TARGET_BRANCH=feat/m2-web-control ;;
+esac
+
 # Ignore .env, data and .cache via .gitignore. Never discard user changes.
 if [ -n "$(git_as_owner status --porcelain --untracked-files=normal)" ]; then
   echo 'ERROR: local Git changes or untracked files exist; refusing to switch or pull.' >&2
@@ -40,7 +61,6 @@ if ! git_as_owner show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"
   exit 1
 fi
 
-CURRENT="$(git_as_owner symbolic-ref --quiet --short HEAD || true)"
 if [ "$CURRENT" != "$TARGET_BRANCH" ]; then
   if git_as_owner show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
     git_as_owner switch "$TARGET_BRANCH"
