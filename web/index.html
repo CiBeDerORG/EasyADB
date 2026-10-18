@@ -477,7 +477,7 @@ function liveDiagnostic(diag){
   '｜ADB 检查：'+(liveAdbCheckMs===null?'—':liveAdbCheckMs+'ms')+
   '｜会话：'+elapsed(diag.elapsed_ms)+
   '｜手机编码包：'+diag.phone_packets+' / 距今 '+elapsed(diag.phone_idle_ms)+
-  '｜FNOS MP4 输出：'+diag.mux_chunks+' / 距今 '+elapsed(diag.mux_idle_ms)+
+  '｜FNOS MP4 读取：'+diag.mux_chunks+' / 完整媒体分片：'+(diag.media_fragments??'—')+' / 距今 '+elapsed(diag.mux_idle_ms)+
   '｜浏览器收包：'+elapsed(browserAge)+
   '｜实际渲染：'+(liveVideoFrameAt?liveVideoFrames+' 帧 / 距今 '+elapsed(frameAge):'尚无渲染帧或浏览器不支持计数')+
   '｜video缓冲余量：'+buffer+
