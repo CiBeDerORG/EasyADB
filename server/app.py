@@ -394,6 +394,30 @@ def m2_video_probe(device_id: str, payload: VideoProbeInput):
             raise HTTPException(502, str(exc)) from None
 
 
+async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
+    """One event-triggered check after a running stream fails, NEVER polling.
+
+    A scrcpy video/control EOF alone does not prove ADB is offline (the
+    Android encoder or scrcpy process may also fail). Change M1's cached
+    device status only after get-state confirms the selected serial is gone.
+    Recheck the route under its device lock so stale sessions cannot mark a
+    newly chosen IP disconnected.
+    """
+    try:
+        still_online = await asyncio.to_thread(is_connected, serial)
+    except (HTTPException, OSError):
+        return False  # unknown is NOT a confirmed offline device
+    if still_online:
+        return False
+    with manager._device_lock(device_id):
+        current = store.get(device_id)
+        if (current and selected_address(current) == serial
+                and manager.serial_for(current) == serial):
+            manager._set_state(device_id, "disconnected",
+                               "当前 ADB 地址已断开；请手动检查连接并重新连接")
+    return True
+
+
 @app.websocket("/api/devices/{device_id}/m2/live")
 async def m2_live_video(websocket: WebSocket, device_id: str):
     """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
@@ -537,7 +561,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         except InvalidTouch as exc:
                             await websocket.send_json({"type": "touch_error", "message": str(exc)})
                         except VideoProbeError as exc:
-                            await websocket.send_json({"type": "touch_error", "message": str(exc)})
+                            # A failed control socket may be caused by an ADB
+                            # link loss. Check once, not from a background timer.
+                            offline = await confirm_live_adb_loss(device_id, serial)
+                            await websocket.send_json({
+                                "type": "touch_error", "session_id": stream.session_id,
+                                "message": ("ADB 连接已中断，请手动重新连接"
+                                            if offline else str(exc))
+                            })
                             break
                     elif kind in ("input_text", "nav_key"):
                         # Never use clipboard, arbitrary adb shell, or global
@@ -564,8 +595,12 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
                                                        "message": str(exc)})
                         except VideoProbeError as exc:
-                            await websocket.send_json({"type": "input_error", "session_id": stream.session_id,
-                                                       "message": str(exc)})
+                            offline = await confirm_live_adb_loss(device_id, serial)
+                            await websocket.send_json({
+                                "type": "input_error", "session_id": stream.session_id,
+                                "message": ("ADB 连接已中断，请手动重新连接"
+                                            if offline else str(exc))
+                            })
                             break
             except (WebSocketDisconnect, RuntimeError):
                 pass
@@ -611,6 +646,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 }), LIVE_WS_SEND_TIMEOUT)
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
+                # An early worker end might have lost its error event when the
+                # bounded queue was full. Verify the selected ADB once.
+                if not requested_stop.is_set() and await confirm_live_adb_loss(device_id, serial):
+                    await asyncio.wait_for(websocket.send_json({
+                        "type": "error", "code": "adb_disconnected",
+                        "session_id": stream.session_id,
+                        "message": "当前 ADB 连接已中断，投屏已停止，请手动重新连接"
+                    }), LIVE_WS_SEND_TIMEOUT)
                 break
             current = store.get(device_id)
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
@@ -634,8 +677,15 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 ws_video_bytes += len(payload)
                 ws_video_chunks += 1
             elif kind == "error":
+                # Only unexpected live transport/encoder errors trigger a
+                # one-shot get-state, never continuous ADB polling.
+                await asyncio.to_thread(stream.stop)
+                offline = await confirm_live_adb_loss(device_id, serial)
                 await asyncio.wait_for(websocket.send_json({
-                    "type": "error", "message": payload
+                    "type": "error", "session_id": stream.session_id,
+                    "code": "adb_disconnected" if offline else "stream_failed",
+                    "message": ("当前 ADB 连接已中断，投屏已停止，请手动重新连接"
+                                if offline else payload)
                 }), LIVE_WS_SEND_TIMEOUT)
                 break
             elif kind == "end":
