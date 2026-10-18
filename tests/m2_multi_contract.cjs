@@ -86,7 +86,7 @@ assert.match(page,/candidates=picked\.filter\(d=>!\(multiView&&multiView\.isBusy
 assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deletion requires confirmation');
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
-assert.match(page,/action\(label\+'：'\+ip\+':'\+d\.port,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
+assert.match(page,/action\(label\+'：'\+ip\+':'\+port,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
 assert.match(page,/title\.append\(elem\('span','item-name',d\.name\)\)/);
