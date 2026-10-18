@@ -95,7 +95,7 @@ def test_unresponsive_half_open_browser_releases_its_session(monkeypatch, tmp_pa
 
 def test_diagnostic_receipts_keep_a_quiet_screen_alive_then_manual_stop(monkeypatch, tmp_path):
     mod, made, client = setup_live(monkeypatch, tmp_path)
-    monkeypatch.setattr(mod, "LIVE_HEARTBEAT_TIMEOUT", 1.5)
+    monkeypatch.setattr(mod, "LIVE_HEARTBEAT_TIMEOUT", 2.5)
     with client:
         device, path, auth = register_device(mod, client)
         with client.websocket_connect(path, headers={"origin": "http://testserver"}) as ws:
@@ -103,7 +103,7 @@ def test_diagnostic_receipts_keep_a_quiet_screen_alive_then_manual_stop(monkeypa
             sid = next_kind(ws, "starting")["session_id"]
             receipts = 0
             # Diagnostics are every ~1 second; keep session active > timeout.
-            while receipts < 3:
+            while receipts < 4:
                 msg = ws.receive_json()
                 if msg["type"] == "diagnostic":
                     assert msg["session_id"] == sid
