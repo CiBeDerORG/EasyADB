@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EasyADB · ADB 连接测试</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0d1320;color:#eef3fb}
+*{box-sizing:border-box}body{margin:0;padding:32px 16px}main{max-width:1080px;margin:auto}
+header{margin-bottom:26px}h1{font-size:29px;margin:0 0 8px}h1 span{color:#80a4ff}p{line-height:1.55}
+.hint{color:#99acc6;font-size:13px}.grid{display:grid;grid-template-columns:minmax(280px,370px) 1fr;gap:20px;align-items:start}
+.panel{background:#172233;border:1px solid #34445e;border-radius:16px;padding:22px;min-width:0}h2{font-size:18px;margin:0 0 18px}
+label{display:block;font-size:13px;color:#c1d0e4;margin:12px 0 7px}
+input{width:100%;height:42px;padding:0 12px;border-radius:8px;border:1px solid #50627d;background:#101a2a;color:#fff;font:inherit}
+input:focus{outline:2px solid #7094ff;outline-offset:1px}
+.row{display:grid;grid-template-columns:1fr 110px;gap:10px}
+button{background:#4772e7;color:#fff;font-weight:650;padding:11px 14px;border:0;border-radius:9px;cursor:pointer}
+button.secondary{background:#2a3b56;border:1px solid #516480}button:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:17px}
+.status{background:#25344d;border-radius:9px;padding:12px;margin-top:16px;min-height:43px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
+details{border-top:1px solid #34445e;margin-top:23px;padding-top:18px}summary{cursor:pointer;font-weight:650}
+.head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:15px}
+.head h2{margin:0}.device{font-size:12px;color:#a3b6d0;overflow-wrap:anywhere}
+.screen{background:#0a101b;border:1px dashed #475d7a;min-height:400px;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.screen img{display:block;max-width:100%;max-height:72vh;width:auto;height:auto;object-fit:contain}
+.screen img[hidden],.screen .placeholder[hidden]{display:none}
+.placeholder{text-align:center;color:#9babc2;font-size:14px;line-height:1.8;padding:28px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}body{padding:19px 12px}.panel{padding:18px}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>EasyADB <span>/ 连接测试</span></h1><p class="hint">通过无线 ADB 连接手机，并在网页查看当前截图。暂不支持实时投屏或触摸控制。</p></header>
+<div class="grid">
+<section class="panel">
+<h2>连接设备</h2>
+<label for="token">访问密钥（.env 中的 EASYADB_TOKEN）</label><input id="token" type="password" autocomplete="off" placeholder="输入访问密钥">
+<label for="ip">手机 IPv4 地址</label><input id="ip" type="text" spellcheck="false" placeholder="192.168.31.100">
+<label for="port">无线调试主页的连接端口</label><input id="port" type="number" min="1" max="65535" placeholder="例如 39521">
+<div class="actions"><button id="connect">连接并截图</button><button id="refresh" class="secondary" disabled>刷新截图</button></div>
+<div id="status" class="status" role="status" aria-live="polite">尚未连接</div>
+<details><summary>第一次连接？先配对</summary>
+<p class="hint">手机 → 开发者选项 → 无线调试 → 使用配对码配对设备。请填写弹窗中的配对端口，而不是上面的连接端口。</p>
+<div class="row"><div><label for="pairPort">配对端口</label><input id="pairPort" type="number" min="1" max="65535" placeholder="配对端口"></div>
+<div><label for="code">六位配对码</label><input id="code" type="text" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="123456"></div></div>
+<div class="actions"><button class="secondary" id="pair">执行配对</button></div>
+</details>
+<p class="hint">EasyADB 所在的机器必须能访问手机显示的 IP 和端口，EasyTier 组网还需保证对应子网路由可达。</p>
+</section>
+<section class="panel">
+<div class="head"><h2>手机画面</h2><span class="device" id="device">未连接</span></div>
+<div class="screen"><div class="placeholder" id="placeholder">连接成功后将在此展示当前手机截图。<br>点击「刷新截图」可获取最新画面。</div><img id="shot" alt="手机当前截图" hidden></div>
+<p class="hint">这里是按需截图，不会持续采集屏幕。</p>
+</section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);let screenshotUrl=null;let connected=false;
+function message(text,kind=''){$('status').textContent=text;$('status').className='status '+kind;}
+function busy(value){$('connect').disabled=value;$('pair').disabled=value;$('refresh').disabled=value||!connected;}
+async function api(path,options={}){
+ const r=await fetch(path,{...options,headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()},cache:'no-store'});
+ if(!r.ok){let info={};try{info=await r.json();}catch{}throw Error(info.detail||'请求失败（'+r.status+'）');}return r;
+}
+async function screenshot(){
+ const r=await api('/api/screenshot');const blob=await r.blob();const next=URL.createObjectURL(blob);
+ $('shot').src=next;$('shot').hidden=false;$('placeholder').hidden=true;
+ if(screenshotUrl)URL.revokeObjectURL(screenshotUrl);screenshotUrl=next;
+}
+$('connect').addEventListener('click',async()=>{
+ busy(true);message('正在建立 ADB 连接…');
+ try{
+  const r=await api('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('ip').value.trim(),port:Number($('port').value)})});
+  const data=await r.json();connected=true;$('device').textContent=data.serial+' · ADB 已连接';
+  message('ADB 已连接，正在获取截图…','ok');await screenshot();message('连接成功，截图已更新','ok');
+ }catch(e){message(e.message,'error');}finally{busy(false);}
+});
+$('pair').addEventListener('click',async()=>{
+ busy(true);message('正在进行配对…');
+ try{
+  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('ip').value.trim(),port:Number($('pairPort').value),code:$('code').value.trim()})});
+  const data=await r.json();$('code').value='';message(data.message,'ok');
+ }catch(e){message(e.message,'error');}finally{busy(false);}
+});
+$('refresh').addEventListener('click',async()=>{
+ busy(true);message('正在获取截图…');try{await screenshot();message('截图已更新','ok');}catch(e){message(e.message,'error');}finally{busy(false);}
+});
+</script>
+</body>
+</html>

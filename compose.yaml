@@ -1,0 +1,30 @@
+services:
+  easyadb:
+    image: easyadb:local
+    build:
+      context: .
+      # Do not specify build.network: proxy-net; BuildKit does not support
+      # custom names in RUN network mode. The helper script creates a dedicated
+      # docker-container Buildx builder attached to proxy-net instead.
+      args:
+        HTTP_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        http_proxy: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        https_proxy: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
+        NO_PROXY: localhost,127.0.0.1
+        no_proxy: localhost,127.0.0.1
+    restart: unless-stopped
+    environment:
+      EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
+    ports:
+      - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+    volumes:
+      - ./data/adb:/root/.android
+    networks:
+      - default
+      - proxy-net
+
+networks:
+  proxy-net:
+    external: true
+    name: proxy-net
