@@ -9,10 +9,15 @@
 h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:0}p{line-height:1.5}
 .hint{color:#9baec9;font-size:13px}
 .workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px}
-.access-panel{display:grid;grid-template-columns:minmax(160px,260px) minmax(260px,1fr);gap:12px 24px;align-items:end}
-.access-panel .auth-copy{align-self:center}.access-panel .auth-copy .hint{margin:7px 0 0}
-.access-panel .auth-control label{margin-top:0}
-.access-panel #message{grid-column:1/-1;margin:0}
+.inventory-title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.inventory-auth{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.inventory-auth input{width:min(245px,60vw);height:36px}
+.inventory-auth button{white-space:nowrap}
+.inventory-panel>#message{margin:0 0 12px}
+.temp-editor{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:8px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#142033}
+.temp-editor label{margin:0;min-width:130px;flex:1}
+.temp-editor input{height:36px;margin-top:5px}
+.temp-editor button{min-height:36px}
 .inventory-panel,.stage-panel{min-width:0}
 .inventory-panel>.heading{flex-wrap:wrap}
 .stage-panel{padding:22px}
@@ -114,8 +119,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  .multi-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:780px){
- .access-panel{grid-template-columns:1fr}.access-panel #message{grid-column:auto}
- .panel{padding:16px}body{padding:14px 10px}
+  .panel{padding:16px}body{padding:14px 10px}
  .item-top{flex-wrap:wrap}
  .multi-choice{grid-template-columns:minmax(0,1fr)}
  .multi-video{height:min(65vh,620px);min-height:300px}
@@ -130,23 +134,20 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <body>
 <main>
 <header><h1>EasyADB <span>/ 远程设备工作台</span></h1><p class="hint">先在设备管理中明确选择地址并手动连接，再为任意 1～4 台已连接设备配置画质、开启投屏；每台远控分别手动启用，不自动连接或重试。</p></header>
-<section class="panel access-panel" aria-label="访问配置">
-  <div class="auth-copy"><h2>访问配置</h2><p class="hint">密钥仅保存在当前页面内存中，刷新后需重新输入。</p></div>
-  <div class="auth-control"><label for="token">访问密钥（EASYADB_TOKEN）</label>
-   <div class="two" style="grid-template-columns:minmax(0,1fr) auto"><input id="token" type="password" autocomplete="off" placeholder="输入服务端访问密钥"><button id="load">加载设备</button></div></div>
-  <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
-</section>
 <div class="workspace">
  <section class="panel inventory-panel" aria-label="设备管理">
-  <div class="heading"><div><h2>设备管理</h2><p class="hint">每台设备横向整行：左侧「选择」同时用于批量管理与批量投屏；开始或追加投屏时只启动勾选且已连接的设备，最多四路。单台也可独立开启画面，投屏期间可继续添加、手动连接其他设备。</p></div>
+  <div class="heading"><div><div class="inventory-title-row"><h2>设备管理</h2>
+    <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载设备</button></div></div>
+    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p></div>
    <div class="buttons" style="margin:0">
-    <button type="button" id="multiStart" disabled>开始投屏</button>
-    <button type="button" class="danger" id="multiStop" disabled>停止全部投屏</button>
+    <button type="button" id="multiStart" disabled>批量投屏</button>
+    <button type="button" class="danger" id="multiStop" disabled>批量停止投屏</button>
     <button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button>
     <button id="newDevice" type="button" disabled>＋ 添加设备</button>
-    <button class="secondary" id="refreshAll" disabled>检查全部状态</button>
+    <button class="secondary" id="refreshAll" disabled>批量检查状态</button>
    </div>
   </div>
+  <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
   <div class="muted" id="count">尚未加载</div>
   <div class="management-bar" aria-label="批量设备管理">
    <label><input type="checkbox" id="bulkSelectAll" disabled>选择全部设备</label>
@@ -158,8 +159,8 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div id="multiPicker" hidden aria-hidden="true"></div>
  </section>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
-  <div class="heading"><div><h2>实时画面</h2><p class="hint">画面优先显示在设备管理下方。各台分别开启远控、独立停止并查看本路诊断日志；停止全部后可直接再次点击开始，不保留旧画面窗口。</p></div></div>
-  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「开始投屏」，或在对应设备行单独开启画面。</div>
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">画面优先显示在设备管理下方。各台分别开启远控、独立停止并查看本路诊断日志；批量停止仅影响左侧已选设备。</p></div></div>
+  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「批量投屏」，或在对应设备行单独开启画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
 </div>
@@ -220,7 +221,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
-const managementSelected=new Set(); // separate from the video-session picker
+const managementSelected=new Set(); // one selection for every batch action
 let multiView=null;
 const groupOpen=new Map();
 function adbStatusBadge(d){
@@ -300,12 +301,12 @@ function render(){
    if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
    if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
    info.append(title);
-   const addAddress=(label,route,ip)=>{
+   const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row');
-    const target=action(label+'：'+ip+':'+d.port,()=>switchRoute(d.id,route),'address-target');
+    const target=action(label+'：'+ip+':'+port,()=>switchRoute(d.id,route),'address-target');
     target.disabled=loading||chosen||Boolean(multiView&&multiView.isBusyFor(d.id));
     target.setAttribute('aria-pressed',String(chosen));
-    target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+d.port);
+    target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
     target.title=chosen?'当前使用此线路，点击另一地址即可切换':'点击将此地址设为当前连接线路（不会自动连接）';
     row.append(target);
     if(chosen&&d.connect_failed){
@@ -318,6 +319,7 @@ function render(){
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
+   if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port);
    top.append(managementLabel,info);primary.append(top,...addressRows);
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
@@ -325,9 +327,15 @@ function render(){
    const connect=action('连接',()=>runConnect(d.id));
    const change=action('编辑',()=>edit(d.id));
    const removeButton=action('删除',()=>remove(d.id),'danger');
-   connect.disabled=change.disabled=removeButton.disabled=loading||locked;
-   actions.append(connect,change,removeButton);
-   primary.append(actions);item.append(primary);
+   const tempEdit=action(d.temp_ip?'修改临时 IP':'＋ 临时 IP',()=>openTempEditor(d,editor),'secondary');
+   const tempRemove=d.temp_ip?action('移除临时 IP',()=>removeTempAddress(d.id),'secondary'):null;
+   connect.disabled=change.disabled=removeButton.disabled=tempEdit.disabled=loading||locked;
+   if(tempRemove)tempRemove.disabled=loading||locked;
+   actions.append(connect,change,tempEdit);
+   if(tempRemove)actions.append(tempRemove);
+   actions.append(removeButton);
+   const editor=elem('form','temp-editor');editor.hidden=true;
+   primary.append(actions,editor);item.append(primary);
    const quality=elem('div','device-quality');
    const row=qualityRows.get(d.id);
    if(row){row.prepend(adbStatusBadge(d));quality.append(row);}
@@ -344,7 +352,7 @@ function render(){
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
- $('refreshAll').disabled=loading||!loaded||(multiView&&multiView.hasActive());
+ $('refreshAll').disabled=loading||!loaded||!devices.some(d=>managementSelected.has(d.id)&&!(multiView&&multiView.isBusyFor(d.id)));
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded;
  const candidates=devices.filter(d=>managementSelected.has(d.id));
@@ -439,9 +447,43 @@ async function switchRoute(id,route){
   })).json();
   devices=devices.map(d=>d.id===id?result:d);
   await load(true);
-  message('已切换为'+(route==='lan'?'内网 IP':'组网 IP')+'，需要点击「连接」才能建立 ADB 连接','ok');
+  message('已切换为'+({lan:'内网 IP',temp:'临时 IP',mesh:'组网 IP'}[route]||'所选线路')+'，需要点击「连接」才能建立 ADB 连接','ok');
  }catch(e){message(e.message,'error');await load(true);}
  finally{loading=false;render();}
+}
+function openTempEditor(d,editor){
+ if(loading||multiView&&multiView.isBusyFor(d.id))return;
+ editor.replaceChildren();editor.hidden=false;
+ const ipLabel=elem('label','','临时 IPv4'),ip=elem('input');
+ ip.required=true;ip.placeholder='例如 10.10.30.206';ip.value=d.temp_ip||'';
+ ip.setAttribute('autocomplete','off');ipLabel.append(ip);
+ const portLabel=elem('label','','ADB 连接端口'),port=elem('input');
+ port.type='number';port.required=true;port.min='1';port.max='65535';port.placeholder='端口';
+ port.value=d.temp_port||'';portLabel.append(port);
+ const save=elem('button','','保存临时线路');save.type='submit';
+ const cancel=action('取消',()=>{editor.hidden=true;},'secondary');
+ editor.append(ipLabel,portLabel,save,cancel);
+ editor.addEventListener('submit',event=>{
+  event.preventDefault();
+  if(!editor.hidden)saveTempAddress(d.id,ip.value.trim(),Number(port.value));
+ },{once:true});
+ ip.focus();
+}
+async function saveTempAddress(id,ip,port){
+ if(loading||multiView&&multiView.isBusyFor(id))return;
+ loading=true;render();message('正在保存临时线路…');
+ try{
+  await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
+   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})
+  });
+  await load(true);message(ip?'临时 IP:端口已入库，可点击临时 IP 线路并手动连接':'临时线路已移除；如原线路已选中，则已恢复组网线路（未自动连接）','ok');
+ }catch(e){message(e.message,'error');await load(true);}
+ finally{loading=false;render();}
+}
+function removeTempAddress(id){
+ const d=devices.find(x=>x.id===id);
+ if(!d||loading||multiView&&multiView.isBusyFor(id))return;
+ if(confirm('确认移除「'+d.name+'」已保存的临时 IP:端口？不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
 }
 async function runConnect(id){
  if(loading)return;
@@ -604,9 +646,23 @@ $('form').addEventListener('submit',async ev=>{
  }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
 $('refreshAll').addEventListener('click',async()=>{
- if(loading)return;loading=true;render();message('正在逐台检查 ADB 状态…');
- try{devices=await(await api('/api/devices/refresh',{method:'POST'})).json();render();message('所选连接地址的状态检查已完成；没有自动发起连接','ok');}
- catch(e){message(e.message,'error');}finally{loading=false;render();}
+ if(loading||!loaded)return;
+ const picked=devices.filter(d=>managementSelected.has(d.id));
+ const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const skipped=picked.length-candidates.length;
+ if(!candidates.length)return;
+ loading=true;render();let success=0;const failed=[];
+ for(const d of candidates){
+  message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
+  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：投屏中跳过');continue;}
+  try{
+   const fresh=await(await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{method:'POST'})).json();
+   devices=devices.map(x=>x.id===d.id?fresh:x);success++;
+  }catch(e){failed.push(d.name+'：'+e.message);}
+ }
+ await load(true);loading=false;render();
+ message('批量检查完成：已检查 '+success+' 台，投屏中预先跳过 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台；只检查各自选定地址，不自动连接'+
+  (failed.length?'；'+failed.join('；'):''),failed.length?'error':'ok');
 });
 window.addEventListener('beforeunload',()=>{if(multiView)multiView.closeAll();});
 window.addEventListener('pagehide',()=>{if(multiView)multiView.closeAll();});
