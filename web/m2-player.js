@@ -145,7 +145,7 @@ const capabilities=()=>({
 });
 const create=(kind,video,callbacks)=>{
   if(kind==='mse')return new MSEPlayer(video,callbacks);
-  if(kind==='webcodecs')throw Error('WebCodecs 播放器已预留接口，当前版本不能启用。');
+  if(kind==='webcodecs')throw Error('WebCodecs 播放器接口已预留但尚未实现，当前版本不能启用。');
   throw Error('未知视频播放器：'+kind);
 };
 root.EasyADBPlayers=Object.freeze({
