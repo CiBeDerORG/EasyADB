@@ -28,6 +28,11 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
+# The Buildx CLI itself can fetch Docker Hub auth tokens. Since it runs on
+# FNOS, it needs a host-reachable proxy URL, while the BuildKit container
+# continues using the mihomo hostname in proxy-net.
+. scripts/proxy-host.sh
+
 # Bootstrap from proxy-net without restarting/modifying FNOS Docker daemon.
 # The one-time helper uses an HTTP client on the host to download via the
 # Mihomo bridge IP and docker load; this main build continues to use DNS name.
@@ -51,12 +56,13 @@ if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   fi
   if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$BUILDER_CONTAINER" |
       grep -Fx "HTTPS_PROXY=$PROXY" >/dev/null; then
-    echo "ERROR: existing $BUILDER has a different proxy. Review and recreate it:" >&2
-    echo "  sudo docker buildx rm $BUILDER" >&2
-    exit 1
+    echo "Recreating EasyADB-only builder because proxy credentials changed..."
+    docker buildx rm "$BUILDER"
   fi
-else
-  echo "Creating isolated BuildKit builder on $NETWORK with configured Mihomo authentication..."
+fi
+
+if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+  echo "Creating isolated BuildKit builder on $NETWORK (proxy credentials hidden)..."
   docker buildx create --name "$BUILDER" --driver docker-container \
     --driver-opt "image=$BUILDKIT_IMAGE" \
     --driver-opt "network=$NETWORK" \
@@ -64,8 +70,16 @@ else
     --driver-opt "env.HTTPS_PROXY=$PROXY" >/dev/null
 fi
 
-docker buildx inspect --bootstrap "$BUILDER"
+# Do not use 'docker buildx inspect --bootstrap' here. Its Driver Options
+# print the full authenticated proxy URL, including the password.
+# A build automatically starts the dedicated builder when needed.
+
 echo "Building EasyADB via Mihomo..."
+# Force the host-side Buildx CLI's registry token exchange through Mihomo too.
+# Docker API traffic continues over its Unix socket. Never echo HOST_PROXY.
+HTTP_PROXY="$HOST_PROXY" HTTPS_PROXY="$HOST_PROXY" \
+http_proxy="$HOST_PROXY" https_proxy="$HOST_PROXY" \
+NO_PROXY='localhost,127.0.0.1' no_proxy='localhost,127.0.0.1' \
 docker buildx build --builder "$BUILDER" --load --progress=plain \
   --tag easyadb:local \
   --build-arg "HTTP_PROXY=$PROXY" \
