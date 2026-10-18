@@ -1,9 +1,9 @@
-name: M1 tests
+name: M2 tests
 on:
   push:
-    branches: [feat/m1-multi-device]
+    branches: [feat/m2-web-control]
   pull_request:
-    branches: [feat/adb-connect-preview]
+    branches: [feat/m1-multi-device]
 permissions:
   contents: read
 jobs:
@@ -25,6 +25,9 @@ jobs:
           for script in scripts/*.sh; do sh -n "$script"; done
           python -c 'from pathlib import Path; h=Path("web/index.html").read_text(); assert h.count("<dialog")==3 and "firstPairDialog" in h and "firstPairForm" in h and "groupDialog" in h and "groupPrefix" in h and "deleteGroup" in h and "device-group" in h and "groupOpen" in h; Path("/tmp/easyadb-web.js").write_text(h.split("<script>",1)[1].split("</script>",1)[0])'
           node --check /tmp/easyadb-web.js
+          grep -Fq 'sh scripts/update-m2.sh' scripts/build-with-mihomo.sh
+          grep -Fxq 'TARGET_BRANCH=feat/m2-web-control' scripts/update-m2.sh
+          test ! -e scripts/update-m1.sh
       - name: Run mock ADB tests
         env:
           EASYADB_TOKEN: local-test-token-123
