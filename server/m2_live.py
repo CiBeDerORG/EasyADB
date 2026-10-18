@@ -187,6 +187,7 @@ class LiveVideo:
         self.control_sock = None
         self.touch_size = None
         self.touch_pressed = False
+        self.touch_point = None
         self._touch_lock = threading.Lock()
         self.adb_proc = None
         self.ffmpeg_proc = None
@@ -255,6 +256,7 @@ class LiveVideo:
             self.control_sock = None
             self.touch_size = None
             self.touch_pressed = False
+            self.touch_point = None
             if control:
                 try:
                     control.shutdown(socket.SHUT_RDWR)
@@ -289,6 +291,22 @@ class LiveVideo:
                 self.stop_event.set()
                 raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
             self.touch_pressed = next_pressed
+            self.touch_point = (payload["x"], payload["y"]) if next_pressed else None
+
+    def release_touch(self):
+        """Explicit disable releases this session's own pressed finger only."""
+        with self._touch_lock:
+            if not self.touch_pressed or not self.control_sock or not self.touch_size or not self.touch_point:
+                return
+            x, y = self.touch_point
+            width, height = self.touch_size
+            packet, _ = encode_touch({
+                "type": "touch", "session_id": self.session_id, "action": "cancel",
+                "x": x, "y": y, "width": width, "height": height,
+            }, (width, height), True)
+            self.control_sock.sendall(packet)
+            self.touch_pressed = False
+            self.touch_point = None
 
     def join(self, timeout=8):
         if self.thread:
