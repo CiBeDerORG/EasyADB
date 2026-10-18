@@ -19,6 +19,7 @@ from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
 from .m2_quality import resolve_live_quality
 from .m2_resources import ProcessMeter
+from .display_lab import display_ids
 from .m2_control_diag import classify_control_log
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, SERVER_FILE,
@@ -179,10 +180,11 @@ def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
 
 
 class LiveVideo:
-    def __init__(self, serial, profile, server_file=None, quality=None):
+    def __init__(self, serial, profile, server_file=None, quality=None, display_source=None):
         self.settings = resolve_live_quality(profile, quality)
         self.serial = serial
         self.profile = profile
+        self.display_source = display_source  # None keeps the original primary screen.
         # Opaque ID for this user-started session. Used for lifecycle messages
         # and future control-channel binding; it never selects an ADB target.
         self.session_id = secrets.token_hex(12)
@@ -449,6 +451,12 @@ class LiveVideo:
                 raise StreamStopped()
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
+            before_ids = None
+            if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+                try:
+                    before_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
+                except VideoProbeError:
+                    before_ids = [0]
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
                 with self._resource_lock:
                     self._adb_log_fd = os.dup(adb_log.fileno())
@@ -474,6 +482,12 @@ class LiveVideo:
                     f"video_bit_rate={settings['video_bit_rate']}",
                     f"max_fps={settings['max_fps']}",
                 ]
+                if self.display_source:
+                    mode = self.display_source["mode"]
+                    if mode in ("new", "new_settings"):
+                        cmd.append("new_display=1920x1080/240")
+                    elif mode == "display":
+                        cmd.append("display_id=" + str(self.display_source["display_id"]))
                 adb_proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                                             stdout=adb_log, stderr=subprocess.STDOUT)
                 with self._resource_lock:
@@ -497,6 +511,34 @@ class LiveVideo:
                         control.close()
                         raise StreamStopped()
                     self.control_sock = control
+                if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+                    # Bounded discovery during user-started session startup only.
+                    created = None
+                    for _ in range(8):
+                        if self.stop_event.is_set():
+                            raise StreamStopped()
+                        try:
+                            current_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
+                            added = sorted(set(current_ids) - set(before_ids or [0]))
+                            if added:
+                                created = added[-1]
+                                break
+                        except VideoProbeError:
+                            pass
+                        time.sleep(0.35)
+                    notice = {"mode": self.display_source["mode"], "display_id": created}
+                    if created is None:
+                        notice["message"] = "已请求创建虚拟屏幕，但未识别新增 Display ID；请检查画面"
+                    elif self.display_source["mode"] == "new_settings":
+                        try:
+                            _run_adb(self.serial, "shell", "am", "start", "--display", str(created),
+                                     "-a", "android.settings.SETTINGS")
+                            notice["message"] = "已尝试在新增屏幕打开设置，请查看画面确认"
+                        except VideoProbeError:
+                            notice["message"] = "新增屏幕已创建，系统拒绝在该屏幕启动设置"
+                    else:
+                        notice["message"] = "检测到新增 Display ID，请查看是否出现桌面"
+                    self._emit(("lab_notice", notice))
                 name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event, adb_proc=self.adb_proc).split(b"\0", 1)[0]
                 codec = _socket_read(video, 4, self.stop_event, adb_proc=self.adb_proc)
                 if codec != b"h264":
