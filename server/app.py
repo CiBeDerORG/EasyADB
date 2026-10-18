@@ -188,6 +188,12 @@ def m2_traffic_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-touch.js")
+def m2_touch_script():
+    return FileResponse(ROOT / "web" / "m2-touch.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 def pair_at(ip, port, code):
     dest = address(ip, port)
     if not re.fullmatch(r"\d{6}", code):
