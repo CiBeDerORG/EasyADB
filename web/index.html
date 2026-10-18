@@ -21,7 +21,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .status{background:#25344d;border-radius:8px;padding:11px;margin:13px 0 0;min-height:39px;font-size:13px;overflow-wrap:anywhere}
 .status.ok{background:#194135;color:#a3efd0}.status.error{background:#4c2930;color:#ffc0c6}
 .device-list{display:grid;gap:12px;max-height:650px;overflow-y:auto}
-.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden;position:relative}
+.group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
 .device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
 .group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
 .device-group>summary::-webkit-details-marker{display:none}
@@ -147,7 +147,7 @@ function render(){
  const keys=[...grouped.keys()].sort((a,b)=>a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
  for(const key of keys){
-  const g=grouped.get(key),section=elem('details','device-group');
+  const g=grouped.get(key),section=elem('details','device-group'),shell=elem('div','group-shell');
   section.open=groupOpen.has(key)?groupOpen.get(key):true;
   section.addEventListener('toggle',()=>groupOpen.set(key,section.open));
   const summary=elem('summary');
@@ -155,7 +155,6 @@ function render(){
   if(g.ip_prefix)summary.append(elem('span','group-prefix',g.ip_prefix));
   summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
   section.append(summary);
-  if(key!=='ungrouped')section.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
   const wrapper=elem('div','group-items');
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
@@ -172,7 +171,9 @@ function render(){
    item.append(actions);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
-  section.append(wrapper);list.append(section);
+  section.append(wrapper);shell.append(section);
+  if(key!=='ungrouped')shell.append(action('设置',()=>openGroup(g.title),'secondary group-edit'));
+  list.append(shell);
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
