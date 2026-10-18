@@ -93,6 +93,7 @@ class LiveVideo:
         self.profile = profile
         self.server_file = Path(server_file) if server_file is not None else SERVER_FILE
         self.stop_event = threading.Event()
+        self.finished = threading.Event()
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
         self.video_sock = None
@@ -180,6 +181,8 @@ class LiveVideo:
         feeder = None
         failure = None
         try:
+            if self.stop_event.is_set():
+                raise StreamStopped()
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
@@ -309,9 +312,6 @@ class LiveVideo:
                 _run_adb(self.serial, "shell", "rm", "-f", remote, timeout=5)
             except VideoProbeError:
                 pass
-            if failure and not self.stop_event.is_set():
-                # stop() has set it; still explicitly deliver the error.
-                pass
             if failure:
                 try:
                     self.events.put_nowait(("error", failure))
@@ -321,6 +321,7 @@ class LiveVideo:
                 self.events.put_nowait(("end", None))
             except queue.Full:
                 pass
+            self.finished.set()
 
 
 class LiveRegistry:
