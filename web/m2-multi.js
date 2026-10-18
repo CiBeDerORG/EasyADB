@@ -44,7 +44,7 @@ class MultiView{
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.checking=new Set();this.lastLiveStatus=new Map();
   startButton.addEventListener('click',()=>this.start());
-  stopButton.addEventListener('click',()=>this.stopAll());
+  stopButton.addEventListener('click',()=>this.stopSelected());
   this.updatePicker(false);
  }
  status(msg,error=false){this.info.textContent=msg;this.info.className='status'+(error?' error':'');}
@@ -160,8 +160,10 @@ class MultiView{
   const remaining=MAX_DEVICES-this.cards.size;
   this.startButton.disabled=this.opening||this.getManagementBusy?.()||available.length<1||
    available.length>remaining||available.some(id=>this.checking.has(id));
-  this.stopButton.disabled=this.cards.size===0&&!this.opening;
-  this.startButton.textContent=(this.cards.size?'追加投屏':'开始投屏')+
+  const selectedRunning=[...picked].filter(id=>this.isBusyFor(id));
+  this.stopButton.disabled=selectedRunning.length===0;
+  this.stopButton.textContent='批量停止投屏（'+selectedRunning.length+' 台）';
+  this.startButton.textContent=(this.cards.size?'批量追加投屏':'批量投屏')+
    '（待新增 '+available.length+' / 剩余 '+remaining+' 台）';
   this.grid.setAttribute('data-count',String(this.cards.size));
   if(notify)this.onChange();
@@ -549,6 +551,19 @@ class MultiView{
   this.dropBatchSelection(id);
   this.lastLiveStatus.set(id,'已取消排队');
   this.updatePicker();return true;
+ }
+ stopSelected(){
+  // Only the selected rows are stopped/cancelled. Unselected sessions and
+  // their player/control sockets remain untouched.
+  if(!this.getBatchSelection){this.stopAll();return;}
+  const picked=new Set(this.getBatchSelection());
+  if(!picked.size)return;
+  const canceled=this.launchQueue.filter(item=>picked.has(item.device.id));
+  this.launchQueue=this.launchQueue.filter(item=>!picked.has(item.device.id));
+  for(const item of canceled)this.lastLiveStatus.set(item.device.id,'已取消排队');
+  for(const [id,card] of [...this.cards])
+   if(picked.has(id))this.stop(card,true);
+  this.updatePicker();
  }
  stopAll(){
   this.opening=false;this.launchQueue=[];
