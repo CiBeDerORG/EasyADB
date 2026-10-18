@@ -136,3 +136,22 @@ def test_video_probe_endpoint_uses_only_persisted_selected_serial(monkeypatch, t
         client.put(f"/api/devices/{d['id']}/route", headers=AUTH, json={"route": "lan"})
         assert client.post(endpoint, headers=AUTH, json={"profile": "baseline"}).status_code == 409
         assert captured == [("10.10.30.206:40455", "native")]
+
+
+
+def test_scrcpy_release_binary_is_pinned_to_one_matching_sha_and_license():
+    from pathlib import Path
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    assert "scrcpy-server-v5.0.1" in dockerfile
+    assert video.EXPECTED_SHA256 in dockerfile
+    assert "sha256sum -c -" in dockerfile
+    assert "Genymobile/scrcpy/v5.0.1/LICENSE" in dockerfile
+    assert video.VERSION == "5.0.1"
+
+
+def test_failed_preflight_without_scrcpy_image_does_not_touch_device(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(video, "_run_adb", lambda *args, **kw: called.append(args))
+    with pytest.raises(video.VideoProbeError, match="重新构建"):
+        video.probe_video("10.10.30.206:40455", server_file=tmp_path / "absent")
+    assert called == []
