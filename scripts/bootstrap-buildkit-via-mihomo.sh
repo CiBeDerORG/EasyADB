@@ -18,7 +18,7 @@ if docker image inspect "$IMAGE" >/dev/null 2>&1; then
   exit 0
 fi
 
-for command in docker curl tar sha256sum uname mktemp awk; do
+for command in docker curl tar sha256sum uname mktemp awk cp chmod; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "ERROR: missing required command: $command" >&2
     exit 1
@@ -84,8 +84,46 @@ esac
 CACHE_DIR="${EASYADB_BOOTSTRAP_CACHE:-./.cache}"
 mkdir -p "$CACHE_DIR"
 TMP="$(mktemp -d "$CACHE_DIR/buildkit.XXXXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+EXEC_TMP=''
+trap 'rm -rf "$TMP" "$EXEC_TMP"' EXIT
 trap 'exit 1' HUP INT TERM
+
+# FNOS data volumes may use "noexec". Keep the potentially large image tar on
+# the data volume, but put ONLY the verified crane binary on an executable FS.
+# chmod +x cannot override a noexec mount, so actually try executing a copy of
+# /bin/true before choosing a temporary directory.
+if [ -x /bin/true ]; then
+  PROBE_BIN=/bin/true
+elif [ -x /usr/bin/true ]; then
+  PROBE_BIN=/usr/bin/true
+else
+  echo 'ERROR: cannot find /bin/true or /usr/bin/true to test executable temp storage.' >&2
+  exit 1
+fi
+if [ -n "${EASYADB_EXEC_TMP:-}" ]; then
+  set -- "$EASYADB_EXEC_TMP"
+else
+  set -- /tmp /var/tmp /root
+fi
+for CANDIDATE do
+  [ -d "$CANDIDATE" ] && [ -w "$CANDIDATE" ] || continue
+  CANDIDATE_DIR="$(mktemp -d "$CANDIDATE/easyadb-crane.XXXXXXXX" 2>/dev/null)" || continue
+  if cp "$PROBE_BIN" "$CANDIDATE_DIR/exec-probe" &&
+     chmod 700 "$CANDIDATE_DIR/exec-probe" &&
+     "$CANDIDATE_DIR/exec-probe" >/dev/null 2>&1; then
+    EXEC_TMP="$CANDIDATE_DIR"
+    rm -f "$EXEC_TMP/exec-probe"
+    break
+  fi
+  rm -rf "$CANDIDATE_DIR"
+done
+if [ -z "$EXEC_TMP" ]; then
+  echo 'ERROR: no writable, executable temporary directory available (FNOS may use noexec).' >&2
+  echo 'Set EASYADB_EXEC_TMP to an existing writable directory on an exec-capable filesystem and retry.' >&2
+  echo 'Do not remount your FNOS data volume with exec just for this script.' >&2
+  exit 1
+fi
+echo "Crane executable will run from $EXEC_TMP (image tar stays in project cache)."
 
 BASE="https://github.com/google/go-containerregistry/releases/download/$CRANE_VERSION"
 ARCHIVE="go-containerregistry_Linux_${CRANE_ARCH}.tar.gz"
@@ -104,8 +142,8 @@ awk -v name="$ARCHIVE" '$2 == name || $2 == "*" name { print; found=1 } END { if
     exit 1
   }
 (cd "$TMP" && sha256sum -c check.txt)
-tar -xzf "$TMP/$ARCHIVE" -C "$TMP" crane
-chmod 700 "$TMP/crane"
+tar -xzf "$TMP/$ARCHIVE" -C "$EXEC_TMP" crane
+chmod 700 "$EXEC_TMP/crane"
 
 echo "[3/5] Downloading $IMAGE ($PLATFORM) through Mihomo ..."
 # Crane talks directly to the registry via the host-side HTTP proxy.
@@ -113,7 +151,7 @@ echo "[3/5] Downloading $IMAGE ($PLATFORM) through Mihomo ..."
 HTTP_PROXY="$HOST_PROXY" HTTPS_PROXY="$HOST_PROXY" \
 http_proxy="$HOST_PROXY" https_proxy="$HOST_PROXY" \
 NO_PROXY='' no_proxy='' \
-"$TMP/crane" --platform "$PLATFORM" pull "$IMAGE" "$TMP/buildkit.tar"
+"$EXEC_TMP/crane" --platform "$PLATFORM" pull "$IMAGE" "$TMP/buildkit.tar"
 
 echo "[4/5] Importing image into local Docker (no daemon network pull) ..."
 docker load -i "$TMP/buildkit.tar"
