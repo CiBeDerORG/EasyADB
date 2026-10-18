@@ -172,6 +172,56 @@ def test_running_media_error_checks_adb_once_and_never_reconnects(monkeypatch, t
         assert snapshot["status"] == ("disconnected" if disconnect else "connected")
 
 
+def test_manual_stop_never_triggers_an_extra_adb_connection_check(monkeypatch, tmp_path):
+    mod, client = setup(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(mod, "is_connected", lambda serial: calls.append(serial) or True)
+
+    class QuietStream:
+        def __init__(self, serial, profile):
+            self.session_id = "quiet-manual-session"
+            self.finished = threading.Event()
+            self.cleanup_complete = False
+            self.events = queue.Queue()
+        def start(self):
+            self.events.put(("init", {
+                "width": 720, "height": 1600,
+                "mime": 'video/mp4; codecs="avc1.640028"',
+                "control_available": True,
+            }))
+        def diagnostics(self): return {"stage": "quiet"}
+        def stop(self):
+            self.cleanup_complete = True
+            self.finished.set()
+        def join(self, timeout=20): self.finished.wait(timeout)
+
+    monkeypatch.setattr(mod, "LiveVideo", QuietStream)
+    with client:
+        device, serial = add_connected(mod, client)
+        with client.websocket_connect(
+            f"/api/devices/{device['id']}/m2/live",
+            headers={"origin": "http://testserver"}
+        ) as ws:
+            ws.send_json({"token": "local-test-token-123", "profile": "baseline",
+                          "player": "mse", "selected_serial": serial})
+            for _ in range(12):
+                if ws.receive_json()["type"] == "init":
+                    break
+            else:
+                pytest.fail("missing init")
+            ws.send_text("stop")
+            for _ in range(12):
+                msg = ws.receive_json()
+                if msg["type"] == "ended":
+                    assert msg["cleanup_complete"] is True
+                    break
+            else:
+                pytest.fail("missing manual cleanup acknowledgment")
+        assert calls == [serial]  # only the explicit initial start check
+        assert mod.manager.serial_for(mod.store.get(device["id"])) == serial
+        assert device["id"] not in mod.live_registry.sessions
+
+
 def test_browser_refreshes_saved_status_only_for_confirmed_adb_loss():
     from pathlib import Path
     page = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
