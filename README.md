@@ -17,6 +17,35 @@ sudo sh scripts/build-with-mihomo.sh
 
 此后仅需反复执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份执行 `git fetch origin`、切换至 `feat/m1-multi-device`、`git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 覆盖部署。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，原样保留。
 
+### 两种部署模式（默认 Mihomo；可显式关闭）
+
+保持原命令不变时，继续使用既有的 Mihomo、`proxy-net`、认证构建代理与专用 `easyadb-proxy` Buildx：
+
+```sh
+sudo sh scripts/build-with-mihomo.sh
+```
+
+在 OpenWrt 等已由宿主机 / Docker 网络统一处理外网访问的环境，可**显式指定不配置 EasyADB 自身代理**：
+
+```sh
+sudo sh scripts/build-with-mihomo.sh --no-proxy
+```
+
+`--no-proxy` 路径不读取 `EASYADB_BUILD_PROXY`，不检查 `mihomo` 或 `proxy-net`，不初始化专用 BuildKit 构建器，不设置代理构建参数及临时 `mihomo` 主机名；使用 Docker 默认构建链路和独立的 `compose.no-proxy.yaml`（只加入普通 Compose 网络）。此选项**不强行绕过 OpenWrt、Docker daemon 或系统本来已有的代理/透明转发**，也不自动创建外网连接；需保证 Docker 可以访问 Docker Hub、Debian、Google Android 平台工具和 PyPI。无代理模式无需提前创建 `proxy-net`。
+
+两个模式使用同一 Compose 项目目录、镜像名 `easyadb:local`、`EASYADB_BIND_IP/EASYADB_PORT`、`EASYADB_TOKEN`、设备数据库 `./data/storage` 和 ADB 授权 `./data/adb`。构建成功后覆盖更新既有服务，不执行 `down -v`，也不会删除先前的 Mihomo 或 Buildx。需要恢复代理模式时再次运行不带参数的原命令即可。
+
+**从尚未支持该参数的旧版脚本首次切换至无代理模式时**，先在当前 M1 项目目录（原 Git 登录用户身份，**不要加 sudo**）手动获得新脚本：
+
+```sh
+cd /vol3/1000/software/EasyADB
+git fetch origin
+git pull --ff-only origin feat/m1-multi-device
+sudo sh scripts/build-with-mihomo.sh --no-proxy
+```
+
+之后每次直接执行带 `--no-proxy` 的命令即可；自动 Git 更新后会透传这一参数，不会重新落回 Mihomo 模式。无效参数和 `--help` 均在 Git/Docker 操作前处理。
+
 M1 页面按分组折叠展示（未分组单独展示）；「＋ 添加分组」或分组「设置」可填写可选内网 IP 前缀，设备添加弹窗只需填写组网 IP、端口等。设备卡片在每个可用 IP 后有切换按钮；选中地址保存到数据库，并且只有点击「连接」才会发起该地址的 ADB 连接。修改分组前缀会动态更新派生内网 IP，若移除前缀则自动恢复选择组网 IP（但不进行连接）。
 
 浏览器访问 `http://<NAS-IP>:8765`。如果保留 `EASYADB_BIND_IP=127.0.0.1`，需在 NAS 本机打开 `http://127.0.0.1:8765` 或使用 SSH 隧道。页面的「访问密钥」填写 `.env` 中的 `EASYADB_TOKEN`。**不要将管理端口直接暴露到公网。**
