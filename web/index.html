@@ -463,10 +463,10 @@ function openTempEditor(d,editor){
  const save=elem('button','','保存临时线路');save.type='submit';
  const cancel=action('取消',()=>{editor.hidden=true;},'secondary');
  editor.append(ipLabel,portLabel,save,cancel);
- editor.addEventListener('submit',event=>{
+ editor.onsubmit=event=>{
   event.preventDefault();
   if(!editor.hidden)saveTempAddress(d.id,ip.value.trim(),Number(port.value));
- },{once:true});
+ };
  ip.focus();
 }
 async function saveTempAddress(id,ip,port){
