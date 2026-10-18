@@ -87,7 +87,7 @@ def test_unresponsive_half_open_browser_releases_its_session(monkeypatch, tmp_pa
             # Deliberately ignore diagnostic receipts; no text/control input.
             with pytest.raises(WebSocketDisconnect):
                 for _ in range(12):
-                    ws.receive()
+                    ws.receive_json()
         assert made[0].finished.is_set()
         assert made[0].cleanup_complete
         assert device["id"] not in mod.live_registry.sessions
@@ -127,7 +127,7 @@ def test_old_or_malformed_heartbeat_cannot_keep_another_session_alive(monkeypatc
             ws.send_json({"type": "heartbeat", "session_id": "stale-session"})
             with pytest.raises(WebSocketDisconnect):
                 for _ in range(12):
-                    ws.receive()
+                    ws.receive_json()
         assert made[0].finished.is_set()
         assert device["id"] not in mod.live_registry.sessions
 
@@ -162,7 +162,7 @@ def test_slow_video_websocket_write_does_not_pin_the_worker(monkeypatch, tmp_pat
             next_kind(ws, "starting")
             with pytest.raises(WebSocketDisconnect):
                 for _ in range(12):
-                    ws.receive()
+                    ws.receive_json()
         assert made[0].finished.is_set()
         assert device["id"] not in mod.live_registry.sessions
 
