@@ -190,4 +190,38 @@ assert.equal(multiPlayer.diagnostics().appendCalls,2);
 multiPlayer.destroy();
 assert.deepEqual(errors,[]);
 
+// Opt-in local catch-up: leave the already working default player at 1.0x.
+const normalVideo=new VideoMock();
+normalVideo.playbackRate=1;
+const normalPlayer=api.create('mse',normalVideo);
+normalPlayer.initialize({format:'fmp4',mime});
+MediaSourceMock.last.open();
+const normalSB=MediaSourceMock.last.source;
+normalSB.buffered=buffered([[0,1.4]]);
+normalVideo.currentTime=0.1;
+normalPlayer._pump();
+assert.equal(normalVideo.playbackRate,1,'default/colorOS must not change speed');
+normalPlayer.destroy();
+
+const fastVideo=new VideoMock();
+fastVideo.playbackRate=1;
+const fastPlayer=api.create('mse',fastVideo,{lowLatency:true});
+fastPlayer.initialize({format:'fmp4',mime});
+MediaSourceMock.last.open();
+const fastSB=MediaSourceMock.last.source;
+fastSB.buffered=buffered([[0,1.4]]);
+fastVideo.currentTime=0.1;
+fastPlayer._pump();
+assert.equal(fastVideo.playbackRate,1.15,'opt-in catches up with modest MSE backlog');
+assert.equal(fastPlayer.diagnostics().lowLatency,true);
+assert.equal(fastPlayer.diagnostics().playbackRate,1.15);
+fastVideo.currentTime=1.0;
+fastPlayer._pump();
+assert.equal(fastVideo.playbackRate,1,'restore normal playback near live edge');
+fastVideo.currentTime=0.1;
+fastPlayer._pump();
+fastPlayer.destroy();
+assert.equal(fastVideo.playbackRate,1,'stop restores playback speed');
+assert.deepEqual(errors,[]);
+
 console.log('MSE adapter contract and reserved WebCodecs stub: OK');

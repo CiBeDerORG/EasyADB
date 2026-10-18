@@ -96,6 +96,11 @@ assert.match(startButton.textContent,/已选 1/);
 assert.equal(checkbox(1).checked,false);
 assert.equal(quality(0).value,'economy');
 assert.equal(quality(1).value,'economy');
+const latency0=picker.children[0].children.at(-1).children[0];
+assert.equal(latency0.checked,false,'low latency stays off by default');
+latency0.checked=true;latency0.fire('change');
+assert.equal(multi.getChoice('id-1').low_latency,true);
+assert.equal(multi.getChoice('id-2').low_latency,false);
 // Editing one device never overwrites another.
 quality(0).value='custom';quality(0).fire('change');
 assert.equal(multi.getChoice('id-1').profile,'custom');
@@ -118,6 +123,7 @@ init(a,'only-one');
 const ca=multi.cards.get('id-1');
 assert.equal(ca.toggle.disabled,false,'control independent of video playing');
 assert.equal(ca.quality.profile,'custom');
+assert.equal(ca.lowLatency,true,'local player setting is pinned to device A only');
 assert.match(ca.box.children[1].textContent,/自定义/);
 a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
  mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
@@ -157,6 +163,15 @@ assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
 assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
 c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
 assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
+c.emit('diagnostic',{session_id:'second-b',stage:'streaming',
+ control_warning:'android_input_permission'});
+assert.equal(cc.permissionWarningShown,true);
+assert.equal(cc.enabled,false,'Android denial disables only this device control');
+assert.equal(cc.toggle.disabled,true,'do not imply refused Android input still works');
+assert(c.sent.some(msg=>msg.includes('"type":"control_disable"')));
+c.emit('control_disabled',{session_id:'second-b'});
+assert.match(cc.keyStatus.textContent,/INJECT_EVENTS/,'do not overwrite permission explanation');
+assert.equal(cb.enabled,true,'other device is unaffected');
 assert.equal(grid.children.length,2,'two selected devices create exactly two visible cards');
 // BUG regression: stop all, wait for actual cleanup acknowledgments, then
 // start the same selection again. No old window may remain behind.

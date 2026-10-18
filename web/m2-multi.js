@@ -29,7 +29,8 @@ const choice=(options,value)=>{
  for(const [id,label] of options){const opt=make('option','',label);opt.value=id;opt.selected=id===String(value);select.append(opt);}
  select.value=String(value);return select;
 };
-const defaults=()=>({profile:'economy',max_size:960,video_bit_rate:4000000,max_fps:24});
+const defaults=()=>({profile:'economy',max_size:960,video_bit_rate:4000000,max_fps:24,
+ low_latency:false});
 const qualityPayload=v=>v.profile==='custom'
  ?{profile:'custom',quality:{max_size:v.max_size,video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
  :{profile:v.profile};
@@ -131,6 +132,13 @@ class MultiView{
    const summary=make('summary','','检测记录');
    const log=make('div','multi-check-log',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
    details.append(summary,log);item.append(details);
+   // Separate per-device playback option, deliberately NOT a scrcpy setting.
+   const latency=make('label','multi-latency'),low=make('input');
+   low.type='checkbox';low.checked=value.low_latency===true;low.disabled=busy||!connected;
+   low.setAttribute('aria-label',d.name+' 低延迟播放实验');
+   low.addEventListener('change',()=>this.setChoice(d.id,{low_latency:low.checked}));
+   latency.append(low,make('span','','低延迟播放实验（仅浏览器追帧，不改变手机编码）'));
+   item.append(latency);
    this.picker.append(item);
   }
   const available=[...this.selected].filter(id=>ids.has(id)&&!this.cards.has(id));
@@ -154,7 +162,8 @@ class MultiView{
   }
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return;}
   // Snapshot EACH selected phone's independent quality before launching.
-  const batch=selected.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id))}));
+  const batch=selected.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
+    lowLatency:this.getChoice(d.id).low_latency===true}));
   this.opening=true;
   // One explicit user request, staggered by authenticated server "init"
   // completion. Avoid pushing/initializing 2-4 scrcpy+FFmpeg pipelines
@@ -170,14 +179,16 @@ class MultiView{
   if(!next){
    this.opening=false;this.updatePicker();return;
   }
-  this.open(next.device,next.quality,()=>this._launchNext());
+  this.open(next.device,next.quality,()=>this._launchNext(),next.lowLatency);
  }
- open(d,quality,nextLaunch){
-  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,ws:null,session:null,
+ open(d,quality,nextLaunch,lowLatency=false){
+  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,
+   ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    touch:null,player:null,video:null,meter:new root.EasyADBTraffic.Meter(performance.now()),
    metrics:new root.EasyADBMetrics.QualityMeter(performance.now()),lastInput:false,
    startSettled:false,nextLaunch,adbCheckMs:null,frameLastAt:null,frameCount:0,
+   permissionWarningShown:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name),make('span','muted',d.selected_serial));
@@ -185,13 +196,18 @@ class MultiView{
   video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
   const state=make('div','status','正在建立本轮会话…');
   const stats=make('div','muted','等待浏览器诊断…');
-  const qualityLine=make('div','muted','本设备画质：'+briefQuality(this.getChoice(d.id))+'（本轮固定）');
+  const qualityLine=make('div','muted','本设备画质：'+briefQuality(this.getChoice(d.id))+
+   (lowLatency?' / 低延迟播放实验已开启':'')+'（本轮固定）');
   const detail=make('details','multi-log'),summary=make('summary','','本设备诊断日志 / MSE / 资源详情');
   const initInfo=make('div','muted',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
   const diagnostic=make('div','multi-check-log','等待本轮视频统计…');
   const eventLog=make('div','multi-check-log','等待本轮会话日志…');
   const history=make('div','muted','本设备暂无历史画质采样（仅在本页内存保留）');
-  detail.append(summary,initInfo,diagnostic,eventLog,history);
+  const xiaomi=make('details','multi-help'),
+   xiaomiTitle=make('summary','','小米 / 澎湃 OS：画面正常但无法控制？'),
+   xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
+  xiaomi.append(xiaomiTitle,xiaomiHelp);
+  detail.append(summary,initInfo,diagnostic,eventLog,history,xiaomi);
   const buttons=make('div','buttons');
   const toggle=make('button','secondary','启用远程控制'),stop=make('button','danger','停止此路');
   toggle.type='button';stop.type='button';toggle.disabled=true;
@@ -232,7 +248,7 @@ class MultiView{
   const refresh=()=>{
    // Control readiness belongs to scrcpy's control socket, not to the
    // browser decoder's "playing" event (which may be delayed/throttled).
-   const canToggle=!card.closed&&card.ready&&
+   const canToggle=!card.closed&&card.ready&&!card.permissionWarningShown&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
    toggle.disabled=!canToggle;
@@ -245,7 +261,7 @@ class MultiView{
   card.refresh=refresh;
   try{
    card.player=root.EasyADBPlayers.create('mse',video,{
-    lowOverhead:true,
+    lowOverhead:true,lowLatency:card.lowLatency,
     onState:stage=>{
      if(card.closed)return;
      if(stage==='ready'){if(card.state!=='stopping'){card.state='ready';mark('MSE 已就绪，控制通道可单独开启；等待首帧…');refresh();}}
@@ -288,6 +304,17 @@ class MultiView{
       try{ws.send(JSON.stringify({type:'heartbeat',session_id:card.session}));}
       catch{mark('心跳发送失败，本路已停止',true);this.end(card,false);return;}
      }
+     if(m.control_warning==='android_input_permission'&&!card.permissionWarningShown){
+      card.permissionWarningShown=true;
+      keyStatus.textContent='Android 已拒绝输入注入（INJECT_EVENTS）。小米/澎湃 OS 请检查 USB 调试（安全设置），授权并重启手机。';
+      mark('检测到 Android 输入权限拒绝；画面可继续观看，但当前远控未被手机接受。',true);
+      if(card.touch)card.touch.disable();
+      card.enabled=false;card.pending=false;refresh();
+      if(card.session&&ws.readyState===WebSocket.OPEN){
+       try{ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));}
+       catch{this.end(card,false);return;}
+      }
+     }
      const traffic=card.meter.sample(performance.now());
      const pd=card.player.diagnostics();
      const stat=card.metrics.sample(video,performance.now(),{
@@ -314,7 +341,9 @@ class MultiView{
       ' / 待追加 '+pd.queueChunks+' 块 '+pd.queueBytes+'B'+
       ' / append '+pd.appendCalls+' / update '+pd.completedUpdates+
       ' / video error '+(pd.videoError??'无')+
-      '\n本路 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+fmt(m.proc_rss_mib,2)+' MiB';
+      '\n本路 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+fmt(m.proc_rss_mib,2)+' MiB'+
+      ' / 播放倍率 '+fmt(pd.playbackRate)+'x / 低延迟实验 '+(pd.lowLatency?'开':'关')+
+      ' / Android 控制提示 '+(m.control_warning||'无已确认拒绝');
     }else if(m.type==='init'){
      card.ready=m.control_available===true;
      card.size={width:m.width,height:m.height};
@@ -340,12 +369,14 @@ class MultiView{
       if(!card.ready||!card.touch||
          (card.state!=='ready'&&card.state!=='playing'))throw Error('控制通道未就绪');
       card.touch.enable(card.size);card.enabled=true;card.pending=false;
-      keyStatus.textContent='已启用：此卡的鼠标、文字和导航仅作用于 '+card.name;refresh();
+      keyStatus.textContent='控制 Socket 已开启：此卡的指令仅发往 '+card.name+
+        '；这不代表 Android 已授予模拟输入权限，请用“主页”验证。';refresh();
      }catch(e){mark(e.message,true);this.end(card,false);}
     }else if(m.type==='control_disabled'){
      card.enabled=false;card.pending=false;card.lastInput=false;
      if(card.touch)card.touch.disable();
-     keyStatus.textContent='控制已关闭，此路仅观看';refresh();
+     if(!card.permissionWarningShown)keyStatus.textContent='控制已关闭，此路仅观看';
+     refresh();
     }else if(m.type==='input_accepted'){
      card.lastInput=false;
      if(m.kind==='input_text')input.value='';

@@ -22,6 +22,10 @@ class MSEPlayer {
     this.queue=[];
     this.pendingBytes=0;
     this._maxAppendChunks=callbacks.lowOverhead===true?4:1;
+    // Per-device opt-in, off by default (preserve ColorOS behavior). Faster
+    // playback only catches up with an existing buffered backlog; it cannot
+    // eliminate Android encoder or network latency.
+    this.lowLatency=callbacks.lowLatency===true;
     this.closed=false;
     this._lastBufferedEnd=0;
     this._waitingAtEdge=false;
@@ -119,7 +123,15 @@ class MSEPlayer {
       // throughout a continuous stream.
       const outsideLatest=position<latestStart-0.03||
         (newer&&position>end+0.03);
-      const fallingBehind=end-position>2.5;
+      const ahead=end-position;
+      if(this.lowLatency){
+        // Speed up a modest backlog without repeatedly seeking to an
+        // undecodable point between scrcpy's widely spaced H264 keyframes.
+        // Existing >2.5s recovery seeks are left unchanged.
+        const rate=ahead>0.60&&ahead<2.5?1.15:1;
+        if(this.video.playbackRate!==rate)this.video.playbackRate=rate;
+      }
+      const fallingBehind=ahead>2.5;
       const recovering=this._waitingAtEdge&&newer&&
         position>=this._lastBufferedEnd-0.15;
       if(outsideLatest||fallingBehind||recovering){
@@ -182,7 +194,8 @@ class MSEPlayer {
       updateIdleMs:this._lastUpdateAt===null?null:Math.max(0,Date.now()-this._lastUpdateAt),
       sourceRanges:0,rangeStart:null,latestStart:null,rangeEnd:null,
       currentTime:v.currentTime,paused:v.paused,seeking:Boolean(v.seeking),
-      videoError:v.error?v.error.code:null
+      videoError:v.error?v.error.code:null,
+      lowLatency:this.lowLatency,playbackRate:v.playbackRate
     };
     try{
       if(ranges&&ranges.length){
@@ -228,6 +241,9 @@ class MSEPlayer {
       try{if(sb.updating)sb.abort();}catch{}
     }
     this.queue=[];this.pendingBytes=0;this._playPending=false;
+    if(this.lowLatency){
+      try{this.video.playbackRate=1;}catch{}
+    }
     try{this.video.pause();this.video.removeAttribute('src');this.video.load();}catch{}
     if(this.objectUrl)URL.revokeObjectURL(this.objectUrl);
     this.mediaSource=null;this.sourceBuffer=null;this.objectUrl=null;

@@ -19,6 +19,7 @@ from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
 from .m2_quality import resolve_live_quality
 from .m2_resources import ProcessMeter
+from .m2_control_diag import classify_control_log
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
@@ -202,6 +203,9 @@ class LiveVideo:
         self.ffmpeg_proc = None
         self._resource_lock = threading.Lock()
         self._resource_meter = ProcessMeter()
+        self._adb_log_fd = None  # dup of THIS worker's private stdout, never logcat
+        self._control_attempted = False
+        self._control_warning = None
         # Session-local, read-only telemetry. No ADB polling, videos or tokens.
         self._born = time.monotonic()
         self._metric_lock = threading.Lock()
@@ -237,9 +241,26 @@ class LiveVideo:
         with self._resource_lock:
             pids = [getattr(p, "pid", None) for p in (self.adb_proc, self.ffmpeg_proc)]
         resources = self._resource_meter.sample(pids, now)
+        # Only after explicit user input. os.pread does not change the shared
+        # shell log write offset; raw shell output never leaves this server.
+        with self._touch_lock:
+            attempted = self._control_attempted
+        if attempted and self._control_warning is None:
+            with self._resource_lock:
+                fd = self._adb_log_fd
+                if fd is not None:
+                    try:
+                        size = os.fstat(fd).st_size
+                        chunk = os.pread(fd, min(size, 65536), max(0, size - 65536))
+                        warning = classify_control_log(chunk)
+                        if warning:
+                            self._control_warning = warning
+                    except (OSError, ValueError):
+                        pass
         with self._metric_lock:
             return {
                 **resources,
+                "control_warning": self._control_warning,
                 "stage": self._phase,
                 "elapsed_ms": round((now - self._born) * 1000),
                 "phone_packets": self._phone_packets,
@@ -314,6 +335,7 @@ class LiveVideo:
             if not isinstance(payload, dict) or payload.get("session_id") != self.session_id:
                 raise InvalidTouch("触摸请求不属于当前视频会话")
             packet, next_pressed = encode_touch(payload, self.touch_size, self.touch_pressed)
+            self._control_attempted = True
             try:
                 self.control_sock.sendall(packet)
             except (OSError, socket.timeout) as exc:
@@ -334,6 +356,7 @@ class LiveVideo:
             if not isinstance(payload, dict) or payload.get("session_id") != self.session_id:
                 raise InvalidTouch("输入请求不属于当前视频会话")
             packet = encoder(payload)  # strict schema/key whitelist BEFORE any write
+            self._control_attempted = True
             try:
                 self.control_sock.sendall(packet)
             except (OSError, socket.timeout) as exc:
@@ -427,6 +450,8 @@ class LiveVideo:
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
+                with self._resource_lock:
+                    self._adb_log_fd = os.dup(adb_log.fileno())
                 self._phase_set("推送 scrcpy-server")
                 _run_adb(self.serial, "push", str(self.server_file), remote)
                 remote_pushed = True
@@ -582,6 +607,14 @@ class LiveVideo:
         except (OSError, subprocess.SubprocessError) as exc:
             failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
         finally:
+            with self._resource_lock:
+                fd = self._adb_log_fd
+                self._adb_log_fd = None
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
             self._phase_set("结束并清理视频会话")
             # finished means the worker is terminal; cleanup_complete is the
             # stronger promise required before the device slot can be reused.
