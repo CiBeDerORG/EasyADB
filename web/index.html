@@ -633,7 +633,20 @@ function startLive(){
     receivedStarting=true;liveAdbCheckMs=msg.adb_check_ms;
     liveSessionState(liveState==='stopping'?'stopping':'starting',msg.session_id);
     liveStatus('正在启动 '+msg.selected_serial+' 的 H.264 视频流…（ADB 检查 '+liveAdbCheckMs+'ms）');
-   }else if(msg.type==='diagnostic'){liveDiagnostic(msg);}
+   }else if(msg.type==='diagnostic'){
+    // Reply only to this authenticated session's existing diagnostics.
+    // No independent timer, device polling or background ADB heartbeat.
+    if(liveSessionId&&msg.session_id===liveSessionId&&
+       liveState!=='stopping'&&ws.readyState===WebSocket.OPEN){
+     try{ws.send(JSON.stringify({type:'heartbeat',session_id:liveSessionId}));}
+     catch(error){
+      liveReceivedError=true;
+      liveStatus('浏览器会话心跳发送失败，本轮投屏已结束。','error');
+      stopLive();return;
+     }
+    }
+    liveDiagnostic(msg);
+   }
    else if(msg.type==='stopping'){
     if(liveTouch)liveTouch.disable();
     liveTouchEnabled=false;liveTouchPending=false;
@@ -785,6 +798,13 @@ $('liveStop').addEventListener('click',()=>{
 });
 $('liveVideo').addEventListener('click',()=>{if(livePlayer)livePlayer.resume();});
 window.addEventListener('beforeunload',stopLive);
+window.addEventListener('pagehide',stopLive);
+window.addEventListener('offline',()=>{
+ if(!liveWS)return;
+ liveReceivedError=true;
+ stopLive();
+ liveStatus('浏览器网络已断开，本轮投屏已结束；请恢复网络后手动重新开始。','error');
+});
 
 async function runVideoProbe(profile){
  const id=selected;if(!id||loading)return;
