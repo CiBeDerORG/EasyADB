@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
+from .m2_quality import resolve_live_quality
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, PROFILES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
@@ -176,9 +177,8 @@ def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
 
 
 class LiveVideo:
-    def __init__(self, serial, profile, server_file=None):
-        if profile not in PROFILES:
-            raise ValueError("未知视频档位")
+    def __init__(self, serial, profile, server_file=None, quality=None):
+        self.settings = resolve_live_quality(profile, quality)
         self.serial = serial
         self.profile = profile
         # Opaque ID for this user-started session. Used for lifecycle messages
@@ -429,7 +429,7 @@ class LiveVideo:
                 if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
                     raise VideoProbeError("创建视频专用 ADB 转发失败")
                 port = int(port_text)
-                settings = PROFILES[self.profile]
+                settings = self.settings
                 cmd = [
                     "adb", "-s", self.serial, "shell", f"CLASSPATH={remote}",
                     "app_process", "/", "com.genymobile.scrcpy.Server", VERSION,
@@ -550,7 +550,7 @@ class LiveVideo:
                             self._ready_at = time.monotonic()
                             self._phase = "已生成 MP4 初始化段"
                         self._emit(("init", {"mime": mime, "width": width, "height": height,
-                                             "profile": self.profile,
+                                             "profile": self.profile, "requested": dict(self.settings),
                                              "codec": "h264", "control_available": True,
                                              "device": name.decode("utf-8", "replace")}))
                         self._emit(("bytes", init))
