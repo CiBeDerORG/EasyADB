@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from .m2_touch import InvalidTouch, encode_touch
+from .m2_keys import encode_text, encode_key
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, PROFILES, SERVER_FILE,
     VERSION, VideoProbeError, _connect_forwarded, _read_exact, _run_adb,
@@ -297,6 +298,30 @@ class LiveVideo:
                 raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
             self.touch_pressed = next_pressed
             self.touch_point = (payload["x"], payload["y"]) if next_pressed else None
+
+    def _send_input(self, payload, encoder):
+        """Send one allowlisted message on this live session's control socket.
+
+        Serialize text/key writes with touch, never reuse a stale control socket.
+        The caller already checked the same WS opt-in and current selected route.
+        """
+        with self._touch_lock:
+            if self.stop_event.is_set() or self.finished.is_set() or not self.control_sock or not self.touch_size:
+                raise InvalidTouch("当前投屏控制通道尚未就绪")
+            if not isinstance(payload, dict) or payload.get("session_id") != self.session_id:
+                raise InvalidTouch("输入请求不属于当前视频会话")
+            packet = encoder(payload)  # strict schema/key whitelist BEFORE any write
+            try:
+                self.control_sock.sendall(packet)
+            except (OSError, socket.timeout) as exc:
+                self.stop_event.set()
+                raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
+
+    def send_text(self, payload):
+        self._send_input(payload, encode_text)
+
+    def send_nav(self, payload):
+        self._send_input(payload, encode_key)
 
     def release_touch(self):
         """Explicit disable releases this session's own pressed finger only."""
