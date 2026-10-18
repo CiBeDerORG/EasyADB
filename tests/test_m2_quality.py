@@ -174,7 +174,9 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
         assert f'id="{field}"' in page
     for name in ("economy", "baseline", "native", "custom"):
         assert f'value="{name}"' in page
-    assert "$('liveProfile').disabled=loading||!!liveWS;" in page
+    assert "$('liveProfile').disabled=loading||!!liveWS||" in page
+    assert 'id="multiProfile"' in page
+    assert '<option value="economy" selected>' in page
     assert "if(msg.player!==playerMode)" in page
     assert "requested.max_fps" in page and "实际编码" in page
     assert "selected_serial:serial,player:playerMode" in page

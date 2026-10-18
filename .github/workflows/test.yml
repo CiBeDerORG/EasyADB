@@ -1,9 +1,8 @@
 name: M2 tests
+# Deliberately run once after an entire development batch is ready.
+# No automatic Runner on individual GitHub pushes or pull requests.
 on:
-  push:
-    branches: [feat/m2-web-control]
-  pull_request:
-    branches: [feat/m1-multi-device]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
