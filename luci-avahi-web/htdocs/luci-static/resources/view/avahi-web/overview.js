@@ -91,9 +91,9 @@ return view.extend({
 				type: 'button',
 				'class': 'cbi-button ' + (kind === 'danger' ? 'cbi-button-negative' :
 					kind === 'positive' ? 'cbi-button-positive' : 'cbi-button-neutral'),
-				disabled: disabled || runtimeBusy || busy || refreshing,
+				disabled: disabled || runtimeBusy || busy || refreshing || authBusy,
 				click: function() {
-					if (disabled || runtimeBusy || busy || refreshing) return;
+					if (disabled || runtimeBusy || busy || refreshing || authBusy) return;
 					var perform = function() {
 						runtimeBusy = true;
 						drawComponents();
@@ -128,16 +128,17 @@ return view.extend({
 				type: 'button',
 				'class': 'cbi-button ' + (action === 'install' ? 'cbi-button-positive' :
 					action === 'remove' ? 'cbi-button-negative' : 'cbi-button-action'),
-				disabled: disabled || runtimeBusy || busy || refreshing,
+				disabled: disabled || runtimeBusy || busy || refreshing || authBusy,
 				click: function() {
-					if (disabled || runtimeBusy || busy || refreshing) return;
+					if (disabled || runtimeBusy || busy || refreshing || authBusy) return;
 					return preview(action, group.id);
 				}
 			}, [ label ]);
 		}
 		function drawComponents() {
-			if (manualButton) manualButton.disabled = busy || runtimeBusy || refreshing;
-			if (indexButton) indexButton.disabled = busy || runtimeBusy || refreshing;
+			if (manualButton) manualButton.disabled = busy || runtimeBusy || refreshing || authBusy;
+			if (indexButton) indexButton.disabled = busy || runtimeBusy || refreshing || authBusy;
+			renderAuth(authOutput);
 			var s = currentStatus, conflict = s.running === 'yes' && s.umdns === 'yes';
 			var cards = groups.map(function(group) {
 				var pkg = packageState(group), running = s[group.process] === 'yes';
@@ -148,6 +149,8 @@ return view.extend({
 				var ready = pkg.state === 'complete' && missingBins.length === 0 && init;
 				var otherRunning = group.id === 'avahi' ? s.umdns === 'yes' :
 					group.id === 'umdns' ? s.running === 'yes' : false;
+				var otherBoot = group.id === 'avahi' ? s['umdns-enabled'] === 'yes' :
+					group.id === 'umdns' ? s['avahi-daemon-enabled'] === 'yes' : false;
 				var utilityRepair = group.id === 'avahi' && pkg.state === 'partial' &&
 					currentPackages['avahi-dbus-daemon'] && currentPackages['avahi-dbus-daemon'].installed &&
 					currentPackages['avahi-utils'] && !currentPackages['avahi-utils'].installed;
@@ -164,10 +167,10 @@ return view.extend({
 					]);
 				});
 				var actions = [
-					serviceButton('启动', group, group.start, !ready || running || otherRunning, 'positive')
+					serviceButton('启动', group, group.start, !ready || running || otherRunning || (group.id === 'avahi' && s.dbus !== 'yes'), 'positive')
 				];
 				if (group.stop) actions.push(serviceButton('停止', group, group.stop, !running, 'danger'));
-				if (group.enable) actions.push(serviceButton('启用自启', group, group.enable, !ready || enabled, 'positive'));
+				if (group.enable) actions.push(serviceButton('启用自启', group, group.enable, !ready || enabled || otherBoot, 'positive'));
 				if (group.disable) actions.push(serviceButton('关闭自启', group, group.disable, !init || !enabled, 'neutral'));
 				var missing = [];
 				if (pkg.state !== 'unknown' && pkg.missing.length)
@@ -176,6 +179,10 @@ return view.extend({
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少运行文件：' + missingBins.join('、') ]));
 				if (pkg.state === 'complete' && !init)
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少服务启动脚本：' + group.init ]));
+				if (group.id === 'avahi' && s.dbus !== 'yes')
+					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ 'Avahi 启动前须先启动 D-Bus。' ]));
+				if (otherBoot && group.enable)
+					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '另一项 mDNS 服务已启用开机自启，请先关闭对方的自启。' ]));
 				if (otherRunning && group.stop)
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ utilityRepair ?
 						'当前只缺 avahi-utils，可以单独补齐发现工具；启动或更新守护进程仍需先停止 umdns。' :
@@ -267,7 +274,7 @@ return view.extend({
 			}).then(function() { setBusy(false); });
 		}
 		function preview(operation, group) {
-			if (busy || runtimeBusy || refreshing) return;
+			if (busy || runtimeBusy || refreshing || authBusy) return;
 			setBusy(true);
 			operationDetails.open = true;
 			operationOutput.textContent = '正在模拟并检查软件包依赖变更……';
@@ -286,7 +293,7 @@ return view.extend({
 					E('div', { 'class': 'right' }, [
 						E('button', { 'class': 'btn', click: function() { ui.hideModal(); } }, [ '取消' ]), ' ',
 						E('button', { 'class': 'btn cbi-button-apply', click: function() {
-							if (confirmed || busy || runtimeBusy || refreshing) return;
+							if (confirmed || busy || runtimeBusy || refreshing || authBusy) return;
 							confirmed = true;
 							ui.hideModal();
 							return execute(operation, group);
@@ -300,14 +307,14 @@ return view.extend({
 			});
 		}
 		function refreshIndex() {
-			if (busy || runtimeBusy || refreshing) return;
+			if (busy || runtimeBusy || refreshing || authBusy) return;
 			var confirmed = false;
 			ui.showModal('更新 APK 软件源索引', [
 				E('p', [ '仅刷新软件源索引，不升级已安装的软件包。' ]),
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
-						if (confirmed || busy || runtimeBusy || refreshing) return;
+						if (confirmed || busy || runtimeBusy || refreshing || authBusy) return;
 						confirmed = true;
 						ui.hideModal();
 						setBusy(true);
@@ -356,17 +363,17 @@ return view.extend({
 		function authButton(label, action, disabled) {
 			return E('button', { type: 'button',
 				'class': action === 'revoke' ? 'cbi-button cbi-button-negative' : 'cbi-button',
-				disabled: disabled || authBusy,
+				disabled: disabled || authBusy || busy || runtimeBusy || refreshing,
 				click: function() {
-					if (disabled || authBusy) return;
+					if (disabled || authBusy || busy || runtimeBusy || refreshing) return;
 					return confirmAuth(action);
 				}
 			}, [ label ]);
 		}
 		function applyAuth(action) {
-			if (authBusy) return Promise.resolve();
+			if (authBusy || busy || runtimeBusy || refreshing) return Promise.resolve();
 			authBusy = true;
-			renderAuth(authOutput);
+			drawComponents();
 			return auth(action).then(function(out) {
 				var info = values(out);
 				if (action !== 'revoke') {
@@ -392,15 +399,15 @@ return view.extend({
 				alert('授权操作失败：' + e.message, true);
 			}).then(refreshAuth).then(function() {
 				authBusy = false;
-				renderAuth(authOutput);
+				drawComponents();
 			}, function(e) {
 				authBusy = false;
-				renderAuth(authOutput);
+				drawComponents();
 				alert('读取账号状态失败：' + e.message, true);
 			});
 		}
 		function confirmAuth(action) {
-			if (authBusy) return;
+			if (authBusy || busy || runtimeBusy || refreshing) return;
 			var warning = action === 'create'
 				? '创建名为 easyadb 的最小权限 RPCD 账户，随机密码仅显示一次。'
 				: action === 'rotate'
@@ -412,7 +419,7 @@ return view.extend({
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
-						if (confirmed || authBusy) return;
+						if (confirmed || authBusy || busy || runtimeBusy || refreshing) return;
 						confirmed = true;
 						ui.hideModal();
 						return applyAuth(action);
