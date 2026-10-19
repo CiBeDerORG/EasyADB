@@ -118,7 +118,7 @@ function modalConfirm() {
     for(const needle of ['组件与服务管理','部分安装','avahi-utils','缺少软件包','可能存在 mDNS','NAS 接口授权','最近一次 NAS 扫描'])
         assert.ok(text(page).includes(needle), 'Missing UI text '+needle);
     const cards = [];
-    walk(page,n=>{ if(n.props && typeof n.props.style === 'string' && n.props.style.includes('grid-template-columns')) cards.push(n); });
+    walk(page,n=>{ if(n.props && typeof n.props.style === 'string' && n.props.style.includes('grid-template-columns:repeat(auto-fit,')) cards.push(n); });
     assert.equal(cards.length,1,'Component cards should use a responsive grid');
     const componentCards = [];
     walk(page,n=>{ if (String(n.props?.class || '').includes('avahi-component-card')) componentCards.push(n); });
