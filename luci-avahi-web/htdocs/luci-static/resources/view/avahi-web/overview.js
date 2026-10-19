@@ -51,6 +51,7 @@ return view.extend({
 		var authStateNode = E('div'), authCredentialNode = E('div');
 		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
 		var busy = false, packageButtons = [];
+		var currentStatus = {}, currentPackages = {}, runtimeBusy = false;
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
 			{ id: 'dbus', label: 'D-Bus', packages: [ 'dbus' ] },
@@ -61,47 +62,132 @@ return view.extend({
 				'class': error ? 'alert-message warning' : 'alert-message notice'
 			}, [ text ]) : '');
 		}
-		function renderStatus(output) {
-			var s = values(output);
-			statusNode.replaceChildren(E('p', [
-				'Avahi: ' + (s.running === 'yes' ? _('Running') : _('Stopped')) + ' / ',
-				'D-Bus: ' + (s.dbus === 'yes' ? _('Running') : _('Stopped')) + ' / ',
-				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped')),
-				E('span', [ ' | ' + _('Boot: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('On') : _('Off')) +
-					', umdns ' + (s['umdns-enabled'] === 'yes' ? _('On') : _('Off')) ])
-			]));
-			if (s.running === 'yes' && s.umdns === 'yes')
-				statusNode.appendChild(E('p', { 'class': 'alert-message warning' }, [
-					_('Both mDNS daemons are running. Resolve the UDP 5353 conflict before scanning.')
-				]));
+
+		function statusMark(label, kind) {
+			var colors = {
+				ok: { background: '#e3f4e9', color: '#126a39', border: '#9dd7b1' },
+				warn: { background: '#fff3d6', color: '#855600', border: '#e4c477' },
+				bad: { background: '#fce8e6', color: '#ad3029', border: '#e4a5a0' },
+				idle: { background: '#e9ecef', color: '#4e5863', border: '#c7cdd1' }
+			};
+			var c = colors[kind] || colors.idle;
+			return E('span', { style: 'display:inline-block;margin:3px 6px 3px 0;padding:3px 9px;border-radius:5px;font-weight:600;border:1px solid ' +
+				c.border + ';background:' + c.background + ';color:' + c.color + ';' }, [ label ]);
 		}
-		function refreshStatus() {
-			return control('status').then(renderStatus).catch(function(e) { alert(e.message, true); });
+		function packageState(group) {
+			var known = group.packages.every(function(pkg) { return !!currentPackages[pkg]; });
+			if (!known) return { state: 'unknown', missing: group.packages };
+			var missing = group.packages.filter(function(pkg) { return !currentPackages[pkg].installed; });
+			return { state: missing.length === 0 ? 'complete' :
+				missing.length === group.packages.length ? 'absent' : 'partial', missing: missing };
 		}
-		function serviceButton(label, action) {
-			return E('button', { type: 'button', 'class': 'cbi-button',
+		function serviceButton(label, action, disabled, kind) {
+			return E('button', { type: 'button',
+				'class': 'cbi-button ' + (kind === 'danger' ? 'cbi-button-negative' :
+					kind === 'positive' ? 'cbi-button-positive' : 'cbi-button-neutral'),
+				disabled: disabled || runtimeBusy || busy,
 				click: function() {
+					if (disabled || runtimeBusy || busy) return;
 					var perform = function() {
+						runtimeBusy = true;
+						drawRuntime();
 						return control('service', [ action ]).then(function() {
-							alert(_('Service action completed.'));
-							return refreshStatus();
-						}).catch(function(e) { alert(e.message, true); });
+							alert('服务操作已完成，状态已重新检测。');
+						}).catch(function(e) {
+							alert('服务操作失败：' + e.message, true);
+						}).then(refreshStatus).then(function() {
+							runtimeBusy = false; drawRuntime();
+						}, function(e) {
+							runtimeBusy = false; drawRuntime(); alert(e.message, true);
+						});
 					};
 					if ([ 'stop', 'umdns-stop', 'umdns-disable' ].indexOf(action) < 0)
 						return perform();
-					ui.showModal(_('Confirm service action'), [
-						E('p', [ _('Changing mDNS services may interrupt discovery for other clients.') ]),
-						E('p', [ action ]),
+					ui.showModal('确认服务操作', [
+						E('p', [ '停止或禁用 mDNS 服务可能影响局域网中其他设备的发现功能。' ]),
+						E('p', [ '即将执行：' + label ]),
 						E('div', { 'class': 'right' }, [
-							E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+							E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
 							E('button', { 'class': 'btn cbi-button-apply', click: function() {
 								ui.hideModal();
 								return perform();
-							} }, [ _('Confirm') ])
+							} }, [ '确认操作' ])
 						])
 					]);
 				}
 			}, [ label ]);
+		}
+		function drawRuntime() {
+			var s = currentStatus;
+			var specs = [
+				{ key: 'avahi', label: 'Avahi', process: 'running', init: 'avahi-daemon', bins: [
+					{ field: 'avahi-daemon-bin', name: 'avahi-daemon' },
+					{ field: 'avahi-browse-bin', name: 'avahi-browse' }
+				], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable' },
+				{ key: 'dbus', label: 'D-Bus', process: 'dbus', init: 'dbus', bins: [
+					{ field: 'dbus-bin', name: 'dbus-daemon' }
+				], start: 'dbus-start' },
+				{ key: 'umdns', label: 'umdns', process: 'umdns', init: 'umdns', bins: [
+					{ field: 'umdns-bin', name: 'umdns' }
+				], start: 'umdns-start', stop: 'umdns-stop', enable: 'umdns-enable', disable: 'umdns-disable' }
+			];
+			var items = [];
+			specs.forEach(function(spec) {
+				var group = groups.find(function(g) { return g.id === spec.key; });
+				var pkg = packageState(group);
+				var running = s[spec.process] === 'yes';
+				var init = s[spec.init + '-init'] === 'yes';
+				var boot = s[spec.init + '-enabled'] === 'yes';
+				var missingBins = spec.bins.filter(function(b) { return s[b.field] !== 'yes'; })
+					.map(function(b) { return b.name; });
+				var complete = pkg.state === 'complete' && missingBins.length === 0 && init;
+				var activeConflict = spec.key === 'avahi' ? s.umdns === 'yes' :
+					spec.key === 'umdns' ? s.running === 'yes' : false;
+				var installText = pkg.state === 'complete' ?
+					(missingBins.length || !init ? '已装包，但运行文件不完整' : '安装完整') :
+					pkg.state === 'partial' ? '部分安装' :
+					pkg.state === 'absent' ? '未安装' : '尚未取得安装状态';
+				items.push(E('div', { style: 'padding:10px 0;border-bottom:1px solid var(--border-color-medium, #ddd);' }, [
+					E('div', [ E('strong', { style: 'font-size:1.06em;margin-right:12px;' }, [ spec.label ]),
+						statusMark(installText, complete ? 'ok' : pkg.state === 'partial' || pkg.state === 'complete' ? 'warn' : pkg.state === 'absent' ? 'bad' : 'idle'),
+						statusMark(running ? '运行中' : '已停止', running ? 'ok' : 'idle'),
+						statusMark(!init ? '缺少启动脚本' : boot ? '开机自启：开启' : '开机自启：关闭',
+							!init ? 'bad' : boot ? 'ok' : 'idle') ]),
+					pkg.missing.length && pkg.state !== 'unknown' ?
+						E('div', { style: 'margin:4px 0;' }, [ '缺少软件包：' + pkg.missing.join('、') ]) : '',
+					missingBins.length ? E('div', { style: 'margin:4px 0;' },
+						[ '缺少运行文件：' + missingBins.join('、') ]) : '',
+					E('div', { style: 'margin-top:7px;' }, [
+						serviceButton('启动', spec.start, !complete || running || activeConflict, 'positive'), ' ',
+						spec.stop ? serviceButton('停止', spec.stop, !running, 'danger') : '', ' ',
+						spec.enable ? serviceButton('启用开机自启', spec.enable, !complete || boot, 'positive') : '', ' ',
+						spec.disable ? serviceButton('关闭开机自启', spec.disable, !init || !boot, 'neutral') : ''
+					])
+				]));
+			});
+			if (s.running === 'yes' && s.umdns === 'yes') {
+				items.unshift(E('div', { 'class': 'alert-message warning', style: 'margin-bottom:10px;' },
+					[ '检测到 Avahi 与 umdns 进程同时运行，可能发生 mDNS 5353 端口冲突。建议只保留其中一项服务；本页面不会擅自停止任何服务。' ]));
+			}
+			statusNode.replaceChildren(
+				E('p', [ '页面会检测软件包、运行文件、进程和开机自启状态。安装软件包不等于服务一定已经启动。' ]),
+				items,
+				E('div', { style: 'margin-top:12px;' }, [
+					E('button', { type: 'button', 'class': 'cbi-button cbi-button-action',
+						disabled: runtimeBusy || busy, click: refreshStatus }, [ '重新检测全部状态' ])
+				])
+			);
+		}
+		function renderStatus(output) {
+			currentStatus = values(output);
+			drawRuntime();
+		}
+		function refreshStatus() {
+			return Promise.all([ control('status'), control('package', [ 'list' ]) ]).then(function(data) {
+				currentPackages = inventory(data[1]);
+				renderStatus(data[0]);
+				renderPackages(data[1]);
+			}).catch(function(e) { alert('状态检测失败：' + e.message, true); });
 		}
 		function setBusy(on) {
 			busy = on;
