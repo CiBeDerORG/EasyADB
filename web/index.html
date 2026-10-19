@@ -324,7 +324,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
 </dialog>
 <dialog class="device-dialog lab-dialog" id="displayLabDialog" aria-labelledby="labTitle">
- <div class="modal-head"><h2 id="labTitle">电脑模式实验室 · A/B 组</h2>
+ <div class="modal-head"><h2 id="labTitle">电脑模式实验室 · A / Overlay / 华为 B 组</h2>
   <button type="button" class="secondary" id="labClose" aria-label="关闭实验室">×</button></div>
  <div class="modal-body">
   <p class="hint">只操作当前选定的已连接 ADB 设备。新建虚拟屏幕和模拟副屏为不同实验，不能并行；实验画面沿用原有实时画面卡片。</p>
@@ -338,16 +338,30 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
     <button type="button" class="secondary" data-lab-action="a2">A2 · 虚拟屏幕 + 打开设置</button>
    </div>
   </section>
-  <section class="lab-section"><h3>B 组 · 系统副屏模拟</h3>
-   <p class="hint">B1 会先持久化备份旧配置，再写入 overlay_display_devices；B2 读取真实 ID，B3 从已有显示源预览。</p>
+  <section class="lab-section"><h3>原有 O 组 · Overlay 系统副屏模拟</h3>
+   <p class="hint">原有 Overlay 测试逻辑保持不变：O1 备份并写入 overlay_display_devices；O2 扫描；O3 从已有显示源预览。</p>
    <div class="buttons">
-    <button type="button" data-lab-action="b1">B1 · 模拟 1080P 副屏</button>
-    <button type="button" class="secondary" data-lab-action="b2">B2 · 扫描显示器</button>
+    <button type="button" data-lab-action="b1">O1 · 模拟 1080P 副屏</button>
+    <button type="button" class="secondary" data-lab-action="b2">O2 · 扫描显示器</button>
    </div>
    <div class="buttons"><label for="labDisplayId" style="margin:0">显示源</label>
     <select id="labDisplayId" aria-label="选择实验显示器"></select>
-    <button type="button" data-lab-action="b3">B3 · 在实时画面预览副屏</button>
+    <button type="button" data-lab-action="b3">O3 · 在实时画面预览副屏（华为 B4 也复用此预览）</button>
    </div>
+  </section>
+  <section class="lab-section"><h3>B 组 · 华为原生电脑模式模拟（Cast+）</h3>
+   <p class="hint">独立辅助 APK 仅创建名称为 CastPlusDisplay 的 Type 5 测试虚拟屏，不是 Miracast/Cast+ 协议实现，也不保证华为接管。需先从仓库手动构建 APK，放到 data/storage/castplus-lab.apk；不需要 ROOT。每步都手动触发，执行前停止本设备实时画面。</p>
+   <div class="buttons">
+    <button type="button" data-lab-action="cast1">B1 · 安装辅助组件并创建 CastPlusDisplay</button>
+    <button type="button" class="secondary" data-lab-action="cast2">B2 · 设置桌面偏好并重建屏幕</button>
+   </div>
+   <div class="buttons">
+    <button type="button" class="secondary" data-lab-action="cast3">B3 · 发送华为 SWITCH_MODE 广播</button>
+    <button type="button" class="secondary" data-lab-action="cast4">B4 · 核验华为 PC Mode 状态</button>
+   </div>
+   <p class="hint">B4 只提供系统证据。若确认有非零 Display ID，请使用上方 O3 对应显示源预览，人工检查原生任务栏、开始菜单及独立窗口。</p>
+   <details open><summary>华为专项诊断结果</summary><pre class="lab-pre" id="labCastReport">尚未执行华为专项测试</pre></details>
+   <button class="secondary" type="button" data-lab-action="castrestore">停止 Cast+ 并恢复模式设置</button>
   </section>
   <section class="lab-section"><h3>恢复及记录</h3>
    <p id="labPending" class="hint">暂无待恢复的副屏设置</p>
