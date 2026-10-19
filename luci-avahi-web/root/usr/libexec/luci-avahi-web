@@ -8,13 +8,16 @@ INIT=/etc/init.d/avahi-daemon
 APK=$(command -v apk || true)
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-need_no_args() { [ "$#" -eq 0 ] || fail 'Unexpected arguments'; }
+need_no_args() { [ "$#" -eq 0 ] || fail '存在多余的参数'; }
 installed() { [ -x /usr/sbin/avahi-daemon ] && [ -x /usr/bin/avahi-browse ]; }
+flag() { if "$@" >/dev/null 2>&1; then printf 'yes'; else printf 'no'; fi; }
+binary_flag() { if command -v "$1" >/dev/null 2>&1; then printf 'yes'; else printf 'no'; fi; }
+unit_flag() { if [ -x "/etc/init.d/$1" ]; then printf 'yes'; else printf 'no'; fi; }
 running() { pidof avahi-daemon >/dev/null 2>&1; }
 umdns_running() { pidof umdns >/dev/null 2>&1; }
 
 service_action() {
-    [ "$#" -eq 1 ] || fail 'Expected one service action'
+    [ "$#" -eq 1 ] || fail '服务操作参数无效'
     case "$1" in
         start|stop|enable|disable)
             op=$1; init=$INIT; unit=avahi ;;
@@ -22,15 +25,15 @@ service_action() {
             op=${1#umdns-}; init=/etc/init.d/umdns; unit=umdns ;;
         dbus-start)
             op=start; init=/etc/init.d/dbus; unit=dbus ;;
-        *) fail 'Unsupported service action' ;;
+        *) fail '不支持的服务操作' ;;
     esac
-    [ -x "$init" ] || fail 'Selected service init script not installed'
+    [ -x "$init" ] || fail '缺少对应服务的启动脚本，请先确认软件包已安装完整'
     if [ "$op" = start ]; then
         if [ "$unit" = avahi ] && umdns_running; then
-            fail 'Stop umdns first to prevent UDP 5353 conflict'
+            fail '检测到 umdns 正在运行，请先停止 umdns，再启动 Avahi，以避免 mDNS 服务冲突'
         fi
         if [ "$unit" = umdns ] && running; then
-            fail 'Stop Avahi first to prevent UDP 5353 conflict'
+            fail '检测到 Avahi 正在运行，请先停止 Avahi，再启动 umdns，以避免 mDNS 服务冲突'
         fi
     fi
     "$init" "$op"
@@ -39,7 +42,7 @@ service_action() {
 # components. No arguments, URLs, options, shell expressions or force flags
 # supplied by the browser may reach the package manager.
 require_apk() {
-    [ -n "$APK" ] && [ -x "$APK" ] || fail 'APK package manager not found'
+    [ -n "$APK" ] && [ -x "$APK" ] || fail '找不到 APK 软件包管理器'
 }
 
 package_names() {
@@ -47,7 +50,7 @@ package_names() {
         avahi) set -- avahi-dbus-daemon avahi-utils ;;
         dbus) set -- dbus ;;
         umdns) set -- umdns ;;
-        *) fail 'Unsupported package component' ;;
+        *) fail '不支持的软件包组件' ;;
     esac
     printf '%s\n' "$@"
 }
@@ -71,13 +74,13 @@ package_verb() {
         install) printf 'add' ;;
         remove) printf 'del' ;;
         upgrade) printf 'upgrade' ;;
-        *) fail 'Unsupported package action' ;;
+        *) fail '不支持的软件包操作' ;;
     esac
 }
 
 package_operation() {
     phase=$1; shift
-    [ "$#" -eq 2 ] || fail 'Expected package action and component'
+    [ "$#" -eq 2 ] || fail '软件包操作参数不完整'
     action=$1; target=$2
     require_apk
     verb=$(package_verb "$action")
@@ -94,23 +97,23 @@ package_operation() {
         # Package install/upgrade scripts may start their service themselves.
         # Require the conflicting daemon stopped before applying either.
         if [ "$target" = avahi ] && umdns_running; then
-            fail 'Stop and disable umdns before installing/updating Avahi'
+            fail '检测到 umdns 正在运行：安装或更新 Avahi 前请先停止 umdns'
         fi
         if [ "$target" = umdns ] && running; then
-            fail 'Stop and disable Avahi before installing/updating umdns'
+            fail '检测到 Avahi 正在运行：安装或更新 umdns 前请先停止 Avahi'
         fi
     fi
     if [ "$action" = remove ]; then
         # Do not let the UI remove an actively operating mDNS daemon, or pull
         # D-Bus from a live Avahi session. The operator must stop it first.
         if [ "$target" = umdns ] && umdns_running; then
-            fail 'Stop and disable running umdns before uninstalling it'
+            fail 'umdns 正在运行，请先停止后再卸载'
         fi
         if [ "$target" = avahi ] && running; then
-            fail 'Stop Avahi before uninstalling it'
+            fail 'Avahi 正在运行，请先停止后再卸载'
         fi
         if [ "$target" = dbus ] && pidof dbus-daemon >/dev/null 2>&1; then
-            fail 'D-Bus is running. Stop dependent services before uninstalling it'
+            fail 'D-Bus 正在运行，请先处理依赖它的服务后再卸载'
         fi
     fi
     if [ "$phase" = plan ]; then
@@ -120,12 +123,12 @@ package_operation() {
         # --allow-untrusted, or blanket system upgrade.
         "$APK" "$verb" "$@"
     else
-        fail 'Unsupported package phase'
+        fail '不支持的软件包执行阶段'
     fi
 }
 
 package_action() {
-    [ "$#" -ge 1 ] || fail 'Missing package action'
+    [ "$#" -ge 1 ] || fail '缺少软件包操作'
     sub=$1; shift
     case "$sub" in
         list) package_list "$@" ;;
@@ -135,11 +138,11 @@ package_action() {
             need_no_args "$@"
             require_apk
             "$APK" update ;;
-        *) fail 'Unsupported package command' ;;
+        *) fail '不支持的软件包命令' ;;
     esac
 }
 
-[ "$#" -gt 0 ] || fail 'Expected a command'
+[ "$#" -gt 0 ] || fail '缺少操作参数'
 cmd=$1; shift
 case "$cmd" in
     status)
@@ -148,6 +151,13 @@ case "$cmd" in
         running && printf 'running=yes\n' || printf 'running=no\n'
         umdns_running && printf 'umdns=yes\n' || printf 'umdns=no\n'
         pidof dbus-daemon >/dev/null 2>&1 && printf 'dbus=yes\n' || printf 'dbus=no\n'
+        printf 'avahi-daemon-bin=%s\n' "$(flag test -x /usr/sbin/avahi-daemon)"
+        printf 'avahi-browse-bin=%s\n' "$(flag test -x /usr/bin/avahi-browse)"
+        printf 'umdns-bin=%s\n' "$(binary_flag umdns)"
+        printf 'dbus-bin=%s\n' "$(binary_flag dbus-daemon)"
+        for unit in avahi-daemon umdns dbus; do
+            printf '%s-init=%s\n' "$unit" "$(unit_flag "$unit")"
+        done
         for unit in avahi-daemon umdns dbus; do
             [ -x "/etc/init.d/$unit" ] || continue
             if "/etc/init.d/$unit" enabled >/dev/null 2>&1; then
@@ -159,5 +169,5 @@ case "$cmd" in
         ;;
     service) service_action "$@" ;;
     package) package_action "$@" ;;
-    *) fail 'Unsupported action' ;;
+    *) fail '不支持的操作' ;;
 esac
