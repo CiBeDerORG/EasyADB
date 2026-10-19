@@ -1,53 +1,32 @@
-# luci-avahi-web (v0.5.5)
+# luci-avahi-web v0.5.6
 
-ImmortalWrt/OpenWrt 的轻量 EasyADB 局域网发现代理。支持 **LuCI 手动发现或 NAS 鉴权后按需触发扫描**、
-**OpenWrt 最近一次成功扫描快照**、以及 **Avahi / D-Bus / umdns 三组 APK 组件管理**。
+ImmortalWrt/OpenWrt 上的轻量 EasyADB 局域网发现代理。仅管理 **Avahi、D-Bus** 两组组件，支持 LuCI 管理员手动发现 Android 无线 ADB 服务，以及 NAS 通过专用 RPCD 会话按需触发扫描。
 
-项目目录：`luci-avahi-web/`，安装包名称：`luci-app-avahi-web`。
+## 管理界面
 
-## 精简后的运行边界
+菜单：**服务 → Avahi / EasyADB 发现代理**。页面包含两个响应式管理卡片（Avahi、D-Bus）、NAS 接口授权和 ADB 设备发现。
 
-- **只有经过 RPCD 登录、且被单独授予 `luci-avahi-easyadb` ACL 的 NAS 会话**，
-  才能通过 OpenWrt 现有 `/ubus` 的 `file.exec` 调用扫描命令。没有匿名入口、独立
-  HTTP 服务、Webhook、自动上报、后台定时扫描。
-- LuCI 管理员可主动点击「立即发现 ADB」执行一次扫描（单独的管理员写 ACL）；也可以仅刷新最近一次缓存。页面加载和状态刷新不会自动扫描，NAS 专用角色仍只有 scan 权限。
-- `/usr/libexec/luci-avahi-scan scan` 每次执行一次
-  `_adb-tls-connect._tcp` 查询，最多 8 秒、32 个解析后端点；单实例锁防止并发。
-  接口即时返回 JSON，成功结果原子覆盖 `/tmp/luci-avahi-web/last-scan.json`。
-- `/usr/libexec/luci-avahi-scan last` 只读取该快照；路由器重启后数据消失。
-  **不存在**设备列表数据库、历史事件文件和额外 log API。扫描失败以命令错误返回，
-  不会把上次快照冒充本次结果；上次成功快照仍标有旧的 `scanned_at`。
-- NAS/EasyADB 自己保存正式设备档案、历史连接与 IP/端口映射。广告不是设备身份，
-  也不是 ADB 已成功配对/连接的证明。传统 `adb tcpip 5555` 不一定发布 TLS mDNS。
-- Avahi 高级编辑和反射器配置已移除；本地手动发现由 LuCI 管理员显式点击触发；
-  如有其他需要，可使用系统提供的 Avahi 配置文件/工具单独维护。
+| 组件 | APK 安装目标 |
+| --- | --- |
+| Avahi | `avahi-dbus-daemon`、`avahi-utils` |
+| D-Bus | `dbus` |
 
-## NAS 接口授权（直接在 LuCI 组件内配置）
+软件包管理保留「安装/补齐/更新」合一按钮、卸载确认和 APK 模拟事务/刷新索引；服务控制保留「启动/停止」「启用/关闭自启」切换，按包、运行文件、启动脚本、进程、自启状态显示实际状态。完整安装不展开包名详情；只有缺失才展示明细。D-Bus 仍是 Avahi D-Bus 版本的依赖：停止正在被 Avahi 使用的 D-Bus 会被拒绝。
 
-LuCI 页面现已内置专用 RPCD 账号管理，无需手工编辑配置文件。
-在 **服务 → Avahi / EasyADB 发现代理 → NAS 接口授权** 中，
-管理员可以创建账号、轮换凭据、撤销授权，并查看状态。
+**本应用不再管理 umdns**：无 umdns 卡片、安装/更新/卸载、启停/自启接口、状态检测，也没有 Avahi 与 umdns 的人为互斥限制。升级本应用**不会卸载、停止或修改路由器已安装的 umdns**。如需管理它，使用 OpenWrt 系统自身工具。
 
-- 固定用户名：`easyadb`，固定权限组：`luci-avahi-easyadb`；
-  仅授予 `/usr/libexec/luci-avahi-scan scan` 的 RPCD `file.exec` 权限。
-- 路由器使用 OpenSSL CSPRNG 生成 32 字节（64 位十六进制字符）的随机凭据，
-  通过标准输入生成 SHA-512 crypt 哈希，只将哈希存入
-  `/etc/config/rpcd`。密码仅在创建/轮换成功响应中展示一次；
-  `status` 不返回明文或哈希。
-- 创建前检查保留的 `rpcd.easyadb` 段及重名用户，发生冲突绝不覆盖。
-  轮换和撤销只操作确认为本组件管理且权限仍精确匹配的账号，
-  不改变其他登录项。
-- 操作会检查 UCI 待提交修改并加锁，防止交叉覆盖；提交后延迟向
-  RPCD 发送 reload，使当前页面有机会展示一次性凭据。
-- `openssl-util` 是组件 APK 的必需依赖。创建账号前必须在
-  已认证的管理员页面操作；**安装 APK 本身不会创建默认账号或密码**。
-- NAS 在 EasyADB 中保存此独立凭据，通过 OpenWrt `/ubus`
-  的 `session.login` 获取 Session ID 后请求一次 `scan`。
-  不得共享管理员密码、禁用 ubus 鉴权或向公网暴露管理端口。
-- 推荐使用 EasyTier 内网访问；如果跨不可信网络，使用 HTTPS 保护
-  账号、会话和扫描结果。实机还需验证新账号登录、拒绝越权和轮换失效。
+没有后台定时检测或自动 mDNS 扫描。页面初次加载、点击手动刷新或执行变更后才更新组件状态。管理员明确点击「立即发现 ADB」时才扫描；「刷新结果」仅读取最近一次缓存。
 
-**接口请求示意**（不是现成凭据）：
+## NAS 授权与发现接口
+
+管理员在页面中创建、轮换或撤销固定用户名 `easyadb` 的 RPCD 专用登录。密钥以 OpenSSL 安全随机数生成，只在创建/轮换成功时展示一次；`/etc/config/rpcd` 仅保存密码哈希。安装 APK 不会生成默认密码，已有重名或其他设置冲突不会被覆盖。
+
+- NAS 专用 `luci-avahi-easyadb` ACL **仅**授权 `/usr/libexec/luci-avahi-scan scan`；无软件包管理、服务控制及读取其他系统文件权限。
+- 已授权 LuCI 管理员拥有单独的手动 `scan` 和只读 `last` 权限。
+- 调用已有 HTTP(S) `/ubus`，经标准 RPCD `session.login` 认证，不开新端口，不提供匿名 API、Webhook 或主动上报。建议仅通过 EasyTier 内网访问并配合管理端口来源限制。
+- 每次扫描使用 `avahi-browse -rpt _adb-tls-connect._tcp`，最长 8 秒，最多 32 条已解析端点；并发扫描由锁拒绝。成功 JSON 原子覆盖唯一的 `/tmp/luci-avahi-web/last-scan.json`，重启自动清空，扫描失败保留上次成功快照并返回错误。设备的长期档案由 NAS 的 EasyADB 管理。
+
+登录后请求示意（占位符不是真实凭据）：
 
 ```json
 {
@@ -55,126 +34,21 @@ LuCI 页面现已内置专用 RPCD 账号管理，无需手工编辑配置文件
   "id": 2,
   "method": "call",
   "params": [
-    "<AUTHENTICATED_RPCD_SESSION>",
+    "<RPCD_SESSION_ID>",
     "file",
     "exec",
-    {
-      "command": "/usr/libexec/luci-avahi-scan",
-      "params": ["scan"]
-    }
+    { "command": "/usr/libexec/luci-avahi-scan", "params": ["scan"] }
   ]
 }
 ```
 
-POST 到路由器现有 `/ubus`，并检查 UBUS 状态和 `file.exec.code`；
-仅当后者为零时，将 `stdout` 解析为 JSON：
+## 构建与测试
 
-```json
-{
-  "status": "ok",
-  "source": "avahi",
-  "scanned_at": 1792400000,
-  "devices": [
-    {
-      "iface": "br-lan",
-      "protocol": "IPv4",
-      "instance": "adb-example",
-      "service": "_adb-tls-connect._tcp",
-      "host": "android.local",
-      "address": "192.168.1.101",
-      "port": 38711
-    }
-  ],
-  "count": 1,
-  "storage": "volatile"
-}
-```
+主适配对象：ImmortalWrt SNAPSHOT `r0-1f96307`、`qualcommax/ipq60xx`、APK tools 3。构建是独立 `package.mk` 项目，不要求 SDK 预置 `feeds/luci/luci.mk`。应用本体只依赖 `luci-base`、`rpcd-mod-file`、`libubox`、`uhttpd-mod-ubus`、`openssl-util`，不强制将可选 Avahi 或 D-Bus 绑为应用自身的依赖。
 
-`last` 仅供已授权的 LuCI 管理员读取页面快照，不授予 NAS 专用角色；
-NAS 要获取新的设备端口就执行一次 `scan`。
-
-## LuCI 中文状态检查（v0.5.5）
-
-管理界面已统一使用中文说明，菜单为「服务 → Avahi / EasyADB 发现代理」。
-运行状态区会检测三大组件中每个必需软件包的已安装状态、守护进程可执行文件、
-启动脚本、实际进程与开机自启状态，明确区分「安装完整」「部分安装」「未安装」。
-Avahi 管理组必须同时具备 `avahi-dbus-daemon` 和 `avahi-utils`；仅有
-`avahi-daemon` 进程在运行并不代表已经能用 `avahi-browse` 发现手机端口。
-
-页面改为三张响应式组件卡片，集中展示安装、运行、开机自启以及服务和 APK 操作。
-**完全不进行后台定时检测**：首次进入页面读取一次状态，只有点击顶部「手动刷新组件状态」
-或安装、启停等操作结束时才回读状态。最近一次扫描结果可手动读取，也可点击「立即发现 ADB」更新，
-刷新组件状态**不会执行 mDNS 扫描**。按钮只在缺少必要执行文件或操作忙碌时禁用；软件包操作日志折叠显示，
-有新操作时自动展开。
-如果 Avahi 与 umdns 同时存在运行进程，页面提示存在潜在 mDNS 竞争，
-不会把进程共存当作已确诊 UDP 5353 端口冲突，也不会自动停止任一服务。
-软件包安装、卸载、更新仍先运行 APK 的模拟事务并由管理员确认。
-APK 原生工具输出（版本字符串、软件源警告等）保留原样，页面自己的文案和
-后端操作错误提供中文提示。
-
-## v0.5.5 交互审计结果
-
-- 没有任何定时状态检测；页面端「立即发现 ADB」由管理员主动触发，而组件状态刷新不触发扫描。
-- LuCI 依照 mDNS 守护进程是否运行、是否自启来禁用危险操作。若 Avahi 已安装，
-  **只缺 avahi-utils**，允许单独补装工具，不必停止 umdns；真正的 Avahi 守护进程安装及升级仍要求先停止 umdns。
-- 启动 Avahi 前会检查 D-Bus 是否运行；开机自启不能同时开启 Avahi 和 umdns。
-  对当前已存在的双自启设置仅展示冲突，不自动修改系统服务。
-- 软件包模拟结果展示完成后即释放预览锁。取消、Esc、关闭弹窗不会让页面永久处于忙碌状态。
-  每个确认弹窗只能提交一次；模拟和实际操作分离，变更后的状态检测失败会给出错误。
-- 服务、软件包和账号写操作互斥；NAS 账号创建/轮换/撤销也有专用锁。
-  新凭据产生失败时，不会提前清除已显示的一次性凭据。
-- 静态模拟及交互测试包含：部分安装、缺工具修复、冲突守护进程、确认取消/重复点击、
-  状态读取失败恢复和 RPCD 最小权限边界。真实路由器的 RPCD 登录和服务切换仍需现场验收。
-
-## v0.5.5 实机截图反馈修复
-
-- 修正 APK 3 版本检测。原来的 `apk info -v` 属于 verbose 详细输出，可能将英文软件包描述当成版本，造成 Avahi 卡片撑满整行。现在使用 `apk list --installed --manifest` 严格取指定软件包的版本。
-- 前端再次校验版本号格式，格式不正确显示「版本未知」，不显示软件包描述。三张卡片改为独立的响应式容器，不再继承 LuCI `cbi-section` 的特殊排版；包名称支持换行，版本字段宽度受限。
-- Avahi 与 umdns 同时运行的说明使用黄色注意提示。仅检测进程共存，不将它直接认定为已发生 UDP 5353 端口冲突。所有启停均需用户主动操作，继续完全取消定时检测。
-- 模拟测试新增版本输出污染、三张卡片兄弟节点、响应式容器及无后台轮询的回归场景。
-
-## v0.5.5 按钮与设备发现交互
-
-- 修正 LuCI E() 布尔属性：可用按钮的 `disabled` 必须是 `null`，不能传 `false`。
-- 每组组件的所有操作位于「服务控制」同一行：运行中显示「停止」，否则「启动」；自启状态显示「关闭自启」或「启用自启」；安装状态显示「安装」「补齐安装」或「更新」，另设需确认的「卸载」。
-- 安装完整不展开包名/版本明细，仅在缺失时展示必要缺失项。
-- 本地管理员点击「立即发现 ADB」调用与 NAS 相同的固定 scan 脚本，并覆盖唯一的 /tmp 扫描快照。没有另开端口、匿名访问、自动定时任务。
-- Avahi 与 umdns 进程共存只是黄色注意提示，不代表端口必然冲突。后端对启动及修改开机自启仍保留必要校验。
-
-## APK 组件管理
-
-| 分组 | 用户请求安装的软件包 |
-|---|---|
-| Avahi | `avahi-dbus-daemon` + `avahi-utils` |
-| D-Bus | `dbus` |
-| umdns | `umdns` |
-
-三组分别支持**安装、卸载、按组件更新**及软件源索引刷新。
-由系统 APK 正常递归解析所有传递依赖，不在此应用中硬编码依赖清单。
-每次包变更先执行 `apk --simulate` 并由管理员确认；禁止任意软件包名、
-强制卸载及全系统 `apk upgrade`。安装 Avahi 前如果 umdns 正在运行会明确要求先停用，
-反之亦然。LuCI 对三组组件统一提供启停与开机自启切换；停止 D-Bus 会检查 Avahi 依赖并额外确认。
-
-应用自身仅依赖 `luci-base`、`rpcd-mod-file`、`libubox`、
-`uhttpd-mod-ubus`、`openssl-util`，**不强制依赖三组可选组件**，因此可在空环境中先进入组件管理页面。
-
-## 路由器存储与构建
-
-- 当前仅有一个瞬时结果：`/tmp/luci-avahi-web/last-scan.json`。
-  `/tmp` 是 RAM 文件系统，重启清空，避免每次扫描写入 Flash。
-- 本应用不额外写入 `/etc/config/` 设备配置。唯一持久化的认证配置是管理员通过此组件授权界面创建的系统原生 `/etc/config/rpcd` 登录项；Avahi 本身维持其原有配置文件。
-- 主适配对象：ImmortalWrt SNAPSHOT `r0-1f96307`，
-  `qualcommax/ipq60xx`，用户设备上 `apk-tools 3.0.5`。
-- `Makefile` 直接使用 `$(INCLUDE_DIR)/package.mk` 封装 LuCI 菜单、静态页面、ACL
-  和固定后端脚本，不再依赖公开 SDK 里未必存在的 `feeds/luci/luci.mk`。
-- 与路由器匹配的原生 APK 须通过 SDK 生成；**IPK 不兼容 APK，不能改名使用**。
-  同时不建议在已安装的旧 SNAPSHOT 上进行系统级滚动升级。
-
-在匹配固件的 APK SDK 根目录运行：
-
+在兼容 APK SDK 根目录中执行：
 ```sh
 sh /path/to/luci-avahi-web/scripts/build-apk-sdk.sh /path/to/luci-avahi-web
 ```
 
-验证从 CI 构建获取的原生 APK、检查其依赖后，再在真实路由器做安装和权限验收。
-本仓库的静态模拟测试不等于实机安全验收。
+源码模拟测试不能代替路由器实机鉴权、APK 依赖和 mDNS 查询验收。自编译 APK 不等于 IPK，不要改名；在旧 SNAPSHOT 上安装前必须检查模拟依赖事务，不执行系统级 `apk upgrade`。
