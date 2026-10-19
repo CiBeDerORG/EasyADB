@@ -206,7 +206,8 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "managementSelected.clear();render();" in html
         # Route selection acts directly on the displayed IP; no separate
         # selected/switch label or automatic ADB connect on clicking route.
-        assert "action(label+'：'+ip+(route==='temp'?':'+port:''),()=>switchRoute(d.id,route),'address-target')" in html
+        assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
+        assert "临时 ADB 端口：'+d.temp_port" in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html
         assert "⇄ 切换" not in html and "✓ 当前选择" not in html
         assert "title.append(elem('span','item-name',d.name))" in html
