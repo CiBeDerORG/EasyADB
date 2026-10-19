@@ -388,7 +388,7 @@ return view.extend({
 					authCredentialNode.replaceChildren();
 					alert('NAS 专用授权已撤销，RPCD 会话将重新加载。', false);
 				}
-			}, function(e) {
+			}).catch(function(e) {
 				alert('授权操作失败：' + e.message, true);
 			}).then(refreshAuth).then(function() {
 				authBusy = false;
