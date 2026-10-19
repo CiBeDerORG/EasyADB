@@ -83,7 +83,7 @@ def test_rpcd_http_jsonrpc_errors_identify_gate_and_never_echo_tokens():
             return {"jsonrpc": "2.0", "id": 1, "result": [0, {"ubus_rpc_session": session}]}
         return {"jsonrpc": "2.0", "id": 1,
                 "error": {"code": -32002, "message": "Access denied"}}
-    with pytest.raises(DiscoveryError, match=r"file\\.exec.*-32002") as error:
+    with pytest.raises(DiscoveryError, match=r"file\.exec.*-32002") as error:
         RpcdDiscovery(denied_file).scan(URL, "easyadb", SECRET)
     assert "read.ubus.file.exec" in str(error.value)
     assert SECRET not in str(error.value) and session not in str(error.value)
@@ -91,7 +91,7 @@ def test_rpcd_http_jsonrpc_errors_identify_gate_and_never_echo_tokens():
     def denied_login(url, payload):
         return {"jsonrpc": "2.0", "id": 1,
                 "error": {"code": -32002, "message": "Access denied; " + SECRET}}
-    with pytest.raises(DiscoveryError, match=r"session\\.login.*-32002") as error:
+    with pytest.raises(DiscoveryError, match=r"session\.login.*-32002") as error:
         RpcdDiscovery(denied_login).scan(URL, "easyadb", SECRET)
     assert SECRET not in str(error.value)
 
