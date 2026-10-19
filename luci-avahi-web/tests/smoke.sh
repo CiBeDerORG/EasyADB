@@ -21,6 +21,7 @@ nas=acl["luci-avahi-easyadb"]
 assert nas["read"]["file"] == {"/usr/libexec/luci-avahi-scan scan":["exec"]}
 assert not nas.get("write")
 assert "/usr/libexec/luci-avahi-scan last" in admin["read"]["file"]
+assert "/usr/libexec/luci-avahi-scan scan" in admin["write"]["file"]
 assert "/usr/libexec/luci-avahi-scan scan" not in admin["read"]["file"]
 assert "/usr/libexec/luci-avahi-web package list" in admin["read"]["file"]
 assert "/usr/libexec/luci-avahi-web package plan *" in admin["read"]["file"]
@@ -37,7 +38,8 @@ assert "luci-avahi-easyadb" in auth
 code=pathlib.Path("htdocs/luci-static/resources/view/avahi-web/overview.js").read_text()
 assert "snapshot()" in code and "[ 'last' ]" in code
 assert "callScan('scan')" not in code and "'browse'" not in code
-assert "scanOnce" not in code and "refreshScanLog" not in code
+assert "function scanOnce(" in code and "function scan() {" in code
+assert "refreshScanLog" not in code
 assert "function renderAuth(" in code and "function confirmAuth(" in code
 assert "auth('status')" in code and "authCredentialNode" in code
 assert "config-set" not in code and "enable-reflector" not in code
@@ -48,7 +50,9 @@ assert "\n    browse) " not in controller and "\n    config-set) " not in contro
 assert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller
 assert '"$unit" "$(unit_flag "$unit")"' in controller
 assert "function drawComponents(" in code and "function packageState(" in code
-assert "组件与服务管理" in code and "缺少软件包" in code and "可能存在 mDNS" in code
+assert "组件与服务管理" in code and "缺少软件包" in code and "不等于已经发生 UDP 5353" in code
+assert "disabled: blocked ? '' : null" in code
+assert "disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null" in code
 assert "手动刷新组件状态" in code and "grid-template-columns" in code
 assert "poll.add(" not in code and "'require poll'" not in code
 assert "cbi-button-positive" in code and "cbi-button-negative" in code
@@ -138,7 +142,7 @@ fi
 if "$TEMP/helper" package apply remove dbus --force >/dev/null 2>&1; then
     echo 'Extra APK flag accepted' >&2; exit 1
 fi
-for op in dbus-stop umdns-reboot browse config-set; do
+for op in dbus-restart umdns-reboot browse config-set; do
     if "$TEMP/helper" service "$op" >/dev/null 2>&1; then
         echo "Unsupported service option accepted: $op" >&2; exit 1
     fi
