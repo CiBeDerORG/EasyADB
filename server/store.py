@@ -5,7 +5,6 @@ import ipaddress
 import json
 from datetime import datetime, timezone
 
-from .discovery_secrets import encrypt, decrypt
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -74,8 +73,15 @@ class DeviceStore:
             """)
             db.execute("""CREATE TABLE IF NOT EXISTS group_openwrt (
                 group_name TEXT PRIMARY KEY, url TEXT NOT NULL, username TEXT NOT NULL,
-                credential TEXT NOT NULL
+                credential TEXT NOT NULL, credential_format TEXT NOT NULL DEFAULT 'plain'
             )""")
+            # Previously encrypted rows are explicitly tagged on migration,
+            # never accidentally used as plaintext. Do not touch the old key file.
+            if "credential_format" not in {
+                row["name"] for row in db.execute("PRAGMA table_info(group_openwrt)")
+            }:
+                db.execute("""ALTER TABLE group_openwrt ADD COLUMN credential_format
+                              TEXT NOT NULL DEFAULT 'legacy-fernet'""")
             db.execute("""CREATE TABLE IF NOT EXISTS group_discovery_results (
                 group_name TEXT PRIMARY KEY, scan_json TEXT NOT NULL, updated_at TEXT NOT NULL
             )""")
@@ -141,6 +147,7 @@ class DeviceStore:
             return None
         result = dict(row)
         result["discovery_configured"] = bool(result.pop("openwrt_url", None))
+        result["discovery_needs_password"] = (result.pop("openwrt_credential_format", None) == "legacy-fernet")
         result["discovery_url"] = row["openwrt_url"] if result["discovery_configured"] else None
         result["discovery_username"] = row["openwrt_username"] if result["discovery_configured"] else None
         result.pop("openwrt_username", None)
@@ -151,6 +158,7 @@ class DeviceStore:
         with self.connection() as db:
             return [self._public_group(row) for row in db.execute(
                 """SELECT g.name,g.ip_prefix,w.url AS openwrt_url,
+                          w.credential_format AS openwrt_credential_format,
                           w.username AS openwrt_username
                    FROM group_configs g LEFT JOIN group_openwrt w ON w.group_name=g.name
                    ORDER BY g.name COLLATE NOCASE"""
@@ -160,6 +168,7 @@ class DeviceStore:
         with self.connection() as db:
             row = db.execute(
                 """SELECT g.name,g.ip_prefix,w.url AS openwrt_url,
+                          w.credential_format AS openwrt_credential_format,
                           w.username AS openwrt_username
                    FROM group_configs g LEFT JOIN group_openwrt w ON w.group_name=g.name
                    WHERE g.name=?""", (name,)
@@ -175,20 +184,24 @@ class DeviceStore:
         with self.connection() as db:
             if not db.execute("SELECT 1 FROM group_configs WHERE name=?", (group_name,)).fetchone():
                 return None
-            old = db.execute("SELECT url,username,credential FROM group_openwrt WHERE group_name=?",
+            old = db.execute("SELECT url,username,credential,credential_format FROM group_openwrt WHERE group_name=?",
                              (group_name,)).fetchone()
             if password:
-                if not 8 <= len(password) <= 256:
-                    raise ValueError("专用密钥长度应为 8–256 字符")
-                credential = encrypt(self.path, password)
-            elif old and old["url"] == url and old["username"] == username:
+                # OpenWrt has already generated a dedicated RPCD credential.
+                # Store it directly; no second encryption key or extra file.
+                credential = password
+            elif (old and old["url"] == url and old["username"] == username
+                  and old["credential_format"] == "plain"):
                 credential = old["credential"]
+            elif old and old["credential_format"] != "plain":
+                raise ValueError("旧版凭据存储格式已停用，请重新粘贴 OpenWrt 专用密钥并保存")
             else:
-                raise ValueError("首次配置或修改接口地址/用户名时，必须重新填写专用密钥")
-            db.execute("""INSERT INTO group_openwrt(group_name,url,username,credential)
-                          VALUES(?,?,?,?)
+                raise ValueError("首次配置或修改接口地址/用户名时，请填写 OpenWrt 专用密钥")
+            db.execute("""INSERT INTO group_openwrt(group_name,url,username,credential,credential_format)
+                          VALUES(?,?,?,?,'plain')
                           ON CONFLICT(group_name) DO UPDATE SET url=excluded.url,
-                            username=excluded.username,credential=excluded.credential""",
+                            username=excluded.username,credential=excluded.credential,
+                            credential_format='plain'""",
                        (group_name, url, username, credential))
         return self.get_group(group_name)
 
@@ -201,9 +214,13 @@ class DeviceStore:
 
     def get_group_discovery_secret(self, group_name):
         with self.connection() as db:
-            row = db.execute("SELECT url,username,credential FROM group_openwrt WHERE group_name=?",
+            row = db.execute("SELECT url,username,credential,credential_format FROM group_openwrt WHERE group_name=?",
                              (group_name,)).fetchone()
-        return (row["url"], row["username"], decrypt(self.path, row["credential"])) if row else None
+        if not row:
+            return None
+        if row["credential_format"] != "plain":
+            raise ValueError("该分组使用旧版凭据格式，请在分组设置重新粘贴专用密钥并保存")
+        return row["url"], row["username"], row["credential"]
 
     def last_group_discovery(self, name):
         with self.connection() as db:
