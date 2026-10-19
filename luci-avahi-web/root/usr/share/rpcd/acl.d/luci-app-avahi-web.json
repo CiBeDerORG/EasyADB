@@ -50,6 +50,11 @@
         "/usr/libexec/luci-avahi-scan scan": [
           "exec"
         ]
+      },
+      "ubus": {
+        "file": [
+          "exec"
+        ]
       }
     }
   }
