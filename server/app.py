@@ -26,7 +26,7 @@ from .openwrt_discovery import RpcdDiscovery, DiscoveryError, validate_url
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
-from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS
+from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS, VIRTUAL_DPI_CHOICES
 from .m2_touch import InvalidTouch
 from .display_lab import DisplayLab, LabError
 
@@ -765,9 +765,12 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 return
             mode = experiment.get("mode")
             if mode == "new_resolution":
-                if (set(experiment) != {"mode", "width", "height"}
+                if (set(experiment) not in ({"mode", "width", "height"},
+                                             {"mode", "width", "height", "dpi"})
                         or type(experiment["width"]) is not int
                         or type(experiment["height"]) is not int
+                        or type(experiment.get("dpi", 240)) is not int
+                        or experiment.get("dpi", 240) not in VIRTUAL_DPI_CHOICES
                         or (experiment["width"], experiment["height"]) not in EXPERIMENTAL_RESOLUTIONS
                         or profile != "custom" or quality_settings["max_size"] != 0):
                     await websocket.send_json({"type": "error", "message": "实验性虚拟屏幕分辨率无效"})

@@ -10,13 +10,14 @@ from fastapi.testclient import TestClient
 from server.devices import DeviceManager
 from server.store import DeviceStore
 from server.m2_live import LiveRegistry, LiveVideo
-from server.m2_quality import CUSTOM_CHOICES, LIVE_PROFILES, EXPERIMENTAL_RESOLUTIONS, resolve_live_quality
+from server.m2_quality import CUSTOM_CHOICES, LIVE_PROFILES, EXPERIMENTAL_RESOLUTIONS, VIRTUAL_DPI_CHOICES, resolve_live_quality
 from server.m2_video_probe import PROFILES
 
 AUTH = {"X-EasyADB-Token": "local-test-token-123"}
 
 
 def test_experimental_resolutions_match_the_dropdown():
+    assert VIRTUAL_DPI_CHOICES == (160, 200, 240, 280, 320, 360, 400, 420, 480, 560)
     assert EXPERIMENTAL_RESOLUTIONS == (
         (2560, 1440), (1920, 1440), (1920, 1200), (1920, 1080),
         (1680, 1050), (1600, 1200), (1600, 1024), (1600, 900),
@@ -130,6 +131,12 @@ def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_pa
         {"profile": "custom", "quality": valid_quality,
          "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080},
          "screen_off": True},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080, "dpi": 999}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080, "dpi": True}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080, "dpi": "320"}},
     ]
     with TestClient(mod.app) as client:
         for case in cases:
@@ -175,7 +182,7 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
 
     monkeypatch.setattr(mod, "LiveVideo", FakeStream)
     quality = {"max_size": 0 if virtual else 1280, "video_bit_rate": 20_000_000, "max_fps": 60}
-    display = {"mode": "new_resolution", "width": 1920, "height": 1080} if virtual else None
+    display = {"mode": "new_resolution", "width": 1920, "height": 1080, "dpi": 360} if virtual else None
     with TestClient(mod.app) as client:
         device = client.post("/api/devices", headers=AUTH, json={
             "name": "Phone", "ip": "10.10.30.206", "port": 40455,
@@ -224,7 +231,7 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     assert ".multi-choice>.multi-probe-log[hidden]" in page
     assert "choice(CHOICES,value.profile)" not in multi
     assert "item.append(custom)" in multi
-    for field in ("max_size", "video_bit_rate", "max_fps"):
+    for field in ("max_size", "video_bit_rate", "max_fps", "dpi"):
         assert field in multi
     assert "['3000000','3 Mbps']" in multi
     for rate in (18, 20):

@@ -30,7 +30,8 @@ const EXPERIMENTAL_RESOLUTIONS=[
 const CUSTOM={
  max_size:[['960','960'],['1280','1280'],['1600','1600'],['0','原生']],
  video_bit_rate:[['2000000','2 Mbps'],['3000000','3 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps'],['18000000','18 Mbps'],['20000000','20 Mbps']],
- max_fps:[['15','15 FPS'],['24','24 FPS'],['30','30 FPS'],['45','45 FPS'],['55','55 FPS'],['60','60 FPS']]
+ max_fps:[['15','15 FPS'],['24','24 FPS'],['30','30 FPS'],['45','45 FPS'],['55','55 FPS'],['60','60 FPS']],
+ dpi:[['160','160 DPI'],['200','200 DPI'],['240','240 DPI（默认）'],['280','280 DPI'],['320','320 DPI'],['360','360 DPI'],['400','400 DPI'],['420','420 DPI'],['480','480 DPI'],['560','560 DPI']]
 };
 const choice=(options,value)=>{
  const select=make('select','multi-quality');
@@ -46,7 +47,7 @@ const resolutionChoice=value=>{
  select.append(group);select.value=String(value);return select;
 };
 const defaults=()=>({profile:'custom',max_size:960,experimental_resolution:null,
- video_bit_rate:3000000,max_fps:24,low_latency:true,screen_off:false});
+ video_bit_rate:3000000,max_fps:24,dpi:240,low_latency:true,screen_off:false});
 const qualityPayload=v=>v.profile==='custom'
  ?{profile:'custom',quality:{max_size:v.experimental_resolution?0:v.max_size,
     video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
@@ -54,11 +55,12 @@ const qualityPayload=v=>v.profile==='custom'
 const resolutionExperiment=v=>{
  if(!v.experimental_resolution)return null;
  const [width,height]=v.experimental_resolution.split('x').map(Number);
- return {mode:'new_resolution',width,height};
+ return {mode:'new_resolution',width,height,dpi:v.dpi};
 };
 const briefQuality=v=>v.profile==='custom'
  ?'自定义 · '+(v.experimental_resolution?'实验性虚拟屏幕 '+v.experimental_resolution.replace('x','×'):(v.max_size||'原生'))+
-  ' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
+  ' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'+
+  (v.experimental_resolution?' / '+v.dpi+' DPI':'')
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,onProjectionStarted,onOpenManagement}){
@@ -82,6 +84,7 @@ class MultiView{
     }).catch(e=>{this.engineReady=false;this.status(e.message+'；暂不允许启动投屏',true);});
   }
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
+  this.playbackOpen=new Set();
   this.checking=new Set();this.lastLiveStatus=new Map();
   startButton.addEventListener('click',()=>this.start());
   stopButton.addEventListener('click',()=>this.stopSelected());
@@ -142,16 +145,17 @@ class MultiView{
    // The device management page prepends its ADB status badge here.
    // Preserve full-color ADB status even when streaming controls are disabled.
    const value=this.getChoice(d.id);
-   // Three independent per-device settings, replacing the preset dropdown.
-   // Server still validates their complete numeric tuple as custom quality.
+   // DPI configures ONLY a new virtual display; ordinary primary-screen
+   // mirroring never modifies Android's persistent wm density.
    const custom=make('div','multi-custom');
-   for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率']]){
+   for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率'],['dpi','DPI（虚拟屏幕）']]){
     const field=make('label','',label);
     const sel=key==='max_size'
      ?resolutionChoice(value.experimental_resolution?'exp:'+value.experimental_resolution:value.max_size)
      :choice(CUSTOM[key],value[key]);
     sel.setAttribute('aria-label',d.name+' '+label);
-    sel.disabled=busy||!connected;
+    sel.disabled=busy||!connected||(key==='dpi'&&!value.experimental_resolution);
+    if(key==='dpi'&&!value.experimental_resolution)sel.title='仅实验性虚拟屏幕支持指定 DPI；普通投屏不修改手机系统 DPI';
     sel.addEventListener('change',()=>{
      if(key==='max_size'){
       const experimental=sel.value.startsWith('exp:')?sel.value.slice(4):null;
@@ -162,7 +166,8 @@ class MultiView{
     });
     field.append(sel);custom.append(field);
    }
-   item.append(custom);
+   const dpiNote=make('div','multi-dpi-note','DPI 仅用于实验性虚拟屏幕；普通主屏投屏保持手机原有 DPI。');
+   custom.append(dpiNote);item.append(custom);
    const actions=make('div','buttons');
    for(const [kind,profile,label] of [['preflight',null,'能力预检'],['video','baseline','视频实验 · 基础'],['video','native','视频实验 · 原生']]){
     const b=make('button','secondary',label);b.type='button';
@@ -210,7 +215,14 @@ class MultiView{
     if(live.active)this.stopFor(d.id);else this.startFor(d.id);
    });
    liveRow.append(liveStatus,liveButton);
-   item.append(liveRow,panel,latency);
+   const playback=make('details','multi-playback-options');
+   playback.open=this.playbackOpen.has(d.id);
+   playback.addEventListener('toggle',()=>{
+    if(playback.isConnected===false)return;
+    if(playback.open)this.playbackOpen.add(d.id);else this.playbackOpen.delete(d.id);
+   });
+   playback.append(make('summary','','播放选项'),panel,latency);
+   item.append(liveRow,playback);
    this.picker.append(item);
   }
   // Existing cards, including pending stop/cleanup, retain their server slots.

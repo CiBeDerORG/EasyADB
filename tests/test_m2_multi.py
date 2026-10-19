@@ -212,7 +212,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         # Route selection acts directly on the displayed IP; no separate
         # selected/switch label or automatic ADB connect on clicking route.
         assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
-        assert "ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）" in html
+        assert "title.append(elem('span','device-port','ADB '+d.port))" in html
+        assert "addressList.append(...addressRows)" in html
+        assert "addressList.append(plus)" in html
+        assert "removeButton=action('删除'" not in html
         assert "port.value=String(d.port)" in html
         assert "临时 ADB 端口：" not in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html

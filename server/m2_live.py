@@ -578,7 +578,7 @@ class LiveVideo:
                     if mode in ("new", "new_settings"):
                         cmd.append("new_display=1920x1080/240")
                     elif mode == "new_resolution":
-                        cmd.append(f"new_display={self.display_source['width']}x{self.display_source['height']}/240")
+                        cmd.append(f"new_display={self.display_source['width']}x{self.display_source['height']}/{self.display_source.get('dpi', 240)}")
                     elif mode == "display":
                         cmd.append("display_id=" + str(self.display_source["display_id"]))
                 adb_proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
@@ -623,7 +623,7 @@ class LiveVideo:
                     if created is None:
                         notice["message"] = "已请求创建虚拟屏幕，但未识别新增 Display ID；请检查画面"
                     elif self.display_source["mode"] == "new_resolution":
-                        requested = f"{self.display_source['width']}×{self.display_source['height']}"
+                        requested = f"{self.display_source['width']}×{self.display_source['height']} / {self.display_source.get('dpi', 240)} DPI"
                         notice["message"] = "已请求创建实验性虚拟屏幕 " + requested + "；以实际编码尺寸为准"
                     elif self.display_source["mode"] == "new_settings":
                         try:

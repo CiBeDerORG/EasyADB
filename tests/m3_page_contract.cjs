@@ -16,7 +16,11 @@ assert.ok(!js.includes('discoveryResults'),'scan histories must not replay into 
 assert.ok(!js.includes("'/discovery/last'"),'loading devices must not replay old toasts');
 assert.ok(!js.includes("route==='temp'?':' +port"));
 assert.match(js,/action\(label\+'：'\+ip,\(\)=>switchRoute/);
-assert.ok(js.includes("ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）"));
+assert.ok(js.includes("title.append(elem('span','device-port','ADB '+d.port))"));
+assert.ok(js.includes("addressList.append(...addressRows)"));
+assert.ok(js.includes("addressList.append(plus)"));
+assert.ok(js.includes("row.append(del)"));
+assert.ok(!js.includes("removeButton=action('删除'"));
 assert.ok(js.includes("port.value=String(d.port)"));
 assert.ok(!js.includes("临时 ADB 端口："));
 assert.ok(store.includes('"endpoints": []'));
@@ -31,7 +35,9 @@ for(const state of ['updated','unchanged','unmatched','busy','ambiguous','confli
 assert.ok(js.includes("endpoint.ip+':'+endpoint.port"));
 assert.ok(js.includes("$('groupDialog').close();\n  message('分组设置已保存'"));
 assert.ok(js.includes("$('deviceDialog').close();message('设备已保存'"));
-assert.ok(html.includes('ADB 共用端口：'));
+assert.ok(html.includes('.device-port{display:inline-flex;'));
+assert.ok(html.includes('.device-addresses{display:flex;flex-wrap:wrap;'));
+assert.ok(html.includes('.multi-playback-options{grid-column:1/-1;'));
 assert.ok(html.includes('id="inventoryToggle"'));
 assert.ok(js.includes('onProjectionStarted:()=>collapseInventory(true)'));
 assert.ok(js.includes('onOpenManagement:()=>expandInventory()'));

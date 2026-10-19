@@ -117,7 +117,14 @@ assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deleti
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
-assert(page.includes("ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）"),'all addresses use one shared port');
+assert(page.includes("title.append(elem('span','device-port','ADB '+d.port))"),'shared port belongs to device title');
+assert(!page.includes("primary.append(elem('div','common-adb-port'"),'no separate shared-port row');
+assert(page.includes("addressList.append(...addressRows)"),'addresses use wrapping compact layout');
+assert(page.includes("addressList.append(plus)"),'inline plus adds/edits temporary IP');
+assert(page.includes("row.append(del)"),'temporary IP has its own close control');
+assert(!page.includes("removeButton=action('删除'"),'no single-device delete control');
+assert(!page.includes("const tempEdit=action("),'no duplicate temporary IP editor button');
+assert.match(page,/if\(!confirm\('将从列表永久删除以下 '/,'batch deletion still asks for confirmation');
 assert(page.includes("port.value=String(d.port)"),'temporary IP editor starts from the shared port');
 assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
@@ -177,7 +184,8 @@ const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
   encoded_height:1280,media_packets:3,key_frames:1,sample_bytes:1024,elapsed_ms:150};}
 });
 const quality=(i,key)=>picker.children[i].children[0].children[
- ({max_size:0,video_bit_rate:1,max_fps:2})[key]].children[0];
+ ({max_size:0,video_bit_rate:1,max_fps:2,dpi:3})[key]].children[0];
+const playback=i=>picker.children[i].children.find(x=>x.className==='multi-playback-options');
 const liveRow=i=>picker.children[i].children.find(node=>node.className==='multi-live');
 const liveButton=i=>liveRow(i).children[1];
 const liveStatus=i=>liveRow(i).children[0].textContent;
@@ -224,16 +232,19 @@ assert.deepEqual(resolutionGroup.children.map(x=>x.value),[
 assert.equal(quality(0,'max_size').value,'960');
 assert.equal(quality(0,'video_bit_rate').value,'3000000');
 assert.equal(quality(0,'max_fps').value,'24');
+assert.equal(quality(0,'dpi').value,'240');
+assert.equal(quality(0,'dpi').disabled,true,'DPI is virtual display only');
 assert.equal(quality(1,'max_size').value,'960');
 assert.equal(quality(1,'video_bit_rate').value,'3000000');
 assert.equal(quality(1,'max_fps').value,'24');
 assert.equal(picker.children[0].children[1].hidden,true,'hide probe actions only');
 assert.equal(picker.children[0].children[2].hidden,true,'hide probe log only');
 assert.match(page,/\.multi-choice>\.buttons\[hidden\],\.multi-choice>\.multi-probe-log\[hidden\]/);
-const latency0=picker.children[0].children.at(-1).children[0];
+assert.equal(playback(0).open,false,'playback experiments are folded by default');
+const latency0=playback(0).children[2].children[0];
 assert.equal(latency0.checked,true,'low latency defaults enabled for every device');
 assert.equal(multi.getChoice('id-2').low_latency,true,'B retains its own default');
-const panel0=picker.children[0].children.at(-2).children[0];
+const panel0=playback(0).children[1].children[0];
 assert.equal(panel0.checked,false,'physical display remains on by default');
 assert.equal(multi.getChoice('id-2').screen_off,false,'another phone remains independent');
 panel0.checked=true;panel0.fire('change');
@@ -695,7 +706,11 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').experimental_resolution,'1920x1080');
  assert.equal(multi.getChoice('id-1').screen_off,false);
  assert.equal(quality(0,'max_size').value,'exp:1920x1080');
- assert.equal(picker.children[0].children.at(-2).children[0].disabled,true);
+ assert.equal(playback(0).children[1].children[0].disabled,true);
+ assert.equal(quality(0,'dpi').disabled,false,'virtual resolution enables DPI');
+ const virtualDpi=quality(0,'dpi');virtualDpi.value='360';virtualDpi.fire('change');
+ assert.equal(multi.getChoice('id-1').dpi,360);
+ assert.equal(multi.getChoice('id-2').dpi,240);
  assert.equal(multi.getChoice('id-2').experimental_resolution,null);
  multi.videoEngine='mse';
  const experimentalSocketCount=sockets.length;
@@ -709,6 +724,7 @@ async function waitForCheck(id){
  assert.equal(request.display_experiment.mode,'new_resolution');
  assert.equal(request.display_experiment.width,1920);
  assert.equal(request.display_experiment.height,1080);
+ assert.equal(request.display_experiment.dpi,360);
  assert.equal(request.screen_off,false);
  assert.match(multi.cards.get('id-1').qualityLine.textContent,/实验性虚拟屏幕 1920×1080/);
  const virtualCard=multi.cards.get('id-1');
@@ -733,7 +749,8 @@ async function waitForCheck(id){
  const regular=quality(0,'max_size');regular.value='1600';regular.fire('change');
  assert.equal(multi.getChoice('id-1').experimental_resolution,null);
  assert.equal(multi.getChoice('id-1').max_size,1600);
- assert.equal(picker.children[0].children.at(-2).children[0].disabled,false);
+ assert.equal(playback(0).children[1].children[0].disabled,false);
+ assert.equal(quality(0,'dpi').disabled,true,'normal main-display mirroring cannot override phone DPI');
  console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
  console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
   console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
