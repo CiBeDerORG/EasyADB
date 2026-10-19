@@ -148,7 +148,7 @@ class MultiView{
    // DPI configures ONLY a new virtual display; ordinary primary-screen
    // mirroring never modifies Android's persistent wm density.
    const custom=make('div','multi-custom');
-   for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率'],['dpi','DPI（虚拟屏幕）']]){
+   for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率'],['dpi','DPI']]){
     const field=make('label','',label);
     const sel=key==='max_size'
      ?resolutionChoice(value.experimental_resolution?'exp:'+value.experimental_resolution:value.max_size)
@@ -166,8 +166,7 @@ class MultiView{
     });
     field.append(sel);custom.append(field);
    }
-   const dpiNote=make('div','multi-dpi-note','DPI 仅用于实验性虚拟屏幕；普通主屏投屏保持手机原有 DPI。');
-   custom.append(dpiNote);item.append(custom);
+   item.append(custom);
    const actions=make('div','buttons');
    for(const [kind,profile,label] of [['preflight',null,'能力预检'],['video','baseline','视频实验 · 基础'],['video','native','视频实验 · 原生']]){
     const b=make('button','secondary',label);b.type='button';
