@@ -128,10 +128,6 @@ package_action() {
         list) package_list "$@" ;;
         plan) package_operation plan "$@" ;;
         apply) package_operation apply "$@" ;;
-        refresh)
-            need_no_args "$@"
-            require_apk
-            "$APK" update ;;
         *) fail '不支持的软件包命令' ;;
     esac
 }
