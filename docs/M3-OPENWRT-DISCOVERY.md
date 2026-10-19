@@ -51,3 +51,9 @@
 OpenWrt v0.6.0 的 NAS 专用角色漏配 `read.ubus.file=["exec"]`：`uhttpd-mod-ubus` 会先以 `session.access(object=file,function=exec)` 校验 HTTP ubus 方法权限，即使角色已拥有 `read.file["/usr/libexec/luci-avahi-scan scan"]=["exec"]`，也可能在到达扫描脚本前得到 JSON-RPC `-32002 Access denied`。v0.6.1 补充 `ubus.file.exec`，脚本执行仍仅允许固定命令和 `scan` 参数，其他权限不变。升级 APK 无需轮换专用密码。
 
 EasyADB 不再将 JSON-RPC `error` 统一归为「RPCD 返回协议错误」：按 `session.login`、`file.exec` 区分阶段，报告公开错误码及诊断方向，不记录专用密码、会话令牌或完整原始 RPCD 响应。NAS 与路由器需分别升级后再按组点击「测试授权」及「立即发现 ADB」。
+
+## RPCD 双层 ACL 二次核查
+
+已按 OpenWrt `uhttpd/ubus.c` 和 `rpcd/file.c` 上游流程复核：浏览器、NAS 通过 HTTP `/ubus` 发出 `file.exec` 时，uhttpd 首先调用 `session.access(object=file,function=exec)`，要求 `read.ubus.file=["exec"]`；接下来 rpcd-mod-file 对规范化的固定可执行文件及拼接的参数 `/usr/libexec/luci-avahi-scan scan` 再执行 `session_access(...,"file",...,"exec")`，要求 NAS 角色 `read.file` 只允许这一个命令。v0.6.1 均具备，不能仅因为管理员通过本地 LuCI 扫描成功就认定 NAS 鉴权成功。
+
+EasyADB 的会话重试只针对 HTTP JSON-RPC `-32001 Session not found`，最多重新登录一次。HTTP `-32002` 或 ubus `result:[6]` 明确是权限不足，不得通过反复重新登录掩盖 ACL 问题。单纯的「测试授权」即使没有配置分组的内网 IP 前缀，也允许登录并做一次不入库扫描；只有正式更新设备端口前才需要内网 IP 前缀。测试为模拟 HTTP ubus，最终仍需实机用专用账号验证。
