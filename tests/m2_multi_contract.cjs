@@ -723,7 +723,9 @@ async function waitForCheck(id){
  assert.equal(virtual.sent.at(-1),'stop','close icon stops this stream');
  assert.equal(drawerEvents.at(-1),'collapsed','wait for stop acknowledgement before opening');
  virtual.emit('ended',{session_id:'virtual',cleanup_complete:true});
- await Promise.resolve();
+ // Native exitFullscreen() resolves asynchronously, then its completion
+ // callback reopens the drawer. Flush the bounded promise chain in this mock.
+ for(let i=0;i<6&&drawerEvents.at(-1)!=='opened';i++)await Promise.resolve();
  assert.equal(drawerEvents.at(-1),'opened','fullscreen stop exits first, then opens management');
  assert.equal(root.document.fullscreenElement,null,'stopping a fullscreen stream must exit fullscreen');
  assert.equal(fullscreenEvents.size,0,'no stale listeners after terminal session');
