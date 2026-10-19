@@ -38,6 +38,20 @@ function inventory(output) {
 	return result;
 }
 var VIEW_STYLE = ".avahi-web-root .avahi-panel {margin:0 0 12px;padding:16px 18px;background:var(--background-color-high,#fff);border:1px solid rgba(130,145,160,.18);border-radius:11px;box-shadow:0 2px 10px rgba(25,40,60,.035)}\n.avahi-web-root .avahi-panel h3 {margin:0;font-size:1.08em;line-height:1.4}\n.avahi-web-root .avahi-service-grid {display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:12px;align-items:stretch;min-width:0}\n.avahi-web-root .avahi-component-card {box-sizing:border-box;min-width:0;margin:0 !important;padding:13px 15px;border:1px solid rgba(130,145,160,.22);border-radius:9px;background:var(--background-color-high,#fff);box-shadow:0 1px 4px rgba(30,40,65,.025)}\n.avahi-web-root .avahi-action-row {display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:7px}\n.avahi-web-root button.avahi-action {box-sizing:border-box;min-height:34px;padding:6px 12px !important;border:1px solid #aebdcc !important;border-radius:6px !important;background:#fff !important;color:#354659 !important;box-shadow:none !important;opacity:1;white-space:nowrap;cursor:pointer}\n.avahi-web-root button.avahi-action.primary {background:#5168d9 !important;border-color:#5168d9 !important;color:#fff !important}\n.avahi-web-root button.avahi-action.danger {background:#fff !important;border-color:#e4a3a5 !important;color:#bb3641 !important}\n.avahi-web-root button.avahi-action:disabled {opacity:.46 !important;cursor:not-allowed}\n.avahi-web-root button.avahi-action:focus-visible {outline:2px solid #5168d9;outline-offset:2px}\n.avahi-web-root .avahi-panel-head {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px}\n.avahi-web-root .avahi-panel-note {margin:3px 0 0;color:var(--text-color-secondary,#637083);font-size:.93em;line-height:1.45}\n.avahi-web-root .avahi-table-scroll {overflow-x:auto;width:100%;border:1px solid rgba(130,145,160,.22);border-radius:8px;margin-top:10px}\n.avahi-web-root table.avahi-result-table {width:100% !important;min-width:560px;table-layout:fixed !important;border-collapse:collapse !important;border-spacing:0 !important;margin:0;background:transparent}\n.avahi-web-root .avahi-result-table tr {display:table-row !important;background:transparent !important}\n.avahi-web-root .avahi-result-table th,.avahi-web-root .avahi-result-table td {display:table-cell !important;box-sizing:border-box;text-align:left !important;vertical-align:middle;padding:10px 12px !important;border:0 !important;border-bottom:1px solid rgba(130,145,160,.18) !important;overflow-wrap:anywhere;word-break:normal}\n.avahi-web-root .avahi-result-table th {background:rgba(125,145,170,.1) !important;font-weight:600}\n.avahi-web-root .avahi-result-table tbody tr:last-child td {border-bottom:0 !important}\n.avahi-web-root .avahi-result-table tbody tr:nth-child(even) {background:rgba(125,145,170,.035) !important}\n@media (max-width:800px) {.avahi-web-root .avahi-service-grid {grid-template-columns:minmax(0,1fr) !important}.avahi-web-root .avahi-panel {padding:13px}}";
+
+VIEW_STYLE += '\n' + [
+	'.avahi-web-root .avahi-auth-summary {display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:2px 0 0;line-height:1.4;}',
+	'.avahi-web-root .avahi-auth-summary > span {margin:0 !important;}',
+	'.avahi-web-root .avahi-credential-card {margin-top:12px;padding:13px 15px;background:rgba(117,144,171,.055);border:1px solid rgba(130,145,160,.22);border-radius:8px;}',
+	'.avahi-web-root .avahi-credential-heading {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px;}',
+	'.avahi-web-root .avahi-credential-heading strong {color:var(--text-color-high,#253343);}',
+	'.avahi-web-root .avahi-credential-heading span {font-size:.9em;color:var(--text-color-secondary,#73684f);}',
+	'.avahi-web-root .avahi-credential-identity {margin:0 0 8px;}',
+	'.avahi-web-root .avahi-credential-row {display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;min-width:0;}',
+	'.avahi-web-root .avahi-secret {display:block;box-sizing:border-box;flex:1 1 320px;min-width:0;max-width:100%;padding:9px 11px;border:1px solid rgba(130,145,160,.30);border-radius:6px;background:var(--background-color-high,#fff);font-family:monospace;font-size:1em;line-height:1.5;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;}',
+	'.avahi-web-root .avahi-credential-row .avahi-action {flex:0 0 auto;}'
+].join('\n');
+
 function cell(value) { return E('td', [ value == null || value === '' ? '-' : String(value) ]); }
 
 return view.extend({
@@ -258,23 +272,27 @@ return view.extend({
 		}
 		function renderAuth(output) {
 			authOutput = output;
-			var current = values(output);
-			var state = current.state || 'error';
-			var text = state === 'managed'
-				? _('已授权：easyadb（仅允许发起一次扫描）')
+			var state = values(output).state || 'error';
+			var meta = state === 'managed'
+				? [ statusMark('已授权', 'ok'), E('span', [ '账号 easyadb · 仅允许按需扫描' ]) ]
 				: state === 'absent'
-				? _('未创建')
+				? [ statusMark('未创建', 'idle'), E('span', [ '尚未创建 NAS 专用账号' ]) ]
 				: state === 'conflict'
-				? _('账号冲突：系统已有相同名称的 RPCD 账户或配置段，组件不会覆盖。')
-				: _('无法读取账号授权状态。');
+				? [ statusMark('账号冲突', 'warn'), E('span', [ '系统已有重名账号或配置段，组件不会覆盖。' ]) ]
+				: [ statusMark('状态未知', 'warn'), E('span', [ '无法读取 NAS 授权状态，请重新检测。' ]) ];
+			var buttons = state === 'managed'
+				? [ authButton('重新生成密钥', 'rotate'), authButton('撤销授权', 'revoke') ]
+				: state === 'absent'
+				? [ authButton('创建专用账号', 'create') ]
+				: [ E('button', { type: 'button', 'class': 'avahi-action',
+					disabled: authBusy ? '' : null,
+					click: function() { if (!authBusy) return refreshAuth(); }
+				}, [ '重新检测' ]) ];
 			authStateNode.replaceChildren(
-				E('p', [ _('当前状态：') + text ]),
-				E('p', [ _('授权角色：') + 'luci-avahi-easyadb' ]),
-				E('div', { 'class': 'avahi-action-row' }, [
-					authButton(_('创建专用账号'), 'create', state !== 'absent'), ' ',
-					authButton(_('重新生成凭据'), 'rotate', state !== 'managed'), ' ',
-					authButton(_('撤销授权'), 'revoke', state !== 'managed')
-				])
+				E('div', { 'class': 'avahi-auth-summary' }, meta),
+				E('p', { 'class': 'avahi-panel-note', style: 'margin:5px 0 8px;' },
+					[ '权限角色：luci-avahi-easyadb' ]),
+				E('div', { 'class': 'avahi-action-row' }, buttons)
 			);
 		}
 		function refreshAuth() {
@@ -283,15 +301,66 @@ return view.extend({
 				alert(e.message, true);
 			});
 		}
-		function authButton(label, action, disabled) {
+		function authButton(label, action) {
 			return E('button', { type: 'button',
 				'class': 'avahi-action' + (action === 'revoke' ? ' danger' : action === 'create' ? ' primary' : ''),
-				disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null,
+				disabled: (authBusy || busy || runtimeBusy || refreshing) ? '' : null,
 				click: function() {
-					if (disabled || authBusy || busy || runtimeBusy || refreshing) return;
+					if (authBusy || busy || runtimeBusy || refreshing) return;
 					return confirmAuth(action);
 				}
 			}, [ label ]);
+		}
+		// The credential is system-generated and is NOT a password input.
+		// Display actual text as a selectable code element, not the value
+		// attribute of a textarea (which does not populate textarea contents).
+		function copyCredential(secret, source, feedback) {
+			function copied() {
+				feedback.replaceChildren(E('span', [ '密钥已复制，请保存到 EasyADB。' ]));
+			}
+			function fallback() {
+				// Keep the displayed secret selected for Ctrl+C even if the
+				// browser rejects automatic clipboard operations over HTTP.
+				var selection = window.getSelection();
+				var range = document.createRange();
+				range.selectNodeContents(source);
+				selection.removeAllRanges();
+				selection.addRange(range);
+				var success = false;
+				try { success = !!document.execCommand('copy'); } catch (e) {}
+				if (success) copied();
+				else feedback.replaceChildren(E('span',
+					[ '浏览器限制自动复制，密钥已选中，请按 Ctrl+C 复制。' ]));
+			}
+			if (typeof navigator !== 'undefined' && navigator.clipboard &&
+				typeof navigator.clipboard.writeText === 'function') {
+				return navigator.clipboard.writeText(secret).then(copied, fallback);
+			}
+			fallback();
+		}
+		function showCredential(info) {
+			var secret = info.password;
+			var copyFeedback = E('div', { 'class': 'avahi-panel-note', role: 'status' });
+			var secretText = E('code', { 'class': 'avahi-secret' }, [ secret ]);
+			authCredentialNode.replaceChildren(
+				E('div', { 'class': 'avahi-credential-card' }, [
+					E('div', { 'class': 'avahi-credential-heading' }, [
+						E('strong', [ '新密钥已生成 · 仅显示一次' ]),
+						E('span', [ '刷新或离开页面后不可找回' ])
+					]),
+					E('div', { 'class': 'avahi-credential-identity' },
+						[ '用户名：', E('strong', [ info.username || 'easyadb' ]) ]),
+					E('div', { 'class': 'avahi-credential-row' }, [
+						secretText,
+						E('button', { type: 'button', 'class': 'avahi-action primary',
+							click: function() { return copyCredential(secret, secretText, copyFeedback); }
+						}, [ '复制密钥' ])
+					]),
+					copyFeedback,
+					E('p', { 'class': 'avahi-panel-note', style: 'margin:7px 0 0;' },
+						[ '请在 EasyADB 中保存该密钥，不要使用路由器管理员密码。' ])
+				])
+			);
 		}
 		function applyAuth(action) {
 			if (authBusy || busy || runtimeBusy || refreshing) return Promise.resolve();
@@ -302,17 +371,9 @@ return view.extend({
 				if (action !== 'revoke') {
 					if (!/^[0-9a-f]{64}$/.test(info.password || ''))
 						throw new Error('账号可能已修改，但未收到有效的一次性凭据，请检查 RPCD 状态。');
-					// Never erase an earlier, still-visible one-time credential
-					// until a successful new value has been received.
-					authCredentialNode.replaceChildren(
-						E('p', { 'class': 'alert-message warning' }, [
-							'请立即复制并妥善保存密码！页面刷新后无法再次查看。'
-						]),
-						E('p', [ 'NAS 专用用户名：', E('strong', [ info.username || 'easyadb' ]) ]),
-						E('textarea', { readonly: '', rows: 2, 'class': 'cbi-input-textarea',
-							style: 'max-width:100%;width:560px', value: info.password }),
-						E('p', [ 'RPCD 即将重新加载。请在 EasyADB 中配置此凭据，不要使用路由器管理员密码。' ])
-					);
+					// Only replace the earlier one-time credential when a new
+					// one is confirmed. Never print credentials to notices/logs.
+					showCredential(info);
 				}
 				else {
 					authCredentialNode.replaceChildren();
