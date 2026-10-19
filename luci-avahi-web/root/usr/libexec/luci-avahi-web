@@ -6,6 +6,7 @@ LC_ALL=C
 export PATH LC_ALL
 CONF=/etc/avahi/avahi-daemon.conf
 INIT=/etc/init.d/avahi-daemon
+APK=$(command -v apk || true)
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 need_no_args() { [ "$#" -eq 0 ] || fail 'Unexpected arguments'; }
@@ -151,6 +152,101 @@ service_action() {
     esac
 }
 
+
+# Package operations are APK-only and restricted to exactly three managed
+# components. No arguments, URLs, options, shell expressions or force flags
+# supplied by the browser may reach the package manager.
+require_apk() {
+    [ -n "$APK" ] && [ -x "$APK" ] || fail 'APK package manager not found'
+}
+
+package_names() {
+    case "$1" in
+        avahi) set -- avahi-dbus-daemon avahi-utils ;;
+        dbus) set -- dbus ;;
+        umdns) set -- umdns ;;
+        *) fail 'Unsupported package component' ;;
+    esac
+    printf '%s\n' "$@"
+}
+
+package_list() {
+    need_no_args "$@"
+    require_apk
+    for pkg in avahi-dbus-daemon avahi-utils dbus umdns; do
+        if "$APK" info -e "$pkg" >/dev/null 2>&1; then
+            # This is display-only; never shell-evaluate the version.
+            version=$("$APK" info -v "$pkg" 2>/dev/null | sed -n '1p' || true)
+            printf '%s\tinstalled\t%s\n' "$pkg" "$version"
+        else
+            printf '%s\tabsent\t-\n' "$pkg"
+        fi
+    done
+}
+
+package_verb() {
+    case "$1" in
+        install) printf 'add' ;;
+        remove) printf 'del' ;;
+        upgrade) printf 'upgrade' ;;
+        *) fail 'Unsupported package action' ;;
+    esac
+}
+
+package_operation() {
+    phase=$1; shift
+    [ "$#" -eq 2 ] || fail 'Expected package action and component'
+    action=$1; target=$2
+    require_apk
+    verb=$(package_verb "$action")
+    names=$(package_names "$target")
+    # Package names are fixed literals emitted by package_names; disable globbing
+    # and split only its newline-separated tokens to build the argument vector.
+    set -f
+    oldIFS=$IFS; IFS='
+'
+    set -- $names
+    IFS=$oldIFS
+    set +f
+    if [ "$action" = remove ]; then
+        # Do not let the UI remove an actively operating mDNS daemon, or pull
+        # D-Bus from a live Avahi session. The operator must stop it first.
+        if [ "$target" = umdns ] && umdns_running; then
+            fail 'Stop and disable running umdns before uninstalling it'
+        fi
+        if [ "$target" = avahi ] && running; then
+            fail 'Stop Avahi before uninstalling it'
+        fi
+        if [ "$target" = dbus ] && pidof dbus-daemon >/dev/null 2>&1; then
+            fail 'D-Bus is running. Stop dependent services before uninstalling it'
+        fi
+    fi
+    if [ "$phase" = plan ]; then
+        "$APK" --simulate "$verb" "$@"
+    elif [ "$phase" = apply ]; then
+        # apk's dependency solver remains authoritative: no -r, --force,
+        # --allow-untrusted, or blanket system upgrade.
+        "$APK" "$verb" "$@"
+    else
+        fail 'Unsupported package phase'
+    fi
+}
+
+package_action() {
+    [ "$#" -ge 1 ] || fail 'Missing package action'
+    sub=$1; shift
+    case "$sub" in
+        list) package_list "$@" ;;
+        plan) package_operation plan "$@" ;;
+        apply) package_operation apply "$@" ;;
+        refresh)
+            need_no_args "$@"
+            require_apk
+            "$APK" update ;;
+        *) fail 'Unsupported package command' ;;
+    esac
+}
+
 [ "$#" -gt 0 ] || fail 'Expected a command'
 cmd=$1; shift
 case "$cmd" in
@@ -165,5 +261,6 @@ case "$cmd" in
     config-set) save_config "$@" ;;
     browse) browse "$@" ;;
     service) service_action "$@" ;;
+    package) package_action "$@" ;;
     *) fail 'Unsupported action' ;;
 esac
