@@ -5,7 +5,7 @@ import socket
 import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 
 SCANNER = "/usr/libexec/luci-avahi-scan"
 MAX_RESPONSE = 262144
@@ -26,7 +26,10 @@ def validate_url(value):
         raise DiscoveryError("接口必须是内网 http(s)://IPv4[:端口]/ubus，不能包含账号、查询或跳转")
     try:
         ip = ipaddress.IPv4Address(parsed.hostname)
-        if not ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        allowed = (ipaddress.IPv4Network("10.0.0.0/8"),
+                   ipaddress.IPv4Network("172.16.0.0/12"),
+                   ipaddress.IPv4Network("192.168.0.0/16"))
+        if not any(ip in network for network in allowed):
             raise ValueError()
         port = parsed.port
         if port is not None and not 1 <= port <= 65535:
@@ -58,7 +61,7 @@ class RpcdDiscovery:
                 "Content-Type": "application/json", "Accept": "application/json"
             }, method="POST")
             try:
-                with build_opener(_NoRedirect()).open(request, timeout=12) as response:
+                with build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=12) as response:
                     data = response.read(MAX_RESPONSE + 1)
             except HTTPError as exc:
                 raise DiscoveryError(f"路由器 RPCD 返回 HTTP {exc.code}") from None
