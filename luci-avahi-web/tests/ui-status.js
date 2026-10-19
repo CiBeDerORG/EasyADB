@@ -110,6 +110,7 @@ function modalConfirm() {
     walk(page,n=>{ if(n.props && typeof n.props.style === 'string' && n.props.style.includes('grid-template-columns')) cards.push(n); });
     assert.equal(cards.length,1,'Component cards should use a responsive grid');
     assert.equal(buttons(page,'补齐安装').length,1,'Partial Avahi install should be repairable');
+    assert.ok(buttons(page,'补齐安装')[0].disabled,'Other active mDNS daemon should block an unsafe package operation');
     assert.equal(buttons(page,'手动刷新组件状态').length,1);
     assert.equal(scanCalls,0);
     // There is no timer. Explicit refresh must update displayed process state.
@@ -118,6 +119,7 @@ function modalConfirm() {
     await buttons(page,'手动刷新组件状态')[0].props.click();
     assert.equal(calls.length,before+2,'Explicit refresh should read status and packages only');
     assert.ok(!text(page).includes('可能存在 mDNS'),'Conflict warning must clear');
+    assert.ok(!buttons(page,'补齐安装')[0].disabled,'Repair should become available after stopping conflicting mDNS daemon');
     // Stopping Avahi should be confirmed and followed by status refresh.
     const stop=buttons(page,'停止').find(b=>!b.disabled);
     assert.ok(stop,'Running Avahi can be stopped');
