@@ -39,6 +39,9 @@
         ],
         "/usr/libexec/luci-avahi-auth revoke": [
           "exec"
+        ],
+        "/usr/libexec/luci-avahi-scan scan": [
+          "exec"
         ]
       }
     }
