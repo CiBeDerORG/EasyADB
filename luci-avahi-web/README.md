@@ -1,4 +1,4 @@
-# luci-avahi-web (v0.4.0)
+# luci-avahi-web (v0.5.0)
 
 ImmortalWrt/OpenWrt 的轻量 EasyADB 局域网发现代理。仅保留 **NAS 主动触发扫描**、
 **OpenWrt 最近一次成功扫描快照**、以及 **Avahi / D-Bus / umdns 三组 APK 组件管理**。
@@ -23,31 +23,30 @@ ImmortalWrt/OpenWrt 的轻量 EasyADB 局域网发现代理。仅保留 **NAS �
 - Avahi 高级编辑、反射器配置及本地手动查询功能已从此应用移除；
   如有其他需要，可使用系统提供的 Avahi 配置文件/工具单独维护。
 
-## NAS 接口鉴权（必须完成部署后才能使用）
+## NAS 接口授权（直接在 LuCI 组件内配置）
 
-本应用只安装**固定的 RPCD ACL 角色**，绝不自动生成默认密码、匿名账号，
-也不会给 NAS 开放 LuCI 管理权限。
+LuCI 页面现已内置专用 RPCD 账号管理，无需手工编辑配置文件。
+在 **服务 → Avahi / ADB Discovery → NAS API authorization** 中，
+管理员可以创建账号、轮换凭据、撤销授权，并查看状态。
 
-OpenWrt 原生 RPCD 在 `/etc/config/rpcd` 中使用 `config login` 和
-`list read` 配置登录及授权。管理员需要**单独配置**专用登录，并使用已验证可被
-路由器 `crypt(3)` 识别的高强度密码哈希，例如：
-
-```sh
-# 以下为说明模板；不要原样使用尖括号占位符作为实际密码哈希。
-uci set rpcd.easyadb=login
-uci set rpcd.easyadb.username='easyadb'
-uci set rpcd.easyadb.password='<SUPPORTED_PASSWORD_HASH>'
-uci -q delete rpcd.easyadb.read
-uci add_list rpcd.easyadb.read='luci-avahi-easyadb'
-uci -q delete rpcd.easyadb.write
-uci commit rpcd
-/etc/init.d/rpcd restart
-```
-
-先通过 `/ubus` 的 `session.login` 登录获取会话 ID，并核验该会话仅拥有
-`luci-avahi-easyadb` 权限；不能使用 LuCI root 管理员凭据来代替。建议仅允许 NAS
-EasyTier IP 经防火墙到达路由器的管理端口，必要时由 HTTPS 提供额外传输保护。
-不得为省事关闭 UBUS 鉴权或向公网放开管理端口。
+- 固定用户名：`easyadb`，固定权限组：`luci-avahi-easyadb`；
+  仅授予 `/usr/libexec/luci-avahi-scan scan` 的 RPCD `file.exec` 权限。
+- 路由器使用 OpenSSL CSPRNG 生成 32 字节（64 位十六进制字符）的随机凭据，
+  通过标准输入生成 SHA-512 crypt 哈希，只将哈希存入
+  `/etc/config/rpcd`。密码仅在创建/轮换成功响应中展示一次；
+  `status` 不返回明文或哈希。
+- 创建前检查保留的 `rpcd.easyadb` 段及重名用户，发生冲突绝不覆盖。
+  轮换和撤销只操作确认为本组件管理且权限仍精确匹配的账号，
+  不改变其他登录项。
+- 操作会检查 UCI 待提交修改并加锁，防止交叉覆盖；提交后延迟向
+  RPCD 发送 reload，使当前页面有机会展示一次性凭据。
+- `openssl-util` 是组件 APK 的必需依赖。创建账号前必须在
+  已认证的管理员页面操作；**安装 APK 本身不会创建默认账号或密码**。
+- NAS 在 EasyADB 中保存此独立凭据，通过 OpenWrt `/ubus`
+  的 `session.login` 获取 Session ID 后请求一次 `scan`。
+  不得共享管理员密码、禁用 ubus 鉴权或向公网暴露管理端口。
+- 推荐使用 EasyTier 内网访问；如果跨不可信网络，使用 HTTPS 保护
+  账号、会话和扫描结果。实机还需验证新账号登录、拒绝越权和轮换失效。
 
 **接口请求示意**（不是现成凭据）：
 
@@ -110,7 +109,7 @@ NAS 要获取新的设备端口就执行一次 `scan`。
 反之亦然。LuCI 保留 Avahi/umdns 的必要启停和开机管理、以及 D-Bus 启动。
 
 应用自身仅依赖 `luci-base`、`rpcd-mod-file`、`libubox`、
-`uhttpd-mod-ubus`，**不强制依赖三组可选组件**，因此可在空环境中先进入组件管理页面。
+`uhttpd-mod-ubus`、`openssl-util`，**不强制依赖三组可选组件**，因此可在空环境中先进入组件管理页面。
 
 ## 路由器存储与构建
 
