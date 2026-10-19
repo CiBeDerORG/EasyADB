@@ -28,6 +28,20 @@ service_action() {
         *) fail '不支持的服务操作' ;;
     esac
     [ -x "$init" ] || fail '缺少对应服务的启动脚本，请先确认软件包已安装完整'
+    if [ "$op" = enable ]; then
+        if [ "$unit" = avahi ] && [ -x /etc/init.d/umdns ] &&
+            /etc/init.d/umdns enabled >/dev/null 2>&1; then
+            fail 'umdns 已启用开机自启，请先关闭其自启再启用 Avahi 自启'
+        fi
+        if [ "$unit" = umdns ] && [ -x "$INIT" ] &&
+            "$INIT" enabled >/dev/null 2>&1; then
+            fail 'Avahi 已启用开机自启，请先关闭其自启再启用 umdns 自启'
+        fi
+    fi
+    if [ "$op" = start ] && [ "$unit" = avahi ] &&
+        ! pidof dbus-daemon >/dev/null 2>&1; then
+        fail 'D-Bus 未运行，请先启动 D-Bus 后再启动 Avahi'
+    fi
     if [ "$op" = start ]; then
         if [ "$unit" = avahi ] && umdns_running; then
             fail '检测到 umdns 正在运行，请先停止 umdns，再启动 Avahi，以避免 mDNS 服务冲突'
