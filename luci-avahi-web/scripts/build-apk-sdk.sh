@@ -10,10 +10,8 @@ SRC=$(cd "$1" && pwd -P) || exit 1
 [ -r "$SRC/Makefile" ] && [ -f "$SRC/root/usr/libexec/luci-avahi-web" ] || {
     echo 'Source directory is incomplete.' >&2; exit 1;
 }
-# Use the SDK matching the installed SNAPSHOT; rolling feeds may be incompatible.
-[ -r feeds/luci/luci.mk ] || {
-    echo 'Install the matching LuCI feed in this SDK before compiling.' >&2; exit 1;
-}
+# This package uses standalone package.mk and does not require LuCI feed sources.
+# Only a compatible APK SDK and the installed package repository are required.
 if [ -e package/luci-avahi-web ] || [ -L package/luci-avahi-web ]; then
     [ "$(readlink -f package/luci-avahi-web)" = "$SRC" ] || {
         echo 'package/luci-avahi-web already exists and points elsewhere; not overwriting it.' >&2; exit 1;
