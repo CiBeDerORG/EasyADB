@@ -63,8 +63,7 @@ return view.extend({
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', note: '用于发现 Android 无线调试动态端口', process: 'running', init: 'avahi-daemon', bins: [ ['avahi-daemon-bin','avahi-daemon'], ['avahi-browse-bin','avahi-browse'] ], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
-			{ id: 'dbus', label: 'D-Bus', note: 'Avahi 的进程间通信依赖', process: 'dbus', init: 'dbus', bins: [ ['dbus-bin','dbus-daemon'] ], start: 'dbus-start', stop: 'dbus-stop', enable: 'dbus-enable', disable: 'dbus-disable', packages: [ 'dbus' ] },
-			{ id: 'umdns', label: 'umdns', note: 'OpenWrt 自带的 mDNS 服务', process: 'umdns', init: 'umdns', bins: [ ['umdns-bin','umdns'] ], start: 'umdns-start', stop: 'umdns-stop', enable: 'umdns-enable', disable: 'umdns-disable', packages: [ 'umdns' ] }
+			{ id: 'dbus', label: 'D-Bus', note: 'Avahi 的进程间通信依赖', process: 'dbus', init: 'dbus', bins: [ ['dbus-bin','dbus-daemon'] ], start: 'dbus-start', stop: 'dbus-stop', enable: 'dbus-enable', disable: 'dbus-disable', packages: [ 'dbus' ] }
 		];
 		function alert(text, error) {
 			noticeNode.replaceChildren(text ? E('p', {
@@ -119,7 +118,7 @@ return view.extend({
 					drawComponents();
 				});
 			};
-			if ([ 'stop', 'umdns-stop', 'dbus-stop', 'disable', 'umdns-disable', 'dbus-disable' ].indexOf(operation) < 0)
+			if ([ 'stop', 'dbus-stop', 'disable', 'dbus-disable' ].indexOf(operation) < 0)
 				return perform();
 			var confirmed = false;
 			ui.showModal('确认服务操作', [
@@ -141,7 +140,6 @@ return view.extend({
 			if (scanButton) scanButton.disabled = scanBusy || locked();
 			renderAuth(authOutput);
 			var st = currentStatus;
-			var conflict = st.running === 'yes' && st.umdns === 'yes';
 			var cards = groups.map(function(g) {
 				var pkg = packageState(g), running = st[g.process] === 'yes';
 				var init = st[g.init + '-init'] === 'yes', enabled = st[g.init + '-enabled'] === 'yes';
@@ -197,10 +195,8 @@ return view.extend({
 			});
 			var completeCount = groups.filter(function(g) { return packageState(g).state === 'complete'; }).length;
 			var runningCount = groups.filter(function(g) { return st[g.process] === 'yes'; }).length;
-			summaryNode.replaceChildren(E('span', [ '安装完整 ' + completeCount + '/3　·　运行中 ' + runningCount + '/3' ]));
+			summaryNode.replaceChildren(E('span', [ '安装完整 ' + completeCount + '/2　·　运行中 ' + runningCount + '/2' ]));
 			componentsNode.replaceChildren(
-				conflict ? E('div', { style: 'margin:0 0 12px;padding:9px 12px;border-radius:6px;background:#fff8e5;color:#765400;border:1px solid #e6ca85;overflow-wrap:anywhere;' },
-					[ '提示：Avahi 与 umdns 均在运行。这不等于已经发生 UDP 5353 端口冲突；若发现失败或出现重复应答，再检查实际监听和服务行为。这里不会自动关闭它们。' ]) : '',
 				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;min-width:0;align-items:start;' }, cards)
 			);
 		}
