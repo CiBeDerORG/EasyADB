@@ -103,7 +103,6 @@ done < "$TABLE"
 json_close_array
 json_add_int count "$count"
 json_add_string storage volatile
-json_close_object 2>/dev/null || true
 json_dump > "$OUT"
 chmod 0600 "$OUT"
 mv "$OUT" "$SNAPSHOT"
