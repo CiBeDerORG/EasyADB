@@ -236,7 +236,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <label for="groupOpenWrtUrl">RPCD 地址</label><input id="groupOpenWrtUrl" placeholder="http://10.10.10.2/ubus" autocomplete="off" spellcheck="false">
    <label for="groupOpenWrtUser">专用用户名</label><input id="groupOpenWrtUser" value="easyadb" maxlength="64" autocomplete="off">
    <label for="groupOpenWrtPassword">专用密钥</label><input id="groupOpenWrtPassword" type="password" maxlength="256" autocomplete="new-password" placeholder="粘贴 LuCI 中一次性展示的密钥">
-   <p class="hint">密码由 NAS 服务端加密保存；编辑时留空表示保留现有密钥，修改地址/账号时必须重新输入。清空接口地址并保存则移除该分组的发现配置。</p>
+   <p class="hint">直接保存 OpenWrt 专用密钥，不额外加密或创建密钥文件；编辑时留空保留已保存的密钥，旧版格式或修改地址/账号时须重新粘贴。清空接口地址并保存可停用此分组发现。</p>
    <button type="button" class="secondary" id="testGroupDiscovery" hidden>测试授权（会执行一次扫描）</button>
   </details>
   <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
@@ -372,7 +372,7 @@ function render(){
  if(multiView)for(const node of Array.from($('multiPicker').children))
   qualityRows.set(node.getAttribute('data-device-id'),node);
  const list=$('devices');list.replaceChildren();
- const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,discovery_configured:g.discovery_configured,items:[]}]));
+ const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,discovery_configured:g.discovery_configured,discovery_needs_password:g.discovery_needs_password,items:[]}]));
  for(const d of devices){
   const key=d.group_name?'named:'+d.group_name:'ungrouped';
   if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',ip_prefix:null,items:[]});
@@ -460,7 +460,12 @@ function render(){
   section.append(wrapper);shell.append(section);
   if(key!=='ungrouped'){
    const tools=elem('div','group-tools');
-   if(g.discovery_configured){
+   if(g.discovery_needs_password){
+    const renew=action('重新填写专用密钥',()=>openGroup(g.title),'secondary group-discovery');
+    renew.disabled=loading||scanningGroups.has(g.title);
+    tools.append(renew);
+    summary.style.paddingRight='270px';
+   }else if(g.discovery_configured){
     const discover=action(scanningGroups.has(g.title)?'正在发现…':'立即发现 ADB',()=>scanGroup(g.title),'secondary group-discovery');
     discover.disabled=loading||scanningGroups.has(g.title);
     tools.append(discover);
@@ -553,7 +558,8 @@ function openGroup(name=null){
    $('groupOpenWrtUrl').value=g.discovery_url||'';
    $('groupOpenWrtUser').value=g.discovery_username||'easyadb';
    $('groupDiscoveryPanel').open=Boolean(g.discovery_configured);
-   $('testGroupDiscovery').hidden=!g.discovery_configured;
+   $('testGroupDiscovery').hidden=!g.discovery_configured||g.discovery_needs_password;
+   if(g.discovery_needs_password)modalMessage('旧版加密凭据不再使用，请重新粘贴 OpenWrt 专用密钥并保存。','error','groupMessage');
   }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
  $('groupDialog').showModal();$('groupName').focus();
 }
