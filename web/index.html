@@ -368,14 +368,14 @@ const scanningGroups=new Set();
 const groupOpen=new Map();
 const inventoryDrawer=$('inventoryDrawer'),inventoryPanel=$('inventoryPanel');
 const inventoryToggle=$('inventoryToggle'),inventoryOpacity=$('inventoryOpacity');
-let inventoryCollapseTimer=null;
+let inventoryCollapseTimer=null,inventoryHovered=false;
 // Timer runs only while visible. Keep editing dialogs and ongoing management
 // operations available until the user can safely return to the drawer.
 function inventoryBusy(){
  const focused=document.activeElement;
  const typing=focused&&inventoryPanel.contains(focused)&&
   ['INPUT','TEXTAREA','SELECT'].includes(focused.tagName)&&focused.id!=='inventoryOpacity';
- return loading||scanningGroups.size>0||typing||
+ return inventoryHovered||loading||scanningGroups.size>0||typing||
   [...document.querySelectorAll('dialog')].some(dialog=>dialog.open);
 }
 function clearInventoryTimer(){
@@ -393,7 +393,7 @@ function collapseInventory(force=false){
 }
 function armInventoryTimer(){
  clearInventoryTimer();
- if(inventoryDrawer.classList.contains('is-open'))
+ if(inventoryDrawer.classList.contains('is-open')&&!inventoryHovered)
   inventoryCollapseTimer=setTimeout(()=>{inventoryCollapseTimer=null;collapseInventory();},5000);
 }
 function expandInventory(){
@@ -408,6 +408,16 @@ function expandInventory(){
 inventoryToggle.addEventListener('click',()=>{
  if(inventoryDrawer.classList.contains('is-open'))collapseInventory(true);
  else expandInventory();
+});
+// The half-hidden handle belongs to the drawer: entering either the handle
+// or the panel pauses the countdown, even if the pointer remains still.
+inventoryDrawer.addEventListener('pointerenter',()=>{
+ inventoryHovered=true;
+ clearInventoryTimer();
+});
+inventoryDrawer.addEventListener('pointerleave',()=>{
+ inventoryHovered=false;
+ armInventoryTimer(); // A fresh 5 seconds after leaving the entire drawer.
 });
 // The fullscreen video is a top-layer element. Explicitly hide the inventory
 // drawer and retract any open panel, then restore only its collapsed handle

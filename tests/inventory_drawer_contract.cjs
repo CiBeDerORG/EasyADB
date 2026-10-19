@@ -40,6 +40,13 @@ assert.equal(drawer.classList.contains('is-open'),true);assert.equal(panel.inert
 assert.equal(toggle.attrs['aria-expanded'],'true');assert.equal(timers.size,1);
 panel.fire('pointerdown');assert.equal(timers.size,1,'interaction resets, never multiplies timers');
 panel.fire('input');assert.equal(timers.size,1);
+drawer.fire('pointerenter');
+assert.equal(timers.size,0,'pointer hovering the management drawer pauses the timer');
+panel.fire('pointerdown');panel.fire('wheel');
+assert.equal(timers.size,0,'interaction while hovered must not restart the timer');
+tick();assert.equal(drawer.classList.contains('is-open'),true,'stationary mouse never closes the drawer');
+drawer.fire('pointerleave');
+assert.equal(timers.size,1,'leaving starts a new five-second countdown');
 tick();assert.equal(drawer.classList.contains('is-open'),false);
 assert.equal(panel.inert,true);assert.equal(timers.size,0,'collapsed drawer has no background polling');
 toggle.fire('click');dialogs[0].open=true;tick();
@@ -60,7 +67,11 @@ toggle.fire('click');slider.value='45';slider.fire('input');
 assert.equal(elements.inventoryOpacityValue.textContent,'45%');
 assert.equal(panel.css['--inventory-panel-opacity'],'0.55');
 assert.equal(storage.get('easyadb.inventory-transparency'),'45');
-toggle.fire('click');assert.equal(drawer.classList.contains('is-open'),false);assert.equal(timers.size,0);
+drawer.fire('pointerenter');
+toggle.fire('click');
+assert.equal(drawer.classList.contains('is-open'),false,'manual collapse overrides hover');
+assert.equal(timers.size,0);
+drawer.fire('pointerleave');
 // An open inventory drawer disappears immediately on video fullscreen and
 // only its collapsed half-hidden handle comes back on browser Escape.
 toggle.fire('click');
@@ -81,4 +92,4 @@ assert.equal(toggle.disabled,false);
 assert.equal(drawer.classList.contains('is-open'),false,'Escape restores the collapsed handle, not the open drawer');
 toggle.fire('click');assert.equal(drawer.classList.contains('is-open'),true);
 toggle.fire('click');
-console.log('Inventory drawer fullscreen hide/restore, timer, modal/busy protection, toggle and transparency: OK');
+console.log('Inventory drawer hover pause, leave reset, manual override, fullscreen protection and transparency: OK');
