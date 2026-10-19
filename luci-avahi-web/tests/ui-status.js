@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const source = fs.readFileSync('htdocs/luci-static/resources/view/avahi-web/overview.js', 'utf8');
 assert.ok(!source.includes("'require poll'") && !source.includes('poll.add('),
     'The page must not schedule background status polling');
-let scanCalls = 0, modal;
+let scanCalls = 0, modal, applyCalls = 0, authCalls = 0;
 let running = { avahi: true, dbus: true, umdns: true };
 let browseInstalled = false;
 let packageOutput;
@@ -70,7 +70,11 @@ const rpc = { exec: function(program,args) {
         assert.equal(args[0],'last','Only NAS should trigger scans');
         return Promise.resolve({code:1,stderr:'No previous result'});
     }
-    if (program.includes('luci-avahi-auth')) return Promise.resolve({code:0,stdout:'state=absent\n'});
+    if (program.includes('luci-avahi-auth')) {
+        if (args[0] === 'status') return Promise.resolve({code:0,stdout:'state=absent\n'});
+        authCalls++;
+        return Promise.resolve({code:1,stderr:'Refused by mock'});
+    }
     if (args[0] === 'status') return Promise.resolve({code:0,stdout:status()});
     if (args[0] === 'service') {
         if (args[1] === 'umdns-stop') running.umdns=false;
@@ -82,6 +86,7 @@ const rpc = { exec: function(program,args) {
         if (args[1] === 'list') return Promise.resolve({code:0,stdout:inventory()});
         if (args[1] === 'plan') return Promise.resolve({code:0,stdout:'SIMULATED: install avahi-utils'});
         if (args[1] === 'apply' && args[2] === 'install' && args[3] === 'avahi') {
+            applyCalls++;
             browseInstalled = true;
             return Promise.resolve({code:0,stdout:'Installed avahi-utils'});
         }
@@ -110,7 +115,7 @@ function modalConfirm() {
     walk(page,n=>{ if(n.props && typeof n.props.style === 'string' && n.props.style.includes('grid-template-columns')) cards.push(n); });
     assert.equal(cards.length,1,'Component cards should use a responsive grid');
     assert.equal(buttons(page,'补齐安装').length,1,'Partial Avahi install should be repairable');
-    assert.ok(buttons(page,'补齐安装')[0].disabled,'Other active mDNS daemon should block an unsafe package operation');
+    assert.ok(!buttons(page,'补齐安装')[0].disabled,'Installing only the missing avahi-utils must not require stopping umdns');
     assert.equal(buttons(page,'手动刷新组件状态').length,1);
     assert.equal(scanCalls,0);
     // There is no timer. Explicit refresh must update displayed process state.
@@ -119,7 +124,7 @@ function modalConfirm() {
     await buttons(page,'手动刷新组件状态')[0].props.click();
     assert.equal(calls.length,before+2,'Explicit refresh should read status and packages only');
     assert.ok(!text(page).includes('可能存在 mDNS'),'Conflict warning must clear');
-    assert.ok(!buttons(page,'补齐安装')[0].disabled,'Repair should become available after stopping conflicting mDNS daemon');
+    assert.ok(!buttons(page,'补齐安装')[0].disabled,'Repair must remain available after umdns stops');
     // Stopping Avahi should be confirmed and followed by status refresh.
     const stop=buttons(page,'停止').find(b=>!b.disabled);
     assert.ok(stop,'Running Avahi can be stopped');
@@ -133,10 +138,23 @@ function modalConfirm() {
     assert.ok(!repair.disabled);
     await repair.props.click();
     assert.equal(browseInstalled,false,'Preview must not apply installation');
-    await modalConfirm();
+    // LuCI modal can be dismissed via Escape/close, not just the Cancel button.
+    modal = undefined;
+    assert.ok(!buttons(page,'补齐安装')[0].disabled,'Dismissed preview must never leave a stale busy state');
+    await buttons(page,'补齐安装')[0].props.click();
+    const confirm = buttons(modal,'确认执行')[0];
+    const applied = confirm.props.click();
+    const repeated = confirm.props.click();
+    await Promise.all([applied,repeated]);
+    assert.equal(applyCalls,1,'One modal may only submit once');
     assert.equal(browseInstalled,true);
     assert.ok(text(page).includes('安装完整'),'Card should refresh after installation');
     assert.equal(buttons(page,'补齐安装').length,0);
     assert.equal(scanCalls,0);
+    // Failed authorization action must not leave account controls locked.
+    buttons(page,'创建专用账号')[0].props.click();
+    await modalConfirm();
+    assert.equal(authCalls,1);
+    assert.ok(!buttons(page,'创建专用账号')[0].disabled,'Failed account request should release its lock');
     console.log('Manual-only Chinese card interaction test passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
