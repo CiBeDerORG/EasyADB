@@ -15,6 +15,10 @@ class DiscoveryError(ValueError):
     pass
 
 
+class RpcdSessionExpired(DiscoveryError):
+    """Only a confirmed HTTP ubus session-expired response permits re-login."""
+
+
 def validate_url(value):
     """Constrain the outbound request to one private IPv4 router /ubus endpoint."""
     if not isinstance(value, str) or len(value) > 256:
@@ -84,6 +88,8 @@ class RpcdDiscovery:
         if error is not None:
             code = error.get("code") if isinstance(error, dict) else None
             stage = "session.login" if method == "login" else "file.exec"
+            if code == -32001 and method != "login":
+                raise RpcdSessionExpired("OpenWrt file.exec：RPCD 会话已过期（-32001）")
             # uhttpd performs ubus.file.exec access checks BEFORE rpcd-mod-file
             # evaluates the command and args. Never expose raw RPCD responses.
             known = {
@@ -124,14 +130,24 @@ class RpcdDiscovery:
                     if code != 0 or not isinstance(session, str) or len(session) != 32:
                         raise DiscoveryError("RPCD 登录失败，请检查专用账号和密钥")
                     self.sessions[cache_key] = session
-                code, result = self._call(url, session, "scan",
-                                          {"command": SCANNER, "params": ["scan"]})
-                if code != 0:
+                try:
+                    code, result = self._call(url, session, "scan",
+                                              {"command": SCANNER, "params": ["scan"]})
+                except RpcdSessionExpired:
+                    # Only uhttpd's explicit -32001 means the cached session
+                    # disappeared. Retry login at most once, never on ACL denial.
                     self.sessions.pop(cache_key, None)
                     session = None
                     if attempt == 0:
                         continue
-                    raise DiscoveryError("RPCD 会话失效或账号没有扫描权限")
+                    raise DiscoveryError("OpenWrt file.exec：重新登录后会话仍无效（-32001）") from None
+                if code == 6:
+                    raise DiscoveryError(
+                        "OpenWrt file.exec 权限被拒绝（ubus 状态码 6）："
+                        "请检查专用角色的 ubus.file.exec 和固定扫描命令 file.exec ACL"
+                    )
+                if code != 0:
+                    raise DiscoveryError(f"OpenWrt file.exec 调用失败（ubus 状态码 {code}）")
                 if result.get("code") != 0:
                     detail = str(result.get("stderr") or "").strip()[:300]
                     raise DiscoveryError("OpenWrt 扫描失败：" + (detail or f"执行码 {result.get('code')}"))
