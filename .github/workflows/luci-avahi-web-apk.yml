@@ -1,0 +1,49 @@
+name: Build LuCI Avahi native APK
+on:
+  push:
+    branches: [feat/luci-avahi-web]
+    paths:
+      - "luci-avahi-web/**"
+      - ".github/workflows/luci-avahi-web-apk.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare SDK dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential gawk file rsync unzip zstd wget python3 libncurses-dev
+      - name: Download and verify ImmortalWrt qualcommax/ipq60xx SDK
+        env:
+          SDK_URL: https://downloads.immortalwrt.org/snapshots/targets/qualcommax/ipq60xx/immortalwrt-sdk-qualcommax-ipq60xx_gcc-14.4.0_musl.Linux-x86_64.tar.zst
+          SDK_SHA256: f1fe279ef3334dd76b5a9e952a529dfe2a51b32e8fa4dc0f5e259bfc2e976b68
+        run: |
+          curl -fL --retry 3 --retry-delay 3 "$SDK_URL" -o /tmp/immortalwrt-sdk.tar.zst
+          echo "$SDK_SHA256  /tmp/immortalwrt-sdk.tar.zst" | sha256sum -c -
+          mkdir -p /tmp/immortalwrt-sdk
+          tar -I zstd -xf /tmp/immortalwrt-sdk.tar.zst -C /tmp/immortalwrt-sdk --strip-components=1
+          test -f /tmp/immortalwrt-sdk/rules.mk
+      - name: Compile native package using SDK (not an IPK rename)
+        run: |
+          set -eu
+          cd /tmp/immortalwrt-sdk
+          if [ ! -f feeds/luci/luci.mk ]; then
+            echo 'Matching LuCI feed not present in published SDK. Stopping instead of fetching an unpinned replacement.'
+            exit 1
+          fi
+          sh "$GITHUB_WORKSPACE/luci-avahi-web/scripts/build-apk-sdk.sh" "$GITHUB_WORKSPACE/luci-avahi-web"
+          mkdir -p "$GITHUB_WORKSPACE/luci-avahi-web/dist/apk"
+          find bin -type f -name 'luci-app-avahi-web-*.apk' -exec cp -v {} "$GITHUB_WORKSPACE/luci-avahi-web/dist/apk/" \;
+          test "$(find "$GITHUB_WORKSPACE/luci-avahi-web/dist/apk" -type f -name '*.apk' | wc -l)" -gt 0
+          sha256sum "$GITHUB_WORKSPACE"/luci-avahi-web/dist/apk/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-avahi-web-native-apk
+          path: luci-avahi-web/dist/apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
