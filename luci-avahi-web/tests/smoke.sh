@@ -45,6 +45,8 @@ assert "auth('status')" in code and "authCredentialNode" in code
 assert "config-set" not in code and "enable-reflector" not in code
 scanner=pathlib.Path("root/usr/libexec/luci-avahi-scan").read_text()
 assert "scan|last)" in scanner and "events.log" not in scanner and "log_event" not in scanner
+assert "ls -ldn" in scanner and "id -u" in scanner
+assert "Scan state directory is not root-owned" not in scanner
 controller=pathlib.Path("root/usr/libexec/luci-avahi-web").read_text()
 assert "\n    browse) " not in controller and "\n    config-set) " not in controller
 assert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller
@@ -70,6 +72,31 @@ if root/usr/libexec/luci-avahi-scan log >/dev/null 2>&1; then
 fi
 TEMP=$(mktemp -d)
 trap 'rm -rf "$TEMP"' EXIT HUP INT TERM
+# On minimal OpenWrt systems stat -c can be missing. Test a real user-owned
+# 0700 directory with a failing stat command and a numeric ls -ldn fallback.
+mkdir -m 0700 "$TEMP/scan-state" "$TEMP/mock-bin"
+printf '%s\n' '{"status":"ok","devices":[]}' > "$TEMP/scan-state/last-scan.json"
+cat > "$TEMP/mock-bin/stat" <<'EOF'
+#!/bin/sh
+exit 127
+EOF
+chmod +x "$TEMP/mock-bin/stat"
+sed -e "s@^STATE=/tmp/luci-avahi-web\$@STATE=$TEMP/scan-state@" \
+    -e "s@^PATH=/usr/sbin:/usr/bin:/sbin:/bin\$@PATH=$TEMP/mock-bin:/usr/sbin:/usr/bin:/sbin:/bin@" \
+    root/usr/libexec/luci-avahi-scan > "$TEMP/mock-scan"
+chmod +x "$TEMP/mock-scan"
+"$TEMP/mock-scan" last | grep -q '"status":"ok"'
+cat > "$TEMP/mock-bin/ls" <<'EOF'
+#!/bin/sh
+echo 'drwx------ 2 999999 999999 80 Jan 1 00:00 /tmp/fake-state'
+EOF
+chmod +x "$TEMP/mock-bin/ls"
+if "$TEMP/mock-scan" last >/dev/null 2>"$TEMP/scan-owner-error"; then
+    echo 'Scanner accepted a directory owned by another UID' >&2; exit 1
+fi
+grep -q 'owner UID 999999 differs from scanner UID' "$TEMP/scan-owner-error"
+rm -f "$TEMP/mock-bin/ls"
+
 cat > "$TEMP/mock-apk" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$MOCK_APK_LOG"
