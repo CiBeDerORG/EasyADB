@@ -53,7 +53,8 @@ return view.extend({
 		var operationDetails = E('details', { style: 'margin-top:12px;' }, [
 			E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]), operationOutput
 		]);
-		var busy = false, runtimeBusy = false, refreshing = false;
+		var busy = false, runtimeBusy = false, refreshing = false, authBusy = false;
+		var authOutput = 'state=error';
 		var manualButton, indexButton;
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
@@ -147,6 +148,9 @@ return view.extend({
 				var ready = pkg.state === 'complete' && missingBins.length === 0 && init;
 				var otherRunning = group.id === 'avahi' ? s.umdns === 'yes' :
 					group.id === 'umdns' ? s.running === 'yes' : false;
+				var utilityRepair = group.id === 'avahi' && pkg.state === 'partial' &&
+					currentPackages['avahi-dbus-daemon'] && currentPackages['avahi-dbus-daemon'].installed &&
+					currentPackages['avahi-utils'] && !currentPackages['avahi-utils'].installed;
 				var installLabel = pkg.state === 'complete' ?
 					(ready ? '安装完整' : '运行条件不完整') :
 					pkg.state === 'partial' ? '部分安装' :
@@ -173,7 +177,9 @@ return view.extend({
 				if (pkg.state === 'complete' && !init)
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少服务启动脚本：' + group.init ]));
 				if (otherRunning && group.stop)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '启动、安装或更新该 mDNS 组件前，请先停止另一项 mDNS 服务。' ]));
+					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ utilityRepair ?
+						'当前只缺 avahi-utils，可以单独补齐发现工具；启动或更新守护进程仍需先停止 umdns。' :
+						'启动、安装或更新该 mDNS 组件前，请先停止另一项 mDNS 服务。' ]));
 				if (group.id === 'dbus' && running)
 					missing.push(E('p', { style: 'margin:6px 0;opacity:.8;' }, [ 'D-Bus 正在运行，为保护依赖它的进程，禁止直接卸载。' ]));
 				return E('div', { 'class': 'cbi-section', style: 'min-width:0;margin:0;padding:15px;border:1px solid var(--border-color-medium, #d5d9dc);border-radius:8px;' }, [
@@ -202,7 +208,7 @@ return view.extend({
 						E('div', missing),
 						E('div', { style: 'display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;' }, [
 							pkgButton(pkg.state === 'partial' ? '补齐安装' : '安装',
-								group, 'install', pkg.state === 'complete' || pkg.state === 'unknown' || otherRunning), 
+								group, 'install', pkg.state === 'complete' || pkg.state === 'unknown' || (otherRunning && !utilityRepair)), 
 							pkgButton('更新', group, 'upgrade', pkg.state !== 'complete' || otherRunning),
 							pkgButton('卸载', group, 'remove', pkg.state === 'absent' || pkg.state === 'unknown' || running)
 						])
@@ -227,16 +233,18 @@ return view.extend({
 			return Promise.all([ control('status'), control('package', [ 'list' ]) ]).then(function(data) {
 				currentStatus = values(data[0]);
 				currentPackages = inventory(data[1]);
-			}).catch(function(e) {
-				alert('状态刷新失败：' + e.message, true);
 			}).then(function() {
 				refreshing = false;
 				drawComponents();
+			}, function(e) {
+				refreshing = false;
+				drawComponents();
+				throw e;
 			});
 		}
 		function manualRefresh() {
 			if (busy || runtimeBusy || refreshing) return Promise.resolve();
-			return refreshStatus();
+			return refreshStatus().catch(function(e) { alert('状态刷新失败：' + e.message, true); });
 		}
 		function setBusy(on) {
 			busy = on;
@@ -245,63 +253,76 @@ return view.extend({
 		function execute(operation, group) {
 			setBusy(true);
 			operationDetails.open = true;
-			operationOutput.textContent = _('正在执行软件包操作……');
+			operationOutput.textContent = '正在执行软件包操作……';
 			return control('package', [ 'apply', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
-				alert(_('软件包操作已完成，请查看下方输出。'));
-			}).catch(function(e) {
+				alert('软件包操作已完成，请查看下方输出。');
+			}, function(e) {
 				operationOutput.textContent = e.message;
-				alert(_('软件包操作失败；未执行强制安装或卸载。'), true);
+				alert('软件包操作失败：' + e.message, true);
 			}).then(function() {
 				return refreshStatus();
-			}).then(function() { setBusy(false); }, function(e) {
-				setBusy(false); alert(e.message, true);
-			});
+			}).catch(function(e) {
+				alert('操作后状态刷新失败：' + e.message, true);
+			}).then(function() { setBusy(false); });
 		}
 		function preview(operation, group) {
 			if (busy || runtimeBusy || refreshing) return;
 			setBusy(true);
 			operationDetails.open = true;
-			operationOutput.textContent = _('正在模拟并检查软件包依赖变更……');
+			operationOutput.textContent = '正在模拟并检查软件包依赖变更……';
 			return control('package', [ 'plan', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
-				ui.showModal(_('确认软件包操作'), [
-					E('p', [ _('SNAPSHOT 软件源可能已经变化，请核对模拟操作中的全部依赖变更；不会执行系统整体升级。') ]),
-					E('p', [ _('目标：') + group + ' / ' + operation ]),
+				// Unlock after simulation, BEFORE showing the dialog. LuCI permits
+				// dismissing a modal by Escape or its built-in close control.
+				// No hidden busy state may outlive such a dismissed dialog.
+				setBusy(false);
+				var confirmed = false;
+				ui.showModal('确认软件包操作', [
+					E('p', [ 'SNAPSHOT 软件源可能已经变化，请核对模拟操作中的全部依赖变更；不会执行系统整体升级。' ]),
+					E('p', [ '目标：' + group + ' / ' + operation ]),
 					E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto' },
-						[ result || _('模拟结果未提出变更') ]),
+						[ result || '模拟结果未提出变更' ]),
 					E('div', { 'class': 'right' }, [
-						E('button', { 'class': 'btn', click: function() { ui.hideModal(); setBusy(false); } }, [ _('取消') ]), ' ',
+						E('button', { 'class': 'btn', click: function() { ui.hideModal(); } }, [ '取消' ]), ' ',
 						E('button', { 'class': 'btn cbi-button-apply', click: function() {
+							if (confirmed || busy || runtimeBusy || refreshing) return;
+							confirmed = true;
 							ui.hideModal();
 							return execute(operation, group);
-						} }, [ _('确认执行') ])
+						} }, [ '确认执行' ])
 					])
 				]);
 			}).catch(function(e) {
 				operationOutput.textContent = e.message;
-				alert(_('软件包模拟操作失败，未修改任何已安装软件。'), true);
+				alert('软件包预览失败，未修改任何软件：' + e.message, true);
 				setBusy(false);
 			});
 		}
 		function refreshIndex() {
 			if (busy || runtimeBusy || refreshing) return;
-			ui.showModal(_('更新 APK 软件源索引'), [
-				E('p', [ _('仅刷新软件源索引，不升级已安装的软件包。') ]),
+			var confirmed = false;
+			ui.showModal('更新 APK 软件源索引', [
+				E('p', [ '仅刷新软件源索引，不升级已安装的软件包。' ]),
 				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('取消') ]), ' ',
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
+						if (confirmed || busy || runtimeBusy || refreshing) return;
+						confirmed = true;
 						ui.hideModal();
 						setBusy(true);
 						operationDetails.open = true;
+						operationOutput.textContent = '正在刷新软件源索引……';
 						return control('package', [ 'refresh' ]).then(function(out) {
 							operationOutput.textContent = out;
-						}).catch(function(e) {
+							alert('软件源索引刷新完成。');
+						}, function(e) {
 							operationOutput.textContent = e.message;
-							alert(e.message, true);
-						}).then(refreshStatus).then(function() { setBusy(false); },
-							function(e) { setBusy(false); alert(e.message, true); });
-					} }, [ _('确认执行') ])
+							alert('软件源刷新失败：' + e.message, true);
+						}).then(refreshStatus).catch(function(e) {
+							alert('操作后状态刷新失败：' + e.message, true);
+						}).then(function() { setBusy(false); });
+					} }, [ '确认执行' ])
 				])
 			]);
 		}
