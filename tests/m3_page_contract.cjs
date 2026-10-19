@@ -33,7 +33,7 @@ assert.ok(js.includes('function armInventoryTimer()'));
 assert.ok(js.includes('collapseInventory(true)'));
 assert.ok(js.includes('inventoryPanel.inert=true'));
 assert.ok(js.includes('inventoryPanel.inert=false'));
-assert.ok(js.includes("['pointerdown','keydown','input','change','wheel','focusin']"));
+assert.ok(js.includes("['pointerdown','keydown','input','change','wheel','focusin','focusout']"));
 assert.ok(js.includes('easyadb.inventory-transparency'));
 assert.ok(!js.includes('setInterval(')&&!js.includes('setTimeout(scanGroup'));
 assert.ok(server.includes('def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None = None):'));

@@ -21,7 +21,7 @@ const dialogs=[{open:false}];
 const storage=new Map();
 let busy=false,scans=0,next=1;
 const timers=new Map(),set=(fn,ms)=>{assert.equal(ms,5000);const id=next++;timers.set(id,fn);return id;};
-const ctx={document:{getElementById:id=>elements[id],querySelectorAll:()=>dialogs},
+const ctx={document:{getElementById:id=>elements[id],querySelectorAll:()=>dialogs,activeElement:null},
  localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
  setTimeout:set,clearTimeout:id=>timers.delete(id)};
 vm.runInNewContext("const $=id=>document.getElementById(id);let loading=false;const scanningGroups=new Set();\n"+source+
@@ -44,6 +44,13 @@ assert.equal(drawer.classList.contains('is-open'),true,'do not hide active opera
 ctx.api.setBusy(false);ctx.api.setScanning(true);tick();
 assert.equal(drawer.classList.contains('is-open'),true,'do not hide an active discovery');
 ctx.api.setScanning(false);tick();assert.equal(drawer.classList.contains('is-open'),false);
+// Focused inline editing must not disappear; focusout re-arms the idle check.
+const field={tagName:'INPUT',id:'token'};
+panel.contains=node=>node===field;
+toggle.fire('click');ctx.document.activeElement=field;panel.fire('focusin');tick();
+assert.equal(drawer.classList.contains('is-open'),true,'do not hide a focused input');
+ctx.document.activeElement=null;panel.fire('focusout');tick();
+assert.equal(drawer.classList.contains('is-open'),false);
 toggle.fire('click');slider.value='45';slider.fire('input');
 assert.equal(elements.inventoryOpacityValue.textContent,'45%');
 assert.equal(panel.css['--inventory-panel-opacity'],'0.55');

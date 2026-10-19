@@ -356,7 +356,10 @@ let inventoryCollapseTimer=null;
 // Timer runs only while visible. Keep editing dialogs and ongoing management
 // operations available until the user can safely return to the drawer.
 function inventoryBusy(){
- return loading||scanningGroups.size>0||
+ const focused=document.activeElement;
+ const typing=focused&&inventoryPanel.contains(focused)&&
+  ['INPUT','TEXTAREA','SELECT'].includes(focused.tagName)&&focused.id!=='inventoryOpacity';
+ return loading||scanningGroups.size>0||typing||
   [...document.querySelectorAll('dialog')].some(dialog=>dialog.open);
 }
 function clearInventoryTimer(){
@@ -389,7 +392,7 @@ inventoryToggle.addEventListener('click',()=>{
  if(inventoryDrawer.classList.contains('is-open'))collapseInventory(true);
  else expandInventory();
 });
-for(const eventName of ['pointerdown','keydown','input','change','wheel','focusin'])
+for(const eventName of ['pointerdown','keydown','input','change','wheel','focusin','focusout'])
  inventoryPanel.addEventListener(eventName,armInventoryTimer,{passive:eventName==='wheel'});
 function updateInventoryOpacity(raw){
  const amount=Number(raw),value=Number.isFinite(amount)?
