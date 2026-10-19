@@ -73,8 +73,32 @@ class RpcdDiscovery:
                 data = json.loads(data)
             except (UnicodeError, ValueError):
                 raise DiscoveryError("RPCD 返回的不是有效 JSON") from None
-        if not isinstance(data, dict) or data.get("error") is not None:
-            raise DiscoveryError("RPCD 返回协议错误")
+        # /ubus normally returns one JSON-RPC object. Accept a one-item
+        # batch response as a compatibility fallback, but never log or return
+        # the raw response: session.login may carry a live session token.
+        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+            data = data[0]
+        if not isinstance(data, dict):
+            raise DiscoveryError("OpenWrt /ubus 返回结构无效（非 JSON-RPC 对象）")
+        error = data.get("error")
+        if error is not None:
+            code = error.get("code") if isinstance(error, dict) else None
+            stage = "session.login" if method == "login" else "file.exec"
+            # uhttpd performs ubus.file.exec access checks BEFORE rpcd-mod-file
+            # evaluates the command and args. Never expose raw RPCD responses.
+            known = {
+                -32700: "JSON 解析失败", -32600: "请求格式错误",
+                -32601: "调用方法不存在", -32602: "请求参数无效",
+                -32603: "RPCD 内部错误", -32000: "ubus 对象不存在",
+                -32001: "RPCD 会话不存在", -32002: "访问被拒绝",
+                -32003: "ubus 请求超时",
+            }
+            if type(code) is int and code in known:
+                hint = ("；请检查 OpenWrt 专用 ACL 同时包含 read.ubus.file.exec 和扫描脚本 file.exec"
+                        if code == -32002 and method != "login" else
+                        "；请检查 RPCD 登录接口及路由器状态" if code == -32002 else "")
+                raise DiscoveryError(f"OpenWrt {stage}：{known[code]}（{code}）{hint}")
+            raise DiscoveryError(f"OpenWrt {stage} 返回未识别的 JSON-RPC 错误（错误码：{code if type(code) is int else '未知'}）")
         result = data.get("result")
         if not isinstance(result, list) or not result or type(result[0]) is not int:
             raise DiscoveryError("RPCD 返回结构不正确")
