@@ -35,11 +35,13 @@ SOURCE="${EASYADB_SOURCE_BRANCH:-$CURRENT}"
 case "$SOURCE" in
   feat/display-mode-lab)
     TARGET_BRANCH=feat/display-mode-lab ;;
+  feat/m3-openwrt-discovery)
+    TARGET_BRANCH=feat/m3-openwrt-discovery ;;
   feat/m2-web-control|"")
     TARGET_BRANCH=feat/m2-web-control ;;
   *)
     if [ -n "${EASYADB_SOURCE_BRANCH:-}" ]; then
-      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2 and display-lab branches are allowed." >&2
+      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2, display-lab and m3-openwrt-discovery branches are allowed." >&2
       exit 2
     fi
     # An unrelated checkout retains the original M2 default on an ordinary build.
