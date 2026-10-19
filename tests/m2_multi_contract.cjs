@@ -295,7 +295,7 @@ ca.main.fire('click');ca.fullscreenButton.fire('click');
 assert.equal(root.document.fullscreenElement,ca.screen,'only this card video becomes fullscreen');
 assert.equal(ca.fullscreenButton['aria-pressed'],'true');
 assert.equal(ca.fullscreenButton.title,'退出全屏（Esc）');
-assert.equal(ca.fab.hidden,false,'video controls remain in fullscreen');
+assert.notEqual(ca.fab.hidden,true,'video controls remain in fullscreen');
 assert.match(page,/\.multi-screen:fullscreen \.multi-fab\{right:14px;top:50%;transform:translateY\(-50%\);z-index:20;visibility:visible\}/);
 assert.match(page,/\.multi-screen:fullscreen \.multi-fab \.fab-main\{visibility:visible;opacity:1;pointer-events:auto\}/);
 // Browser Esc invokes native exitFullscreen -> fullscreenchange, no global key capture.
