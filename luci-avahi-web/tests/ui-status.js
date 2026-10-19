@@ -12,7 +12,7 @@ let browseInstalled = false;
 let packageOutput;
 function inventory() {
     return [
-        'avahi-dbus-daemon\tinstalled\t1.0',
+        'avahi-dbus-daemon\tinstalled\tAvahi is an mDNS/DNS-SD implementation (verbose DESCRIPTION, not a version)',
         'avahi-utils\t' + (browseInstalled ? 'installed\t1.0' : 'absent\t-'),
         'dbus\tinstalled\t1.0',
         'umdns\tinstalled\t1.0'
@@ -120,6 +120,15 @@ function modalConfirm() {
     const cards = [];
     walk(page,n=>{ if(n.props && typeof n.props.style === 'string' && n.props.style.includes('grid-template-columns')) cards.push(n); });
     assert.equal(cards.length,1,'Component cards should use a responsive grid');
+    const componentCards = [];
+    walk(page,n=>{ if (String(n.props?.class || '').includes('avahi-component-card')) componentCards.push(n); });
+    assert.equal(componentCards.length,3,'All three packages must occupy sibling responsive cards');
+    assert.ok(componentCards.every(c=>!String(c.props.class).includes('cbi-section')),
+        'Avoid LuCI cbi-section CSS that changes the card layout');
+    assert.ok(!text(page).includes('verbose DESCRIPTION'), 'Never render apk verbose descriptions as installed versions');
+    assert.ok(text(page).includes('版本未知'), 'Malformed version should degrade to a short neutral value');
+    assert.ok(!String(cards[0].props.style).includes('minmax(min(100%,320px)'),
+        'The responsive layout must be bounded by compact cards');
     assert.equal(buttons(page,'补齐安装').length,1,'Partial Avahi install should be repairable');
     assert.ok(!buttons(page,'补齐安装')[0].disabled,'Installing only the missing avahi-utils must not require stopping umdns');
     assert.equal(buttons(page,'手动刷新组件状态').length,1);
