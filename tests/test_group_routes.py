@@ -305,7 +305,7 @@ def test_first_time_pair_button_only_follows_manual_connection_failure():
     assert "setInterval(" not in web
 
 
-def test_temporary_route_persists_and_uses_its_own_port_without_fallback(monkeypatch, tmp_path):
+def test_temporary_route_uses_shared_port_and_can_edit_it_without_fallback(monkeypatch, tmp_path):
     mod, online, blocked, calls = fixture(monkeypatch, tmp_path)
     from server.m2_live import LiveRegistry
     mod.live_registry = LiveRegistry()
@@ -316,13 +316,15 @@ def test_temporary_route_persists_and_uses_its_own_port_without_fallback(monkeyp
         device_id = added["id"]
         endpoint = f"{base}/{device_id}/temp-address"
         assert client.put(endpoint, json={"ip": "10.50.60.70", "port": 41177}).status_code == 401
-        assert client.put(endpoint, headers=AUTH, json={"ip": "10.50.60.70"}).status_code == 400
+        assert client.put(endpoint, headers=AUTH, json={"ip": None, "port": 41177}).status_code == 400
         assert client.put(endpoint, headers=AUTH, json={"ip": "invalid", "port": 41177}).status_code == 400
         assert client.put(endpoint, headers=AUTH, json={"ip": "10.50.60.70", "port": 65536}).status_code == 400
         assert choose(client, device_id, "temp").status_code == 409
         saved = client.put(endpoint, headers=AUTH,
                            json={"ip": " 10.50.60.70 ", "port": 41177}).json()
-        assert saved["temp_ip"] == "10.50.60.70" and saved["temp_port"] == 41177
+        assert saved["temp_ip"] == "10.50.60.70" and saved["port"] == 41177
+        assert "temp_port" not in saved
+        assert saved["selected_serial"] == "10.10.30.206:41177"
         assert saved["selected_route"] == "mesh"
         assert not calls, "Saving the optional address must not probe/connect"
         chosen = choose(client, device_id, "temp").json()
@@ -339,12 +341,20 @@ def test_temporary_route_persists_and_uses_its_own_port_without_fallback(monkeyp
                             json={"ip": "10.50.60.71", "port": 42222}).json()
         assert edited["selected_route"] == "temp"
         assert edited["selected_serial"] == "10.50.60.71:42222"
+        assert edited["port"] == 42222
         assert edited["active_serial"] is None and edited["status"] == "idle"
+        assert choose(client, device_id, "mesh").json()["selected_serial"] == "10.10.30.206:42222"
+        assert choose(client, device_id, "temp").json()["selected_serial"] == "10.50.60.71:42222"
+        retained = client.put(endpoint, headers=AUTH, json={"ip": "10.50.60.72"}).json()
+        assert retained["port"] == 42222 and retained["selected_serial"] == "10.50.60.72:42222"
+        assert client.put(endpoint, headers=AUTH, json={"ip": None, "port": 42222}).status_code == 400
         assert [x[2] for x in calls if x[1] == "connect"] == [temporary, temporary]
 
         removed = client.put(endpoint, headers=AUTH, json={"ip": None, "port": None}).json()
-        assert removed["temp_ip"] is None and removed["temp_port"] is None
-        assert removed["selected_route"] == "mesh" and removed["active_serial"] is None
+        assert removed["temp_ip"] is None and removed["port"] == 42222
+        assert "temp_port" not in removed
+        assert removed["selected_route"] == "mesh" and removed["selected_serial"] == "10.10.30.206:42222"
+        assert removed["active_serial"] is None
         assert choose(client, device_id, "temp").status_code == 409
 
     reopened = DeviceStore(str(tmp_path / "devices.sqlite3"))
@@ -371,7 +381,8 @@ def test_temp_route_conflict_group_edit_migration_and_live_mutation_guard(monkey
         assert mod.store.get(one["id"])["temp_ip"] is None, "collision must roll back"
         saved = client.put(eid, headers=AUTH,
                            json={"ip": "172.16.0.1", "port": 5556}).json()
-        assert saved["temp_ip"] == "172.16.0.1"
+        assert saved["temp_ip"] == "172.16.0.1" and saved["port"] == 5556
+        assert choose(client, one["id"], "mesh").json()["selected_serial"] == "10.10.30.206:5556"
         assert client.put(f"/api/devices/{two['id']}/temp-address", headers=AUTH,
                           json={"ip": "172.16.0.1", "port": 5556}).status_code == 409
         assert choose(client, one["id"], "temp").json()["selected_serial"] == "172.16.0.1:5556"
@@ -402,7 +413,22 @@ def test_temp_route_conflict_group_edit_migration_and_live_mutation_guard(monkey
                    ("old", "Old Phone", "", "10.20.30.40", 4444))
     store = DeviceStore(str(legacy))
     store.initialize()
-    assert store.get("old")["temp_ip"] is None and store.get("old")["temp_port"] is None
+    assert store.get("old")["temp_ip"] is None and "temp_port" not in store.get("old")
     store.set_temp_address("old", "10.20.30.41", 4445)
     store.select_route("old", "temp")
+    assert store.get("old")["port"] == 4445
     assert DeviceStore(str(legacy)).get("old")["selected_route"] == "temp"
+    from server.devices import selected_address
+    assert selected_address(store.get("old")) == "10.20.30.41:4445"
+
+    # An older saved temporary-only port must never override the common port.
+    with sqlite3.connect(legacy) as db:
+        db.execute("UPDATE devices SET port=5555,temp_ip='10.20.30.41',temp_port=49999,selected_route='temp' WHERE id='old'")
+    store.initialize()
+    old = store.get("old")
+    assert old["temp_ip"] == "10.20.30.41" and old["port"] == 5555
+    assert "temp_port" not in old and selected_address(old) == "10.20.30.41:5555"
+    store.set_temp_address("old", None, None)
+    assert store.get("old")["port"] == 5555
+    with sqlite3.connect(legacy) as db:
+        assert db.execute("SELECT temp_port FROM devices WHERE id='old'").fetchone()[0] is None

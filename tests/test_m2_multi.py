@@ -185,7 +185,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'class="panel access-panel"' not in html
         assert html.index('<h2>设备管理</h2>') < html.index('id="token"') < html.index('id="load"')
         assert '批量检查状态' in html and '批量停止投屏' in html
-        assert "if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port)" in html
+        assert "if(d.temp_ip)addAddress('临时 IP','temp',d.temp_ip)" in html
         assert "/temp-address" in html
         multi_js=client.get("/m2-multi.js").text
         assert "liveState(id)" in multi_js
@@ -212,7 +212,9 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         # Route selection acts directly on the displayed IP; no separate
         # selected/switch label or automatic ADB connect on clicking route.
         assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
-        assert "临时 ADB 端口：'+d.temp_port" in html
+        assert "ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）" in html
+        assert "port.value=String(d.port)" in html
+        assert "临时 ADB 端口：" not in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html
         assert "⇄ 切换" not in html and "✓ 当前选择" not in html
         assert "title.append(elem('span','item-name',d.name))" in html

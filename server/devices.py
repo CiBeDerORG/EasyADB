@@ -20,8 +20,9 @@ def selected_address(device):
         if not ip:
             return None
     elif route == "temp":
-        ip, port = device.get("temp_ip"), device.get("temp_port")
-        return f"{ip}:{port}" if ip and port else None
+        ip = device.get("temp_ip")
+        if not ip:
+            return None
     else:
         ip = device["mesh_ip"]
     return f'{ip}:{device["port"]}'

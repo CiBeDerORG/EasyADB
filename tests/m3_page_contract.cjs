@@ -14,7 +14,9 @@ assert.match(js,/if\(!test\)discoveryResults\.set\(name,result\)/);
 assert.match(js,/configs\.filter\(g=>g\.discovery_configured\)/);
 assert.ok(!js.includes("route==='temp'?':' +port"));
 assert.match(js,/action\(label\+'：'\+ip,\(\)=>switchRoute/);
-assert.ok(js.includes("临时 ADB 端口：'+d.temp_port"));
+assert.ok(js.includes("ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）"));
+assert.ok(js.includes("port.value=String(d.port)"));
+assert.ok(!js.includes("临时 ADB 端口："));
 assert.ok(store.includes('"endpoints": []'));
 assert.ok(js.includes("function renderDiscoveryResult(last)"));
 for(const state of ['updated','unchanged','unmatched','busy','ambiguous','conflicting','route_conflict'])

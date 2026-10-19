@@ -97,12 +97,15 @@ class DeviceStore:
         # Legacy auto_reconnect records remain on disk solely for backwards
         # compatibility and have no behavioral or API effect.
         result.pop("auto_reconnect", None)
+        # Legacy per-route temp_port stays in SQLite for compatibility, but
+        # must not appear in API data or override the shared device port.
+        result.pop("temp_port", None)
         if "ip" in result:
             result["lan_ip"] = internal_ip(result.pop("ip_prefix", None), result["ip"])
             result["mesh_ip"] = result["ip"]
             if result["selected_route"] == "lan" and not result["lan_ip"]:
                 result["selected_route"] = "mesh"
-            if result["selected_route"] == "temp" and not (result["temp_ip"] and result["temp_port"]):
+            if result["selected_route"] == "temp" and not result["temp_ip"]:
                 result["selected_route"] = "mesh"
         return result
 
@@ -121,8 +124,8 @@ class DeviceStore:
             serials = {(row["ip"], row["port"])}
             if lan:
                 serials.add((lan, row["port"]))
-            if row["temp_ip"] is not None and row["temp_port"] is not None:
-                serials.add((row["temp_ip"], row["temp_port"]))
+            if row["temp_ip"] is not None:
+                serials.add((row["temp_ip"], row["port"]))
             for serial in serials:
                 other = owners.get(serial)
                 if other and other != row["id"]:
@@ -421,21 +424,29 @@ class DeviceStore:
                 return None
             if route == "lan" and not internal_ip(row["ip_prefix"], row["ip"]):
                 raise ValueError("该设备所属分组没有配置有效的内网 IP")
-            if route == "temp" and not (row["temp_ip"] and row["temp_port"]):
-                raise ValueError("该设备还没有保存临时 IP 和端口")
+            if route == "temp" and not row["temp_ip"]:
+                raise ValueError("该设备还没有保存临时 IP")
             db.execute("UPDATE devices SET selected_route=? WHERE id=?", (route, device_id))
         return self.get(device_id)
 
     def set_temp_address(self, device_id, ip, port):
-        """Persist optional temporary route. No ADB side effects."""
+        """Persist the optional temp IP and the ONE shared ADB port.
+
+        Removing the temporary IP never resets the shared port. The obsolete
+        temp_port SQL column is cleared on write and ignored during reads.
+        No ADB side effects.
+        """
         with self.connection() as db:
-            row = db.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone()
+            row = db.execute("SELECT id,port FROM devices WHERE id=?", (device_id,)).fetchone()
             if not row:
                 return None
-            db.execute("""UPDATE devices SET temp_ip=?,temp_port=?,
+            common_port = row["port"] if ip is None or port is None else port
+            db.execute("""UPDATE devices SET temp_ip=?,temp_port=NULL,port=?,
+                          model=CASE WHEN port<>? THEN NULL ELSE model END,
+                          android_version=CASE WHEN port<>? THEN NULL ELSE android_version END,
                           selected_route=CASE WHEN ? IS NULL AND selected_route='temp'
                                               THEN 'mesh' ELSE selected_route END
-                          WHERE id=?""", (ip, port, ip, device_id))
+                          WHERE id=?""", (ip, common_port, common_port, common_port, ip, device_id))
             self._check_routes(db)
         return self.get(device_id)
 

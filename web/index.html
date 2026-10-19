@@ -543,10 +543,9 @@ function render(){
    };
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
-   if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port);
+   if(d.temp_ip)addAddress('临时 IP','temp',d.temp_ip);
    top.append(managementLabel,info);primary.append(top,...addressRows);
-   primary.append(elem('div','common-adb-port','ADB 共用端口：'+d.port+'（组网 / 内网）'));
-   if(d.temp_ip&&d.temp_port)primary.append(elem('div','common-adb-port temp-adb-port','临时 ADB 端口：'+d.temp_port+'（仅临时 IP）'));
+   primary.append(elem('div','common-adb-port','ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）'));
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
@@ -759,10 +758,10 @@ function openTempEditor(d,editor){
  const ipLabel=elem('label','','临时 IPv4'),ip=elem('input');
  ip.required=true;ip.placeholder='例如 10.10.30.206';ip.value=d.temp_ip||'';
  ip.setAttribute('autocomplete','off');ipLabel.append(ip);
- const portLabel=elem('label','','ADB 连接端口'),port=elem('input');
- port.type='number';port.required=true;port.min='1';port.max='65535';port.placeholder='端口';
- port.value=d.temp_port||'';portLabel.append(port);
- const save=elem('button','','保存临时线路');save.type='submit';
+ const portLabel=elem('label','','ADB 共用端口（组网 / 内网 / 临时 IP）'),port=elem('input');
+ port.type='number';port.required=true;port.min='1';port.max='65535';port.placeholder='共用端口';
+ port.value=String(d.port);portLabel.append(port);
+ const save=elem('button','','保存临时 IP 与共用端口');save.type='submit';
  const cancel=action('取消',()=>{editor.hidden=true;},'secondary');
  editor.append(ipLabel,portLabel,save,cancel);
  editor.onsubmit=event=>{
@@ -778,14 +777,14 @@ async function saveTempAddress(id,ip,port){
   await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})
   });
-  await load(true);message(ip?'临时 IP:端口已入库，可点击临时 IP 线路并手动连接':'临时线路已移除；如原线路已选中，则已恢复组网线路（未自动连接）','ok');
+  await load(true);message(ip?'临时 IP 已保存；共用端口已同步至组网、内网及临时线路，连接前请手动重新连接':'临时 IP 已移除，共用端口保持不变；如原线路已选中，则已恢复组网线路（未自动连接）','ok');
  }catch(e){message(e.message,'error');await load(true);}
  finally{loading=false;render();}
 }
 function removeTempAddress(id){
  const d=devices.find(x=>x.id===id);
  if(!d||loading||multiView&&multiView.isBusyFor(id))return;
- if(confirm('确认移除「'+d.name+'」已保存的临时 IP:端口？不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
+ if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
 }
 async function runConnect(id){
  if(loading)return;

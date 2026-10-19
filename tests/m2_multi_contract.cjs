@@ -117,7 +117,9 @@ assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deleti
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
-assert(page.includes("临时 ADB 端口：'+d.temp_port"),'temporary port is displayed separately from its IP');
+assert(page.includes("ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）"),'all addresses use one shared port');
+assert(page.includes("port.value=String(d.port)"),'temporary IP editor starts from the shared port');
+assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
 assert.match(page,/title\.append\(elem\('span','item-name',d\.name\)\)/);

@@ -499,17 +499,20 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
             session = live_registry.sessions.get(device_id)
             if session is not None and not live_registry.is_cleaned(session):
                 raise HTTPException(409, "该设备正在投屏或清理，请结束后修改临时地址")
-        if payload.ip is None and payload.port is None:
-            ip, port = None, None
-        elif payload.ip is None or payload.port is None:
-            raise HTTPException(400, "临时 IP 与端口必须同时填写")
+        if payload.ip is None:
+            if payload.port is not None:
+                raise HTTPException(400, "移除临时 IP 时不可单独修改共用端口")
+            ip, port = None, original["port"]
         else:
-            serial = address(payload.ip, payload.port)
-            ip, port = serial.rsplit(":", 1)[0], payload.port
+            # Omitted port retains the current shared value (existing API clients).
+            # An explicitly supplied port changes mesh/LAN/temp together.
+            port = original["port"] if payload.port is None else payload.port
+            serial = address(payload.ip, port)
+            ip = serial.rsplit(":", 1)[0]
         try:
             result = store.set_temp_address(device_id, ip, port)
         except sqlite3.IntegrityError:
-            raise HTTPException(409, "临时地址已存在") from None
+            raise HTTPException(409, "共用 ADB 地址已存在") from None
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
         if result is None:
