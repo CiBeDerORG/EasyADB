@@ -19,11 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check syntax, ACL, config safety and build development IPK
+      - name: Check minimal NAS-only scan ACL, shell, JavaScript, package operations
         run: |
           cd luci-avahi-web
           sh tests/smoke.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: luci-app-avahi-web-dev-ipk
-          path: luci-avahi-web/dist/*.ipk
