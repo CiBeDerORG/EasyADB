@@ -21,7 +21,12 @@ const dialogs=[{open:false}];
 const storage=new Map();
 let busy=false,scans=0,next=1;
 const timers=new Map(),set=(fn,ms)=>{assert.equal(ms,5000);const id=next++;timers.set(id,fn);return id;};
-const ctx={document:{getElementById:id=>elements[id],querySelectorAll:()=>dialogs,activeElement:null},
+const body=new Element(),documentEvents=new Map();
+body.classList.toggle=(name,state)=>{if(state)body.classList.add(name);else body.classList.remove(name);};
+const doc={getElementById:id=>elements[id],querySelectorAll:()=>dialogs,activeElement:null,
+ fullscreenElement:null,body,
+ addEventListener:(event,handler)=>documentEvents.set(event,handler)};
+const ctx={document:doc,
  localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
  setTimeout:set,clearTimeout:id=>timers.delete(id)};
 vm.runInNewContext("const $=id=>document.getElementById(id);let loading=false;const scanningGroups=new Set();\n"+source+
@@ -56,4 +61,24 @@ assert.equal(elements.inventoryOpacityValue.textContent,'45%');
 assert.equal(panel.css['--inventory-panel-opacity'],'0.55');
 assert.equal(storage.get('easyadb.inventory-transparency'),'45');
 toggle.fire('click');assert.equal(drawer.classList.contains('is-open'),false);assert.equal(timers.size,0);
-console.log('Inventory drawer timer, modal/busy protection, manual toggle and transparency: OK');
+// An open inventory drawer disappears immediately on video fullscreen and
+// only its collapsed half-hidden handle comes back on browser Escape.
+toggle.fire('click');
+assert.equal(drawer.classList.contains('is-open'),true);
+doc.fullscreenElement={id:'phone-stream'};
+documentEvents.get('fullscreenchange')();
+assert.equal(body.classList.contains('video-fullscreen-active'),true);
+assert.equal(toggle.disabled,true);
+assert.equal(drawer.classList.contains('is-open'),false);
+assert.equal(panel.inert,true);
+assert.equal(timers.size,0,'entering fullscreen cancels auto-collapse timer');
+toggle.fire('click');
+assert.equal(drawer.classList.contains('is-open'),false,'cannot expand while video is fullscreen');
+doc.fullscreenElement=null;
+documentEvents.get('fullscreenchange')();
+assert.equal(body.classList.contains('video-fullscreen-active'),false);
+assert.equal(toggle.disabled,false);
+assert.equal(drawer.classList.contains('is-open'),false,'Escape restores the collapsed handle, not the open drawer');
+toggle.fire('click');assert.equal(drawer.classList.contains('is-open'),true);
+toggle.fire('click');
+console.log('Inventory drawer fullscreen hide/restore, timer, modal/busy protection, toggle and transparency: OK');

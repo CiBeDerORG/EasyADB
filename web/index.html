@@ -12,6 +12,7 @@ h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:
 .inventory-drawer{position:fixed;left:0;top:16px;z-index:30;width:min(900px,calc(100vw - 62px));max-height:calc(100dvh - 32px);
  transform:translateX(calc(-100% + 16px));transition:transform .22s ease;overflow:visible}
 .inventory-drawer.is-open{transform:translateX(0)}
+body.video-fullscreen-active .inventory-drawer{display:none!important}
 .inventory-drawer .inventory-panel{width:100%;max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain;
  opacity:var(--inventory-panel-opacity,.8);border-radius:0 14px 14px 0;box-shadow:0 14px 42px #000b;
  backdrop-filter:blur(12px);background:#172233}
@@ -381,6 +382,7 @@ function armInventoryTimer(){
   inventoryCollapseTimer=setTimeout(()=>{inventoryCollapseTimer=null;collapseInventory();},5000);
 }
 function expandInventory(){
+ if(document.fullscreenElement)return;
  inventoryPanel.inert=false;
  inventoryDrawer.classList.add('is-open');
  inventoryToggle.setAttribute('aria-expanded','true');
@@ -392,6 +394,17 @@ inventoryToggle.addEventListener('click',()=>{
  if(inventoryDrawer.classList.contains('is-open'))collapseInventory(true);
  else expandInventory();
 });
+// The fullscreen video is a top-layer element. Explicitly hide the inventory
+// drawer and retract any open panel, then restore only its collapsed handle
+// when leaving fullscreen (Esc or the video's fullscreen control).
+function syncInventoryFullscreen(){
+ const active=Boolean(document.fullscreenElement);
+ document.body.classList.toggle('video-fullscreen-active',active);
+ inventoryToggle.disabled=active;
+ if(active)collapseInventory(true);
+}
+document.addEventListener('fullscreenchange',syncInventoryFullscreen);
+syncInventoryFullscreen();
 for(const eventName of ['pointerdown','keydown','input','change','wheel','focusin','focusout'])
  inventoryPanel.addEventListener(eventName,armInventoryTimer,{passive:eventName==='wheel'});
 function updateInventoryOpacity(raw){
