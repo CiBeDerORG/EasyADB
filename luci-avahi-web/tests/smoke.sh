@@ -21,6 +21,9 @@ assert '/usr/libexec/luci-avahi-web package apply *' in acl['luci-app-avahi-web'
 assert '/usr/libexec/luci-avahi-web package refresh' in acl['luci-app-avahi-web']['write']['file']
 makefile=pathlib.Path('Makefile').read_text()
 assert '+avahi-dbus-daemon' not in makefile and '+avahi-utils' not in makefile
+js=pathlib.Path('htdocs/luci-static/resources/view/avahi-web/overview.js').read_text()
+assert 'function planPackage(' in js and 'function displayPackages(' in js
+assert "[ 'apply', operation, target ]" in js and "[ 'refresh' ]" in js
 PY
 TEMP=$(mktemp -d)
 trap 'rm -rf "$TEMP"' EXIT HUP INT TERM
@@ -103,4 +106,7 @@ if "$TEMP/helper" package apply remove dbus --force >/dev/null 2>&1; then
 fi
 sh scripts/build-ipk.sh
 ar t dist/luci-app-avahi-web_0.2.0-1_all.ipk | grep -qx 'data.tar.gz'
+ar p dist/luci-app-avahi-web_0.2.0-1_all.ipk control.tar.gz | tar -xzOf - ./control | grep -qx 'Depends: luci-base, rpcd-mod-file'
+! "$TEMP/helper" service umdns-reboot >/dev/null 2>&1
+! "$TEMP/helper" service dbus-reboot >/dev/null 2>&1
 echo 'smoke tests passed'
