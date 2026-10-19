@@ -138,7 +138,7 @@ return view.extend({
 		function drawComponents() {
 			if (manualButton) manualButton.disabled = locked();
 			if (indexButton) indexButton.disabled = locked();
-			if (scanButton) scanButton.disabled = scanBusy;
+			if (scanButton) scanButton.disabled = scanBusy || locked();
 			renderAuth(authOutput);
 			var st = currentStatus;
 			var conflict = st.running === 'yes' && st.umdns === 'yes';
@@ -334,7 +334,7 @@ return view.extend({
 		function authButton(label, action, disabled) {
 			return E('button', { type: 'button',
 				'class': action === 'revoke' ? 'cbi-button cbi-button-negative' : 'cbi-button',
-				disabled: disabled || authBusy || busy || runtimeBusy || refreshing,
+				disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null,
 				click: function() {
 					if (disabled || authBusy || busy || runtimeBusy || refreshing) return;
 					return confirmAuth(action);
@@ -400,7 +400,7 @@ return view.extend({
 		}
 		function renderLast(output) {
 			if (!output) {
-				lastNode.replaceChildren(E('p', [ _('暂无 NAS 成功触发的扫描结果。') ]));
+				lastNode.replaceChildren(E('p', [ _('暂无已保存的发现结果。') ]));
 				return;
 			}
 			var result;
@@ -429,12 +429,33 @@ return view.extend({
 			);
 		}
 		function reloadLast() {
-			return snapshot().then(renderLast).catch(function() { renderLast(''); });
+			return snapshot().then(renderLast).catch(function(e) {
+				renderLast('');
+				alert('读取最近结果失败：' + e.message, true);
+			});
+		}
+		function scanOnce() {
+			if (scanBusy || locked()) return Promise.resolve();
+			scanBusy = true;
+			scanButton.disabled = true;
+			scanButton.textContent = '正在发现…';
+			return scan().then(function(output) {
+				renderLast(output);
+				alert('已完成一次本地 ADB 无线调试服务发现，结果已更新。');
+			}, function(e) {
+				alert('发现失败：' + e.message + '。请确认 Avahi 已启动且 avahi-utils 已安装。', true);
+			}).then(function() {
+				scanBusy = false;
+				scanButton.textContent = '立即发现 ADB';
+				scanButton.disabled = false;
+			});
 		}
 		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
 			[ '手动刷新组件状态' ]);
 		indexButton = E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex },
 			[ '刷新 APK 软件源索引' ]);
+		scanButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: scanOnce },
+			[ '立即发现 ADB' ]);
 		currentPackages = inventory(data[1]);
 		currentStatus = values(data[0]);
 		drawComponents();
@@ -444,7 +465,7 @@ return view.extend({
 			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;' }, [
 				E('div', [
 					E('h2', { style: 'margin:0 0 5px;' }, [ 'Avahi / EasyADB 发现代理' ]),
-					E('p', { style: 'margin:0;opacity:.8;' }, [ '由 NAS 发起经过鉴权的按需扫描，路由器只保存最近一次结果。' ])
+					E('p', { style: 'margin:0;opacity:.8;' }, [ '可在本页面手动发现 ADB，或由 NAS 通过专用鉴权接口发起；路由器仅保存最近一次结果。' ])
 				]),
 				manualButton
 			]),
@@ -468,9 +489,10 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;' }, [
-					E('div', [ E('h3', [ '最近一次 NAS 扫描' ]),
-						E('p', [ '仅读取 /tmp 中的最近一次成功扫描快照，不触发新扫描；设备长期记录由 NAS 保存。' ]) ]),
-					E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ '刷新结果' ])
+					E('div', [ E('h3', [ 'ADB 设备发现' ]),
+						E('p', [ '立即发现会主动执行一次 Avahi 查询；刷新结果只读取 /tmp 中的最近快照。设备长期记录由 NAS 保存。' ]) ]),
+					E('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, [ scanButton,
+						E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ '刷新结果' ]) ])
 				]),
 				lastNode
 			])
