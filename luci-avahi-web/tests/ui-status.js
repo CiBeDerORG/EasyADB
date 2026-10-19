@@ -3,6 +3,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
 const source=fs.readFileSync('htdocs/luci-static/resources/view/avahi-web/overview.js','utf8');
 assert.ok(!source.includes("'require poll'")&&!source.includes('poll.add('));
 let modal,scanCalls=0,authCalls=0,applyCalls=0,failStatusOnce=false,failScanOnce=false,browseInstalled=false;
+let authManaged=false, authSuccess=false, clipboardValue='';
+const SECRET='a'.repeat(64), SECRET_ROTATED='b'.repeat(64);
+let nextSecret=SECRET;
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{writeText:function(v){clipboardValue=v;return Promise.resolve();}}}});
 const running={avahi:true,dbus:true},boot={avahi:true,dbus:true};
 function E(tag,attrs,kids) {
  if(Array.isArray(attrs)||attrs==null||typeof attrs==='string'){kids=attrs;attrs={};}
@@ -33,8 +37,12 @@ const rpc={exec:function(program,args){
   assert.equal(args[0],'last');return Promise.resolve(scanCalls?{code:0,stdout:snapshot}:{code:1,stderr:'No snapshot'});
  }
  if(program.includes('luci-avahi-auth')){
-  if(args[0]==='status')return Promise.resolve({code:0,stdout:'state=absent\n'});
-  authCalls++;return Promise.resolve({code:1,stderr:'mock denied'});
+  if(args[0]==='status')return Promise.resolve({code:0,stdout:'state='+(authManaged?'managed':'absent')+'\n'});
+  authCalls++;
+  if(!authSuccess)return Promise.resolve({code:1,stderr:'mock denied'});
+  if(args[0]==='revoke'){authManaged=false;return Promise.resolve({code:0,stdout:'state=absent\n'});}
+  authManaged=true;
+  return Promise.resolve({code:0,stdout:'state=managed\nusername=easyadb\nrole=luci-avahi-easyadb\npassword='+nextSecret+'\n'});
  }
  if(args[0]==='status'){
   if(failStatusOnce){failStatusOnce=false;return Promise.resolve({code:1,stderr:'模拟失败'});}
@@ -115,5 +123,37 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  assert.equal(applyCalls,1);assert.ok(!txt(page).includes('缺少软件包：avahi-utils'));assert.equal(btn(page,'补齐安装').length,0);
  btn(page,'创建专用账号')[0].props.click();await confirm();
  assert.equal(authCalls,1);assert.ok(!btn(page,'创建专用账号')[0].disabled);
- assert.equal(scanCalls,2);console.log('Two-component LuCI actions and manual scan interactions passed');
+ // A successful account creation must show the generated key visibly, not
+ // as a textarea value attribute (which rendered a giant blank box).
+ authSuccess=true;
+ btn(page,'创建专用账号')[0].props.click();await confirm();
+ assert.equal(authCalls,2);assert.ok(authManaged);
+ assert.ok(txt(page).includes(SECRET),'One-time generated secret must be visible in selectable text');
+ assert.ok(!txt(page).includes('创建专用账号'),'Hide unavailable create action once managed');
+ assert.ok(btn(page,'重新生成密钥').length===1&&btn(page,'撤销授权').length===1);
+ const credentialRows=[],passwordAreas=[];walk(page,n=>{
+  if(n.props?.class==='avahi-credential-row')credentialRows.push(n);
+  if(n.tag==='textarea')passwordAreas.push(n);
+ });
+ assert.equal(passwordAreas.length,0,'Never render an inert readonly textarea');
+ assert.equal(credentialRows.length,1);
+ const secretCodes=[];walk(credentialRows[0],n=>{if(n.tag==='code')secretCodes.push(n);});
+ assert.equal(secretCodes.length,1);assert.equal(txt(secretCodes[0]),SECRET);
+ await btn(page,'复制密钥')[0].props.click();
+ assert.equal(clipboardValue,SECRET,'Copy button should copy the actual generated credential');
+ assert.ok(txt(page).includes('密钥已复制'));
+ // A failed rotation must leave the earlier visible key intact.
+ authSuccess=false;
+ btn(page,'重新生成密钥')[0].props.click();await confirm();
+ assert.equal(authCalls,3);assert.ok(txt(page).includes(SECRET));
+ // On successful rotation, replace the old key and retain the new one.
+ authSuccess=true;nextSecret=SECRET_ROTATED;
+ btn(page,'重新生成密钥')[0].props.click();await confirm();
+ assert.equal(authCalls,4);assert.ok(txt(page).includes(SECRET_ROTATED));
+ assert.ok(!txt(page).includes(SECRET),'Old key must no longer be shown');
+ btn(page,'撤销授权')[0].props.click();await confirm();
+ assert.equal(authCalls,5);assert.ok(!authManaged);
+ assert.ok(!txt(page).includes(SECRET_ROTATED),'Revocation should clear visible secret');
+ assert.equal(btn(page,'创建专用账号').length,1);
+ assert.equal(scanCalls,2);console.log('Two-component LuCI actions, credential copy and one-time secret lifecycle passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
