@@ -24,6 +24,10 @@ assert.ok(js.includes("$('groupDialog').close();\n  message('分组设置已保�
 assert.ok(js.includes("$('deviceDialog').close();message('设备已保存'"));
 assert.ok(html.includes('ADB 共用端口：'));
 assert.ok(html.includes('id="inventoryToggle"'));
+assert.ok(js.includes('onProjectionStarted:()=>collapseInventory(true)'));
+assert.ok(js.includes('onOpenManagement:()=>expandInventory()'));
+assert.ok(html.includes('.multi-screen:fullscreen .multi-fab{right:14px;top:50%;transform:translateY(-50%);z-index:20;visibility:visible}'));
+assert.ok(html.includes('.multi-fab .fab-up-stop{bottom:208px;right:0;'));
 assert.ok(html.includes('id="inventoryOpacity"'));
 assert.ok(html.includes('id="inventoryDrawer"'));
 assert.ok(html.includes('body.video-fullscreen-active .inventory-drawer{display:none!important}'));

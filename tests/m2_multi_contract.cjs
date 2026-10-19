@@ -163,10 +163,12 @@ assert.match(checkingBadge.className,/checking/,'ongoing check must not show sta
 const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
-const calls=[],batchSelected=new Set();
+const calls=[],batchSelected=new Set(),drawerEvents=[];
 const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
  getDevices:()=>devices,getToken:()=> 'token-test',
  onChange(){},
+ onProjectionStarted:()=>drawerEvents.push('collapsed'),
+ onOpenManagement:()=>drawerEvents.push('opened'),
  getBatchSelection:()=>batchSelected,onBatchSelectionRemove:id=>batchSelected.delete(id),
  runPreflight:async id=>{calls.push(['preflight',id]);return{selected_serial:'checked-'+id,model:'Test',android_sdk:35,cpu_abi:'arm64',display_size:'1080x2400'};},
  runVideoProbe:async(id,p)=>{calls.push(['probe',id,p]);return{codec:'H.264',encoded_width:720,
@@ -259,6 +261,7 @@ assert.equal(multi.getChoice('id-2').max_size,960);
 assert.equal(multi.getChoice('id-2').max_fps,24);
 // one selected must create ONLY its own WS with exact per-device quality.
 startButton.fire('click');assert.equal(sockets.length,1);
+assert.equal(drawerEvents.at(-1),'collapsed','batch projection collapses management');
 const a=sockets[0];a.open();const pa=JSON.parse(a.sent[0]);
 assert.equal(pa.profile,'custom');
 assert.equal(pa.quality.video_bit_rate,20000000);
@@ -292,6 +295,9 @@ ca.main.fire('click');ca.fullscreenButton.fire('click');
 assert.equal(root.document.fullscreenElement,ca.screen,'only this card video becomes fullscreen');
 assert.equal(ca.fullscreenButton['aria-pressed'],'true');
 assert.equal(ca.fullscreenButton.title,'退出全屏（Esc）');
+assert.equal(ca.fab.hidden,false,'video controls remain in fullscreen');
+assert.match(page,/\.multi-screen:fullscreen \.multi-fab\{right:14px;top:50%;transform:translateY\(-50%\);z-index:20;visibility:visible\}/);
+assert.match(page,/\.multi-screen:fullscreen \.multi-fab \.fab-main\{visibility:visible;opacity:1;pointer-events:auto\}/);
 // Browser Esc invokes native exitFullscreen -> fullscreenchange, no global key capture.
 root.document.exitFullscreen();
 assert.equal(root.document.fullscreenElement,null);
@@ -692,6 +698,7 @@ async function waitForCheck(id){
  multi.videoEngine='mse';
  const experimentalSocketCount=sockets.length;
  assert.equal(multi.startFor('id-1'),true);
+ assert.equal(drawerEvents.at(-1),'collapsed','single device projection collapses management');
  assert.equal(sockets.length,experimentalSocketCount+1);
  const virtual=sockets.at(-1);virtual.open();
  const request=JSON.parse(virtual.sent[0]);
@@ -707,7 +714,15 @@ async function waitForCheck(id){
  assert.equal(root.document.fullscreenElement,virtualCard.screen);
  assert.equal(fullscreenEvents.size,1);
  virtual.emit('starting',{session_id:'virtual'});
+ assert.equal(virtualCard.closeStreamButton.disabled,false);
+ assert.match(virtualCard.closeStreamButton.title,/关闭当前投屏/);
+ virtualCard.main.fire('click');
+ virtualCard.closeStreamButton.fire('click');
+ assert.equal(virtual.sent.at(-1),'stop','close icon stops this stream');
+ assert.equal(drawerEvents.at(-1),'collapsed','wait for stop acknowledgement before opening');
  virtual.emit('ended',{session_id:'virtual',cleanup_complete:true});
+ await Promise.resolve();
+ assert.equal(drawerEvents.at(-1),'opened','fullscreen stop exits first, then opens management');
  assert.equal(root.document.fullscreenElement,null,'stopping a fullscreen stream must exit fullscreen');
  assert.equal(fullscreenEvents.size,0,'no stale listeners after terminal session');
  assert.equal(multi.cards.size,0);
@@ -715,7 +730,7 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').experimental_resolution,null);
  assert.equal(multi.getChoice('id-1').max_size,1600);
  assert.equal(picker.children[0].children.at(-2).children[0].disabled,false);
- console.log('M2 fullscreen per-card, browser Esc and teardown: OK');
+ console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
  console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
   console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');

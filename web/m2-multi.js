@@ -61,8 +61,9 @@ const briefQuality=v=>v.profile==='custom'
   ' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
- constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
+ constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,onProjectionStarted,onOpenManagement}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
+  this.onProjectionStarted=onProjectionStarted;this.onOpenManagement=onOpenManagement;
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
   this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
@@ -288,6 +289,7 @@ class MultiView{
   this.lastLiveStatus.delete(id);
   this.open(d,qualityPayload(choice),null,choice.low_latency===true,experiment,false);
   this.updatePicker();
+  this.onProjectionStarted?.();
   return true;
  }
  _startDevices(additions){
@@ -315,6 +317,7 @@ class MultiView{
    ' 路独立投屏；最多同时四路，已经运行的设备保持原会话与远控。');
   this._launchNext();
   this.updatePicker();
+  this.onProjectionStarted?.();
   return true;
  }
  _launchNext(){
@@ -414,7 +417,8 @@ class MultiView{
   const logButton=icon('fab-up','☷','查看日志');
   const wakeButton=icon('fab-up-wake','☀','唤醒手机屏幕');
   const reconnectButton=icon('fab-up-reconnect','↻','重连此路实时画面');
-  wakeButton.disabled=true;reconnectButton.disabled=true;
+  const closeStreamButton=icon('fab-up-stop','✕','关闭当前投屏并展开设备管理');
+  wakeButton.disabled=true;reconnectButton.disabled=true;closeStreamButton.disabled=true;
   const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
   const fullscreenButton=icon('fab-fullscreen','⛶','全屏展示');
@@ -450,10 +454,10 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,wakeButton,reconnectButton,toggle,textButton,fullscreenButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,toggle,textButton,fullscreenButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
-   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,fullscreenButton,
+   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,closeStreamButton,fullscreenButton,
    logPanel,logClose,toggle,stop,
    textButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
@@ -513,6 +517,7 @@ class MultiView{
   logButton.addEventListener('pointerdown',resetMenuTimer);
   wakeButton.addEventListener('pointerdown',resetMenuTimer);
   reconnectButton.addEventListener('pointerdown',resetMenuTimer);
+  closeStreamButton.addEventListener('pointerdown',resetMenuTimer);
   fullscreenButton.addEventListener('pointerdown',resetMenuTimer);
   card.refreshMenu=()=>{
    fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
@@ -547,6 +552,7 @@ class MultiView{
     card.ws.readyState===WebSocket.OPEN&&card.state!=='stopping';
    wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
    reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
+   closeStreamButton.disabled=!sessionReady||card.reconnectRequested;
    const canToggle=!card.closed&&card.ready&&!card.permissionWarningShown&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
@@ -800,6 +806,12 @@ class MultiView{
    if(reconnectButton.disabled)return;
    this.reconnectFor(card.id);resetMenuTimer();
   });
+  closeStreamButton.addEventListener('click',()=>{
+   if(closeStreamButton.disabled||card.closed||card.state==='stopping')return;
+   card.openManagementAfterClose=true;
+   collapseMenu();
+   this.stop(card); // Only this stream. Do not stop the other active devices.
+  });
   fullscreenButton.addEventListener('click',()=>{
    if(fullscreenButton.disabled||card.closed)return;
    resetMenuTimer();
@@ -921,8 +933,11 @@ class MultiView{
   if(card.closed)return;
   card.closed=true;
   root.document.removeEventListener?.('fullscreenchange',card.syncFullscreen);
+  let fullscreenExit=null;
   if(root.document.fullscreenElement===card.screen){
-   try{Promise.resolve(root.document.exitFullscreen()).catch(()=>{});}catch{}
+   try{fullscreenExit=Promise.resolve(root.document.exitFullscreen());}
+   catch{fullscreenExit=Promise.reject(new Error('退出全屏失败'));}
+   fullscreenExit.catch(()=>{});
   }
   if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
@@ -963,6 +978,13 @@ class MultiView{
    (card.lastFailure?'异常结束':'已结束 · 清理未确认'));
   if(!card.keepSelected&&this.cards.size>1)this.dropBatchSelection(card.id);
   this.cards.delete(card.id);
+  if(card.openManagementAfterClose){
+   // The management drawer is outside the fullscreen top layer.
+   // Reopen only after the closing stream has left browser fullscreen.
+   const showManagement=()=>this.onOpenManagement?.();
+   if(fullscreenExit)fullscreenExit.then(showManagement,showManagement);
+   else showManagement();
+  }
   // Full stop keeps the previous selection; stopping one live card
   // alongside others unchecks only that card. Nothing auto-starts.
   card.settleLaunch(); // early failure: clean this card before launching next
