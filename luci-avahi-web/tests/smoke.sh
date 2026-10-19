@@ -132,6 +132,26 @@ for op in dbus-stop umdns-reboot browse config-set; do
     fi
 done
 
+# Exercise mDNS boot conflict guards with isolated init scripts (never touch host services).
+for unit in avahi umdns; do
+    cat > "$TEMP/mock-$unit-init" <<'EOF'
+#!/bin/sh
+[ "$1" = enabled ] && exit 0
+exit 0
+EOF
+    chmod +x "$TEMP/mock-$unit-init"
+done
+sed -e "s@^INIT=/etc/init.d/avahi-daemon\$@INIT=$TEMP/mock-avahi-init@" \
+    -e "s@/etc/init.d/umdns@$TEMP/mock-umdns-init@g" \
+    "$TEMP/helper" > "$TEMP/helper-boot"
+chmod +x "$TEMP/helper-boot"
+if "$TEMP/helper-boot" service enable >/dev/null 2>&1; then
+    echo 'Avahi boot enabled while umdns boot was already enabled' >&2; exit 1
+fi
+if "$TEMP/helper-boot" service umdns-enable >/dev/null 2>&1; then
+    echo 'umdns boot enabled while Avahi boot was already enabled' >&2; exit 1
+fi
+
 # Simulate RPCD UCI operations without touching the runner's /etc/config.
 cat > "$TEMP/mock-uci" <<'EOF'
 #!/usr/bin/env python3
