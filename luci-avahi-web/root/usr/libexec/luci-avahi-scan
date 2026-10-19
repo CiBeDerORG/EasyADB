@@ -22,8 +22,20 @@ if [ ! -e "$STATE" ]; then
     mkdir -m 0700 "$STATE" || fail 'Cannot create state directory'
 fi
 [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail 'Unsafe state path'
-[ "$(stat -c '%u' "$STATE" 2>/dev/null)" = 0 ] || fail 'Scan state directory is not root-owned'
-chmod 0700 "$STATE"
+# Some minimal OpenWrt/ImmortalWrt BusyBox builds do not provide stat -c.
+# The directory belongs to the effective scanner identity, which may differ
+# between an SSH invocation and an authenticated RPCD file.exec invocation.
+# Check numeric ownership using stat where available; fall back to ls -ldn.
+owner=$(stat -c '%u' "$STATE" 2>/dev/null || true)
+case "$owner" in
+    ''|*[!0-9]*) owner=$(ls -ldn "$STATE" 2>/dev/null | awk '{print $3}') ;;
+esac
+uid=$(id -u) || fail 'Cannot determine scan process identity'
+case "$owner" in
+    ''|*[!0-9]*) fail 'Cannot determine scan state directory owner' ;;
+esac
+[ "$owner" = "$uid" ] || fail "Scan state directory owner UID $owner differs from scanner UID $uid; inspect /tmp/luci-avahi-web"
+chmod 0700 "$STATE" || fail 'Cannot protect scan state directory'
 case "$action" in
     last)
         [ -r "$SNAPSHOT" ] || fail 'No scan snapshot yet'
