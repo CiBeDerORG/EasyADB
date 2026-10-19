@@ -76,6 +76,7 @@ class DisplayLab(CastPlusMixin):
         raw = self._cmd(serial, "dumpsys", "display", timeout=18)
         ids = display_ids(raw)
         return {"display_ids": ids, "display_excerpt": raw[:14000],
+                "cast_display": self._cast_info(raw),
                 "note": "Display ID 来自 dumpsys 的尽力解析；如有遗漏，请查看原始输出。"}
 
     def environment(self, device_id, serial):
