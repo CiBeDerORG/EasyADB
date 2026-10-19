@@ -108,7 +108,7 @@ return view.extend({
 				_('Avahi running') + ': ' + (s.running === 'yes' ? _('Yes') : _('No')) + '  |  ',
 				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped')) + '  |  ',
 				'D-Bus: ' + (s.dbus === 'yes' ? _('Running') : _('Stopped')),
-				E('div', [ _('Auto-start: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('Yes') : _('No')) +
+				E('span', [ '  |  ' + _('Auto-start: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('Yes') : _('No')) +
 					' / umdns ' + (s['umdns-enabled'] === 'yes' ? _('Yes') : _('No')) +
 					' / D-Bus ' + (s['dbus-enabled'] === 'yes' ? _('Yes') : _('No')) ])
 			]));
