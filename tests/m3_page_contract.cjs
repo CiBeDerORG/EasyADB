@@ -12,7 +12,16 @@ assert.match(js,/if\(g\.discovery_configured\)\{\s*const discover=action/);
 assert.match(js,/\/api\/groups\/'\+encodeURIComponent\(name\)\+'\/discovery\/'/);
 assert.match(js,/if\(!test\)discoveryResults\.set\(name,result\)/);
 assert.match(js,/configs\.filter\(g=>g\.discovery_configured\)/);
-assert.match(js,/route==='temp'\?':'\+port:''/);
+assert.ok(!js.includes("route==='temp'?':' +port"));
+assert.match(js,/action\(label\+'：'\+ip,\(\)=>switchRoute/);
+assert.ok(js.includes("临时 ADB 端口：'+d.temp_port"));
+assert.ok(store.includes('"endpoints": []'));
+assert.ok(js.includes("function renderDiscoveryResult(last)"));
+for(const state of ['updated','unchanged','unmatched','busy','ambiguous','conflicting','route_conflict'])
+  assert.ok(js.includes(state+':'));
+assert.ok(js.includes("endpoint.ip+':'+endpoint.port"));
+assert.ok(js.includes("$('groupDialog').close();\n  message('分组设置已保存'"));
+assert.ok(js.includes("$('deviceDialog').close();message('设备已保存'"));
 assert.ok(html.includes('ADB 共用端口：'));
 assert.ok(!js.includes('setInterval(')&&!js.includes('setTimeout(scanGroup'));
 assert.ok(server.includes('def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None = None):'));

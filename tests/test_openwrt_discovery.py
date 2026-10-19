@@ -230,17 +230,27 @@ def test_group_scan_exact_lan_ip_and_persistent_shared_port(monkeypatch, tmp_pat
         assert resp.status_code == 200, resp.text
         result = resp.json()
         assert len(result["updated"]) == 2 and result["unmatched"] == ["192.168.10.201"]
+        assert result["endpoints"] == [
+            {"ip": "192.168.10.206", "port": 37171, "status": "updated", "device_name": "A"},
+            {"ip": "192.168.10.114", "port": 46573, "status": "updated", "device_name": "B"},
+            {"ip": "192.168.10.201", "port": 32442, "status": "unmatched", "device_name": None},
+        ]
         assert mod.store.get(a["id"])["port"] == 37171
         assert mod.store.get(b["id"])["port"] == 46573
         assert mod.store.get(other["id"])["port"] == 8888
         assert selected_address(mod.store.get(a["id"])) == "10.10.30.206:37171"
         assert mod.store.select_route(a["id"], "lan")["selected_route"] == "lan"
         assert selected_address(mod.store.get(a["id"])) == "192.168.10.206:37171"
-        assert client.get(url + "/last", headers=AUTH).json()["last"]["updated"] == result["updated"]
+        last = client.get(url + "/last", headers=AUTH).json()["last"]
+        assert last["updated"] == result["updated"]
+        assert last["endpoints"] == result["endpoints"]
         assert client.get("/api/groups/Other/discovery/last", headers=AUTH).json()["last"] is None
         # A second scan updates only newly changed ports and never performs adb connect.
         again = client.post(url + "/scan", headers=AUTH).json()
         assert len(again["updated"]) == 0 and len(again["unchanged"]) == 2
+        assert [entry["status"] for entry in again["endpoints"]] == [
+            "unchanged", "unchanged", "unmatched"
+        ]
 
 
 def test_ambiguous_and_active_connections_remain_unchanged(monkeypatch, tmp_path):
@@ -254,6 +264,11 @@ def test_ambiguous_and_active_connections_remain_unchanged(monkeypatch, tmp_path
     ), blocked_ids=(b["id"],))
     assert conflicted["conflicting"] == ["192.168.10.206"]
     assert len(conflicted["busy"]) == 1
+    assert conflicted["endpoints"] == [
+        {"ip": "192.168.10.206", "port": 32123, "status": "conflicting", "device_name": "A"},
+        {"ip": "192.168.10.206", "port": 32124, "status": "conflicting", "device_name": "A"},
+        {"ip": "192.168.10.114", "port": 43210, "status": "busy", "device_name": "B"},
+    ]
     assert mod.store.get(a["id"])["port"] == 5555
     assert mod.store.get(b["id"])["port"] == 5555
     # Same IP from a different group must not update Home.

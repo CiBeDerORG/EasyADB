@@ -40,7 +40,16 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
 .device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
 .group-tools{position:absolute;right:9px;top:7px;display:flex;gap:6px;align-items:center}.group-tools button{padding:5px 8px;font-size:12px;white-space:nowrap}.group-edit{position:static}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
-.group-discovery-status{margin:0 0 7px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#172940;color:#afc8ed;font-size:12px;overflow-wrap:anywhere}.group-discovery-status.error{border-color:#a35e6d;color:#ffc0c6}.common-adb-port{margin-top:7px;font-size:12px;color:#afcbfa}.group-discovery-config{border:1px solid #415572;border-radius:9px;margin:13px 0 0;padding:10px;background:#111d30}.group-discovery-config summary{padding:0;cursor:pointer}.group-discovery-config .hint{margin:6px 0}.group-discovery-config input{margin-bottom:4px}.device-group>summary::-webkit-details-marker{display:none}
+.group-discovery-status{margin:0 0 7px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#172940;color:#afc8ed;font-size:12px;overflow-wrap:anywhere}.group-discovery-status.error{border-color:#a35e6d;color:#ffc0c6}
+.discovery-head{font-weight:600;margin-bottom:6px}.discovery-legend{font-size:11px;color:#a9bdd7;margin-bottom:7px}
+.discovery-endpoints{display:grid;gap:5px;max-height:260px;overflow-y:auto}
+.discovery-endpoint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid;border-radius:6px;padding:5px 8px;font-size:12px;overflow-wrap:anywhere}
+.discovery-endpoint .discovery-serial{font-variant-numeric:tabular-nums;font-weight:650}
+.discovery-endpoint .discovery-label{margin-left:auto;font-size:11px}
+.discovery-endpoint.matched{color:#a3efd0;border-color:#387c5b;background:#194135}
+.discovery-endpoint.unmatched{color:#ffc0c6;border-color:#93525e;background:#4c2930}
+.discovery-endpoint.skipped{color:#f6dd95;border-color:#82713f;background:#4c4023}
+.common-adb-port{margin-top:7px;font-size:12px;color:#afcbfa}.group-discovery-config{border:1px solid #415572;border-radius:9px;margin:13px 0 0;padding:10px;background:#111d30}.group-discovery-config summary{padding:0;cursor:pointer}.group-discovery-config .hint{margin:6px 0}.group-discovery-config input{margin-bottom:4px}.device-group>summary::-webkit-details-marker{display:none}
 .device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
 .device-group:not([open])>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
@@ -392,8 +401,7 @@ function render(){
   const wrapper=elem('div','group-items');
   if(g.discovery_configured){
    const last=discoveryResults.get(g.title);
-   if(last){const conflicts=(last.ambiguous||[]).length+(last.conflicting||[]).length+(last.route_conflict||[]).length;
-    const line=elem('div','group-discovery-status'+(last.error?' error':''),last.error||('最近发现：'+last.found+' 个 IP · 更新端口 '+last.updated.length+' 台 · 未匹配 '+last.unmatched.length+' · 忙碌跳过 '+last.busy.length+' · 冲突 '+conflicts));wrapper.append(line);}
+   if(last)wrapper.append(renderDiscoveryResult(last));
   }
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
@@ -415,7 +423,7 @@ function render(){
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row');
-    const target=action(label+'：'+ip+(route==='temp'?':'+port:''),()=>switchRoute(d.id,route),'address-target');
+    const target=action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target');
     target.disabled=loading||chosen||Boolean(multiView&&multiView.isBusyFor(d.id));
     target.setAttribute('aria-pressed',String(chosen));
     target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
@@ -434,6 +442,7 @@ function render(){
    if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port);
    top.append(managementLabel,info);primary.append(top,...addressRows);
    primary.append(elem('div','common-adb-port','ADB 共用端口：'+d.port+'（组网 / 内网）'));
+   if(d.temp_ip&&d.temp_port)primary.append(elem('div','common-adb-port temp-adb-port','临时 ADB 端口：'+d.temp_port+'（仅临时 IP）'));
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
@@ -562,6 +571,29 @@ function openGroup(name=null){
    if(g.discovery_needs_password)modalMessage('旧版加密凭据不再使用，请重新粘贴 OpenWrt 专用密钥并保存。','error','groupMessage');
   }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
  $('groupDialog').showModal();$('groupName').focus();
+}
+function renderDiscoveryResult(last){
+ const panel=elem('div','group-discovery-status'+(last.error?' error':''));
+ if(last.error){panel.textContent=last.error;return panel;}
+ const conflicts=(last.ambiguous||[]).length+(last.conflicting||[]).length+(last.route_conflict||[]).length;
+ panel.append(elem('div','discovery-head','最近发现：'+last.found+' 个 IP · 更新端口 '+(last.updated||[]).length+' 台 · 未匹配 '+(last.unmatched||[]).length+' · 忙碌跳过 '+(last.busy||[]).length+' · 冲突 '+conflicts));
+ if(!Array.isArray(last.endpoints)){
+  panel.append(elem('div','muted','历史扫描尚无 IP:端口明细，点击「立即发现 ADB」可获取。'));
+  return panel;
+ }
+ if(!last.endpoints.length){panel.append(elem('div','muted','未发现有效 ADB 端点。'));return panel;}
+ panel.append(elem('div','discovery-legend','绿色：已匹配并更新/端口不变 · 红色：未匹配本组设备 · 黄色：匹配异常或暂未更新'));
+ const rows=elem('div','discovery-endpoints');
+ const labels={updated:'已匹配 · 端口已更新',unchanged:'已匹配 · 端口不变',unmatched:'未匹配本组设备',busy:'设备忙碌 · 未更新',ambiguous:'IP 对应多台设备 · 未更新',conflicting:'同 IP 多端口 · 未更新',route_conflict:'连接地址冲突 · 未更新'};
+ for(const endpoint of last.endpoints){
+  const tone=endpoint.status==='updated'||endpoint.status==='unchanged'?'matched':endpoint.status==='unmatched'?'unmatched':'skipped';
+  const row=elem('div','discovery-endpoint '+tone);
+  row.append(elem('span','discovery-serial',endpoint.ip+':'+endpoint.port));
+  if(endpoint.device_name)row.append(elem('span','',endpoint.device_name));
+  row.append(elem('span','discovery-label',labels[endpoint.status]||'未更新'));
+  rows.append(row);
+ }
+ panel.append(rows);return panel;
 }
 async function scanGroup(name,test=false){
  if(loading||scanningGroups.has(name))return;
@@ -815,7 +847,9 @@ $('groupForm').addEventListener('submit',async ev=>{
    discoveryResults.delete(saved.name);
   }
   $('groupOpenWrtPassword').value='';
-  $('groupDialog').close();await load(true);message('分组设置已保存','ok');
+  $('groupDialog').close();
+  message('分组设置已保存','ok');
+  try{await load(true);}catch(e){message('分组已保存，但列表刷新失败：'+e.message,'error');}
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
 });
 $('closeDialog').addEventListener('click',closeModal);
@@ -835,7 +869,8 @@ $('form').addEventListener('submit',async ev=>{
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
   const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
-  selected=d.id;$('deviceDialog').close();await load(true);message('设备已保存','ok');
+  selected=d.id;$('deviceDialog').close();message('设备已保存','ok');
+  try{await load(true);}catch(e){message('设备已保存，但列表刷新失败：'+e.message,'error');}
  }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
 $('refreshAll').addEventListener('click',async()=>{

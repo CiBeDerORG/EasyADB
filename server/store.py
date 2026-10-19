@@ -265,36 +265,49 @@ class DeviceStore:
                 source.setdefault(ip, set()).add(port)
             result = {"group": name, "found": len(source), "updated": [], "unchanged": [],
                       "unmatched": [], "ambiguous": [], "conflicting": [], "busy": [],
-                      "route_conflict": [], "invalid": ignored}
+                      "route_conflict": [], "invalid": ignored, "endpoints": []}
             for ip, ports in source.items():
                 members = owners.get(ip, [])
+                status = "unmatched"
                 if not members:
                     result["unmatched"].append(ip)
                 elif len(members) > 1:
+                    status = "ambiguous"
                     result["ambiguous"].append(ip)
                 elif len(ports) != 1:
+                    status = "conflicting"
                     result["conflicting"].append(ip)
                 else:
                     row = members[0]
-                    if row["id"] in blocked:
-                        result["busy"].append({"id": row["id"], "ip": ip})
-                        continue
                     port = next(iter(ports))
-                    if row["port"] == port:
+                    if row["id"] in blocked:
+                        status = "busy"
+                        result["busy"].append({"id": row["id"], "ip": ip})
+                    elif row["port"] == port:
+                        status = "unchanged"
                         result["unchanged"].append({"id": row["id"], "ip": ip, "port": port})
-                        continue
-                    db.execute("SAVEPOINT update_port")
-                    db.execute("UPDATE devices SET port=? WHERE id=?", (port, row["id"]))
-                    try:
-                        self._check_routes(db)
-                    except ValueError:
-                        db.execute("ROLLBACK TO update_port")
-                        result["route_conflict"].append(ip)
                     else:
-                        result["updated"].append({"id": row["id"], "ip": ip,
-                                                  "old_port": row["port"], "port": port})
-                    finally:
-                        db.execute("RELEASE update_port")
+                        db.execute("SAVEPOINT update_port")
+                        db.execute("UPDATE devices SET port=? WHERE id=?", (port, row["id"]))
+                        try:
+                            self._check_routes(db)
+                        except ValueError:
+                            db.execute("ROLLBACK TO update_port")
+                            status = "route_conflict"
+                            result["route_conflict"].append(ip)
+                        else:
+                            status = "updated"
+                            result["updated"].append({"id": row["id"], "ip": ip,
+                                                      "old_port": row["port"], "port": port})
+                        finally:
+                            db.execute("RELEASE update_port")
+                # Preserve each valid discovered IP:port, including unmatched
+                # and conflicting endpoints. This snapshot is read-only in UI.
+                for port in sorted(ports):
+                    result["endpoints"].append({
+                        "ip": ip, "port": port, "status": status,
+                        "device_name": members[0]["name"] if len(members) == 1 else None
+                    })
             result["scanned_at"] = scan.get("scanned_at")
             result["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             db.execute("""INSERT INTO group_discovery_results(group_name,scan_json,updated_at)
