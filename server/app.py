@@ -29,6 +29,7 @@ from .m2_live import LiveRegistry, LiveVideo
 from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS, VIRTUAL_DPI_CHOICES
 from .m2_touch import InvalidTouch
 from .display_lab import DisplayLab, LabError
+from .castplus_lab import CastError
 
 VIDEO_ENGINE = os.getenv("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
 if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
@@ -651,6 +652,67 @@ def display_lab_restore(device_id: str):
         try:
             return display_lab.restore(device_id, serial)
         except LabError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+def lab_require_idle(device_id):
+    with live_registry.lock:
+        running = live_registry.sessions.get(device_id)
+        if running is not None and not live_registry.is_cleaned(running):
+            raise HTTPException(409, "请先停止此设备现有画面并等待会话清理完成")
+
+
+@app.post("/api/devices/{device_id}/display-lab/castplus/start", dependencies=[Depends(authorize)])
+def castplus_start(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        lab_require_idle(device_id)
+        try:
+            return display_lab.cast_create(device_id, serial)
+        except (LabError, CastError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/castplus/auto", dependencies=[Depends(authorize)])
+def castplus_auto(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        lab_require_idle(device_id)
+        try:
+            return display_lab.cast_auto(device_id, serial)
+        except (LabError, CastError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/castplus/switch", dependencies=[Depends(authorize)])
+def castplus_switch(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        lab_require_idle(device_id)
+        try:
+            return display_lab.cast_switch(device_id, serial)
+        except (LabError, CastError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/castplus/verify", dependencies=[Depends(authorize)])
+def castplus_verify(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        try:
+            return display_lab.cast_verify(device_id, serial)
+        except (LabError, CastError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/castplus/restore", dependencies=[Depends(authorize)])
+def castplus_restore(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        lab_require_idle(device_id)
+        try:
+            return display_lab.cast_restore(device_id, serial)
+        except (LabError, CastError) as exc:
             raise HTTPException(409, str(exc)) from None
 
 
