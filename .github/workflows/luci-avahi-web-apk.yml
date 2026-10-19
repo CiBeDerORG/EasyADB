@@ -32,10 +32,7 @@ jobs:
         run: |
           set -eu
           cd /tmp/immortalwrt-sdk
-          if [ ! -f feeds/luci/luci.mk ]; then
-            echo 'Matching LuCI feed not present in published SDK. Stopping instead of fetching an unpinned replacement.'
-            exit 1
-          fi
+          # Standalone package.mk application: no LuCI feed checkout is required.
           sh "$GITHUB_WORKSPACE/luci-avahi-web/scripts/build-apk-sdk.sh" "$GITHUB_WORKSPACE/luci-avahi-web"
           mkdir -p "$GITHUB_WORKSPACE/luci-avahi-web/dist/apk"
           find bin -type f -name 'luci-app-avahi-web-*.apk' -exec cp -v {} "$GITHUB_WORKSPACE/luci-avahi-web/dist/apk/" \;
