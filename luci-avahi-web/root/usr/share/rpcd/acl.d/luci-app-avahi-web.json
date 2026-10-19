@@ -3,15 +3,37 @@
     "description": "Manage Avahi and browse local Android wireless debugging endpoints",
     "read": {
       "file": {
-        "/usr/libexec/luci-avahi-web status": [ "exec" ],
-        "/usr/libexec/luci-avahi-web config-get": [ "exec" ],
-        "/usr/libexec/luci-avahi-web browse *": [ "exec" ]
+        "/usr/libexec/luci-avahi-web status": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web config-get": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web browse *": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web package list": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web package plan *": [
+          "exec"
+        ]
       }
     },
     "write": {
       "file": {
-        "/usr/libexec/luci-avahi-web config-set *": [ "exec" ],
-        "/usr/libexec/luci-avahi-web service *": [ "exec" ]
+        "/usr/libexec/luci-avahi-web config-set *": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web service *": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web package apply *": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-web package refresh": [
+          "exec"
+        ]
       }
     }
   }
