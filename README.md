@@ -2,7 +2,7 @@
 
 在设备分组设置中可选择性配置 `http://<OpenWrt-EasyTier-IP>/ubus`、专用 `easyadb` 用户名与 LuCI 中生成的一次性密钥。只有配置的分组会展示「立即发现 ADB」。NAS 通过 RPCD 登录并执行 OpenWrt 端已有的固定扫描命令，不增加独立接口/Hook 或后台轮询；结果精确匹配**当前组内网 IP**，仅更新相应设备的公共 ADB 端口，不覆盖组网/内网 IP 和原有临时地址，也不自动连接或投屏。活跃连接或投屏中的设备本轮跳过更新，避免影响当前会话。
 
-专用密钥仅在 NAS 端加密保存。默认加密密钥文件 `./data/storage/devices.sqlite3.discovery-key` 和原 SQLite 数据库应**一起备份**，删除密钥文件会导致已保存凭据不可恢复。接口只接受私有 IPv4 的 HTTP(S) /ubus；推荐在 EasyTier 内网经 HTTPS 访问。**部署此分支须显式设置 `EASYADB_SOURCE_BRANCH=feat/m3-openwrt-discovery`**，避免原有更新脚本默认切回旧 M2 分支。
+OpenWrt 生成的专用密钥直接保存在现有 NAS SQLite 分组配置中，不再生成额外密钥文件，也不需要额外的加密依赖或权限检查；管理 API 不回传专用密码。如果曾经成功保存过旧版加密凭据，首次升级后需在分组设置重新粘贴一次专用密钥，旧文件不会被自动删除。接口只接受私有 IPv4 的 HTTP(S) /ubus；推荐在 EasyTier 内网经 HTTPS 访问。**部署此分支须显式设置 `EASYADB_SOURCE_BRANCH=feat/m3-openwrt-discovery`**，避免原有更新脚本默认切回旧 M2 分支。
 
 详细接口、迁移、安全边界及实机验收步骤：[docs/M3-OPENWRT-DISCOVERY.md](docs/M3-OPENWRT-DISCOVERY.md)。自动测试不等于已用真实路由器账号完成联调。
 
