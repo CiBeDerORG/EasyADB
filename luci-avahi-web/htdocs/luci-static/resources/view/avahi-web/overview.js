@@ -51,6 +51,7 @@ return view.extend({
 		var authStateNode = E('div'), authCredentialNode = E('div');
 		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
 		var busy = false, runtimeBusy = false, refreshing = false;
+		var manualButton;
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', note: '用于发现 Android 无线调试动态端口', process: 'running', init: 'avahi-daemon', bins: [ ['avahi-daemon-bin','avahi-daemon'], ['avahi-browse-bin','avahi-browse'] ], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
@@ -131,6 +132,7 @@ return view.extend({
 			}, [ label ]);
 		}
 		function drawComponents() {
+			if (manualButton) manualButton.disabled = busy || runtimeBusy || refreshing;
 			var s = currentStatus, conflict = s.running === 'yes' && s.umdns === 'yes';
 			var cards = groups.map(function(group) {
 				var pkg = packageState(group), running = s[group.process] === 'yes';
@@ -226,6 +228,10 @@ return view.extend({
 				drawComponents();
 			});
 		}
+		function manualRefresh() {
+			if (busy || runtimeBusy || refreshing) return Promise.resolve();
+			return refreshStatus();
+		}
 		function setBusy(on) {
 			busy = on;
 			drawComponents();
@@ -246,7 +252,7 @@ return view.extend({
 			});
 		}
 		function preview(operation, group) {
-			if (busy) return;
+			if (busy || runtimeBusy || refreshing) return;
 			setBusy(true);
 			operationOutput.textContent = _('正在模拟并检查软件包依赖变更……');
 			return control('package', [ 'plan', operation, group ]).then(function(result) {
@@ -271,7 +277,7 @@ return view.extend({
 			});
 		}
 		function refreshIndex() {
-			if (busy) return;
+			if (busy || runtimeBusy || refreshing) return;
 			ui.showModal(_('更新 APK 软件源索引'), [
 				E('p', [ _('仅刷新软件源索引，不升级已安装的软件包。') ]),
 				E('div', { 'class': 'right' }, [
@@ -398,6 +404,8 @@ return view.extend({
 		function reloadLast() {
 			return snapshot().then(renderLast).catch(function() { renderLast(''); });
 		}
+		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
+			[ '手动刷新组件状态' ]);
 		currentPackages = inventory(data[1]);
 		currentStatus = values(data[0]);
 		drawComponents();
@@ -409,8 +417,7 @@ return view.extend({
 					E('h2', { style: 'margin:0 0 5px;' }, [ 'Avahi / EasyADB 发现代理' ]),
 					E('p', { style: 'margin:0;opacity:.8;' }, [ '由 NAS 发起经过鉴权的按需扫描，路由器只保存最近一次结果。' ])
 				]),
-				E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: refreshStatus },
-					[ '手动刷新组件状态' ])
+				manualButton
 			]),
 			noticeNode,
 			E('div', { 'class': 'cbi-section', style: 'margin-bottom:14px;' }, [
