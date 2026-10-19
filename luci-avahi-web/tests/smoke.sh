@@ -50,7 +50,8 @@ assert "\n    browse) " not in controller and "\n    config-set) " not in contro
 assert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller
 assert '"$unit" "$(unit_flag "$unit")"' in controller
 assert "function drawComponents(" in code and "function packageState(" in code
-assert "组件与服务管理" in code and "缺少软件包" in code and "不等于已经发生 UDP 5353" in code
+assert "组件与服务管理" in code and "缺少软件包" in code
+assert "umdns" not in code and "umdns" not in controller
 assert "disabled: blocked ? '' : null" in code
 assert "disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null" in code
 assert "手动刷新组件状态" in code and "grid-template-columns" in code
@@ -75,7 +76,7 @@ printf '%s\n' "$*" >> "$MOCK_APK_LOG"
 case "$1" in
     info)
         case "$2" in
-            -e) [ "$3" = dbus ] || [ "$3" = umdns ] || {
+            -e) [ "$3" = dbus ] || {
                 [ "${MOCK_AVAHI_DAEMON:-0}" = 1 ] && [ "$3" = avahi-dbus-daemon ]
             } ;;
             -v) echo "PACKAGE DESCRIPTION SHOULD NEVER BE SHOWN AS A VERSION" ;;
@@ -109,31 +110,35 @@ fi
 "$TEMP/helper" package list | grep -q "$(printf 'avahi-utils\tabsent\t')"
 "$TEMP/helper" package plan install avahi | grep -q Simulation
 "$TEMP/helper" package plan remove dbus | grep -q Simulation
-"$TEMP/helper" package plan upgrade umdns | grep -q Simulation
+"$TEMP/helper" package plan upgrade dbus | grep -q Simulation
 "$TEMP/helper" package apply install avahi | grep -q Applied
-"$TEMP/helper" package apply upgrade umdns | grep -q Applied
+"$TEMP/helper" package apply upgrade dbus | grep -q Applied
 "$TEMP/helper" package apply remove avahi | grep -q Applied
 "$TEMP/helper" package refresh | grep -q Applied
 grep -qx -- '--simulate add avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'add avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
-grep -qx -- 'upgrade umdns' "$TEMP/apk.log"
+grep -qx -- 'upgrade dbus' "$TEMP/apk.log"
 grep -qx -- 'del avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'update' "$TEMP/apk.log"
-# Missing avahi-utils may be installed alone, even when umdns is running.
-sed 's@^umdns_running() { pidof umdns >/dev/null 2>\&1; }$@umdns_running() { return 0; }@' "$TEMP/helper" > "$TEMP/helper-umdns"
-chmod +x "$TEMP/helper-umdns"
-MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package plan install avahi | grep -q Simulation
-MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package apply install avahi | grep -q Applied
+# The previous system may have umdns installed/running. It is out of scope:
+# neither an Avahi installation nor an Avahi upgrade may inspect it.
+MOCK_AVAHI_DAEMON=1 "$TEMP/helper" package plan install avahi | grep -q Simulation
+MOCK_AVAHI_DAEMON=1 "$TEMP/helper" package apply install avahi | grep -q Applied
 grep -qx -- '--simulate add avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'add avahi-utils' "$TEMP/apk.log"
-if "$TEMP/helper-umdns" package plan install avahi >/dev/null 2>&1; then
-    echo 'New Avahi daemon installed while umdns was active' >&2; exit 1
+"$TEMP/helper" package plan upgrade avahi | grep -q Simulation
+if "$TEMP/helper" package plan install umdns >/dev/null 2>&1; then
+    echo 'Removed umdns package target is still accepted' >&2; exit 1
 fi
-if MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package plan upgrade avahi >/dev/null 2>&1; then
-    echo 'Avahi daemon upgrade allowed while umdns was active' >&2; exit 1
+if "$TEMP/helper" package apply remove umdns >/dev/null 2>&1; then
+    echo 'Removed umdns package target can be uninstalled' >&2; exit 1
+fi
+! "$TEMP/helper" package list | grep -q '^umdns'
+if "$TEMP/helper" service umdns-stop >/dev/null 2>&1; then
+    echo 'Removed umdns service command is still accepted' >&2; exit 1
 fi
 
-if "$TEMP/helper" package apply install 'umdns;reboot' >/dev/null 2>&1; then
+if "$TEMP/helper" package apply install 'avahi;reboot' >/dev/null 2>&1; then
     echo 'Arbitrary package name accepted' >&2; exit 1
 fi
 if "$TEMP/helper" package apply upgrade all >/dev/null 2>&1; then
@@ -142,31 +147,11 @@ fi
 if "$TEMP/helper" package apply remove dbus --force >/dev/null 2>&1; then
     echo 'Extra APK flag accepted' >&2; exit 1
 fi
-for op in dbus-restart umdns-reboot browse config-set; do
+for op in dbus-restart umdns-enable browse config-set; do
     if "$TEMP/helper" service "$op" >/dev/null 2>&1; then
         echo "Unsupported service option accepted: $op" >&2; exit 1
     fi
 done
-
-# Exercise mDNS boot conflict guards with isolated init scripts (never touch host services).
-for unit in avahi umdns; do
-    cat > "$TEMP/mock-$unit-init" <<'EOF'
-#!/bin/sh
-[ "$1" = enabled ] && exit 0
-exit 0
-EOF
-    chmod +x "$TEMP/mock-$unit-init"
-done
-sed -e "s@^INIT=/etc/init.d/avahi-daemon\$@INIT=$TEMP/mock-avahi-init@" \
-    -e "s@/etc/init.d/umdns@$TEMP/mock-umdns-init@g" \
-    "$TEMP/helper" > "$TEMP/helper-boot"
-chmod +x "$TEMP/helper-boot"
-if "$TEMP/helper-boot" service enable >/dev/null 2>&1; then
-    echo 'Avahi boot enabled while umdns boot was already enabled' >&2; exit 1
-fi
-if "$TEMP/helper-boot" service umdns-enable >/dev/null 2>&1; then
-    echo 'umdns boot enabled while Avahi boot was already enabled' >&2; exit 1
-fi
 
 # Simulate RPCD UCI operations without touching the runner's /etc/config.
 cat > "$TEMP/mock-uci" <<'EOF'
