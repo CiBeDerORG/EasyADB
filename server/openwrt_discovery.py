@@ -73,7 +73,11 @@ class RpcdDiscovery:
         if not isinstance(data, dict) or data.get("error") is not None:
             raise DiscoveryError("RPCD 返回协议错误")
         result = data.get("result")
-        if not isinstance(result, list) or len(result) < 2 or not isinstance(result[1], dict):
+        if not isinstance(result, list) or not result or type(result[0]) is not int:
+            raise DiscoveryError("RPCD 返回结构不正确")
+        if result[0] != 0:
+            return result[0], result[1] if len(result) > 1 and isinstance(result[1], dict) else {}
+        if len(result) < 2 or not isinstance(result[1], dict):
             raise DiscoveryError("RPCD 返回结构不正确")
         return result
 
