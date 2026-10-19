@@ -209,7 +209,7 @@ def test_existing_m1_schema_migration_preserves_devices_and_disables_auto_retry(
     assert d["mesh_ip"] == "10.10.30.206"
     assert d["selected_route"] == "mesh" and d["lan_ip"] is None
     assert d["model"] == "Old Model" and "auto_reconnect" not in d
-    assert store.list_groups() == [{"name": "Existing", "ip_prefix": None}]
+    assert [(g["name"], g["ip_prefix"], g["discovery_configured"]) for g in store.list_groups()] == [("Existing", None, False)]
     store.update_group("Existing", "Existing", "192.168.10.*")
     assert store.get("keep-id")["selected_route"] == "mesh"
     assert internal_ip("192.168.10.*", "10.10.30.206") == "192.168.10.206"
