@@ -92,3 +92,81 @@ def test_manual_stop_unblocks_pending_webrtc_recv_without_waiting_for_adb_worker
         live.stop()  # repeated cleanup must not resurrect the waiting sender
 
     asyncio.run(check())
+
+
+def test_late_peer_close_keeps_exclusive_slot_then_releases_without_browser(monkeypatch):
+    """An expired WS wait must not cancel an in-progress aiortc shutdown."""
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    from server.app import _close_webrtc_peer
+    from server.m2_live import LiveRegistry, LiveVideo
+
+    class DeferredPeer:
+        def __init__(self):
+            self.gate = asyncio.Event()
+            self.completed = False
+
+        async def close(self):
+            await self.gate.wait()
+            self.completed = True
+
+    async def check():
+        registry = LiveRegistry()
+        old = LiveVideo("selected-only:5555", "baseline", video_engine="webrtc")
+        old.peer_cleanup_complete = False
+        old.cleanup_complete = True
+        old.finished.set()  # scrcpy/ADB finished; the peer still owns its slot
+        assert registry.reserve("phone", old)
+        peer = DeferredPeer()
+        old.peer_close_task = asyncio.create_task(
+            _close_webrtc_peer(peer, old, "phone", registry))
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(old.peer_close_task), 0.01)
+        assert not old.peer_close_task.done()
+        assert not registry.is_cleaned(old)
+        assert not registry.reserve(
+            "phone", LiveVideo("selected-only:5555", "baseline", video_engine="webrtc"))
+        peer.gate.set()
+        assert await asyncio.wait_for(old.peer_close_task, 1) is True
+        assert peer.completed and old.peer_cleanup_complete
+        assert "phone" not in registry.sessions
+
+    asyncio.run(check())
+
+
+def test_webrtc_peer_close_does_not_release_unclean_worker_or_failed_peer(monkeypatch):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    from server.app import _close_webrtc_peer
+    from server.m2_live import LiveRegistry, LiveVideo
+
+    class ClosedPeer:
+        async def close(self):
+            return None
+
+    class FailedPeer:
+        async def close(self):
+            raise RuntimeError("transport failed to close")
+
+    async def check():
+        registry = LiveRegistry()
+        old = LiveVideo("selected-only:5555", "baseline", video_engine="webrtc")
+        old.peer_cleanup_complete = False
+        assert registry.reserve("phone", old)
+        assert await _close_webrtc_peer(ClosedPeer(), old, "phone", registry)
+        assert registry.sessions["phone"] is old  # scrcpy worker not yet clean
+        old.finished.set()
+        assert not registry.reserve(
+            "phone", LiveVideo("selected-only:5555", "baseline", video_engine="webrtc"))
+        old.cleanup_complete = True
+        assert registry.reserve(
+            "phone", LiveVideo("selected-only:5555", "baseline", video_engine="webrtc"))
+
+        failed = registry.sessions["phone"]
+        failed.finished.set()
+        failed.cleanup_complete = True
+        failed.peer_cleanup_complete = False
+        assert not await _close_webrtc_peer(FailedPeer(), failed, "phone", registry)
+        assert not registry.reserve(
+            "phone", LiveVideo("selected-only:5555", "baseline", video_engine="webrtc"))
+        assert registry.sessions["phone"] is failed
+
+    asyncio.run(check())
