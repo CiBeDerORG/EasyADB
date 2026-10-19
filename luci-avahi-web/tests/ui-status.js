@@ -2,7 +2,7 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const source=fs.readFileSync('htdocs/luci-static/resources/view/avahi-web/overview.js','utf8');
 assert.ok(!source.includes("'require poll'")&&!source.includes('poll.add('));
-let modal,scanCalls=0,authCalls=0,applyCalls=0,failStatusOnce=false,browseInstalled=false;
+let modal,scanCalls=0,authCalls=0,applyCalls=0,failStatusOnce=false,failScanOnce=false,browseInstalled=false;
 const running={avahi:true,dbus:true},boot={avahi:true,dbus:true};
 function E(tag,attrs,kids) {
  if(Array.isArray(attrs)||attrs==null||typeof attrs==='string'){kids=attrs;attrs={};}
@@ -24,7 +24,11 @@ const calls=[],snapshot=JSON.stringify({status:'ok',scanned_at:1792400000,count:
 const rpc={exec:function(program,args){
  calls.push([program,args]);
  if(program.includes('luci-avahi-scan')){
-  if(args[0]==='scan'){scanCalls++;return Promise.resolve({code:0,stdout:snapshot});}
+  if(args[0]==='scan'){
+   scanCalls++;
+   if(failScanOnce){failScanOnce=false;return Promise.resolve({code:1,stderr:'Scan state directory owner UID 100 differs from scanner UID 0'});}
+   return Promise.resolve({code:0,stdout:snapshot});
+  }
   assert.equal(args[0],'last');return Promise.resolve(scanCalls?{code:0,stdout:snapshot}:{code:1,stderr:'No snapshot'});
  }
  if(program.includes('luci-avahi-auth')){
@@ -70,6 +74,13 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  assert.ok(btn(page,'停止').every(b=>b.props.disabled===null),'Boolean attribute false must be absent');
  await btn(page,'立即发现 ADB')[0].props.click();
  assert.equal(scanCalls,1);assert.ok(txt(page).includes('37555'));
+ assert.ok(txt(page).includes('发现完成：本次检测到 1 个 ADB 端点'));
+ failScanOnce=true;
+ await btn(page,'立即发现 ADB')[0].props.click();
+ assert.ok(txt(page).includes('发现失败：Scan state directory owner UID 100 differs from scanner UID 0'),
+  'RPCD stderr must appear alongside discovery controls, not only at the page top');
+ assert.equal(scanCalls,2);
+ assert.ok(!btn(page,'立即发现 ADB')[0].disabled,'Scan failure must re-enable discovery');
  failStatusOnce=true;await btn(page,'手动刷新组件状态')[0].props.click();
  assert.ok(txt(page).includes('模拟失败'));assert.ok(!btn(page,'手动刷新组件状态')[0].disabled);
  btn(page,'停止')[0].props.click();assert.ok(running.avahi);await confirm();assert.equal(running.avahi,false);
@@ -83,5 +94,5 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  assert.equal(applyCalls,1);assert.ok(txt(page).includes('安装完整'));assert.equal(btn(page,'补齐安装').length,0);
  btn(page,'创建专用账号')[0].props.click();await confirm();
  assert.equal(authCalls,1);assert.ok(!btn(page,'创建专用账号')[0].disabled);
- assert.equal(scanCalls,1);console.log('Two-component LuCI actions and manual scan interactions passed');
+ assert.equal(scanCalls,2);console.log('Two-component LuCI actions and manual scan interactions passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
