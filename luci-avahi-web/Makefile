@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-avahi-web
-PKG_VERSION:=0.5.5
+PKG_VERSION:=0.5.6
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=CiBeDerORG
@@ -22,7 +22,7 @@ endef
 
 define Package/luci-app-avahi-web/description
  LuCI app for a narrowly authenticated NAS-triggered ADB mDNS scan,
- last volatile snapshot, restricted RPCD credential management, and optional Avahi/D-Bus/umdns APK management.
+ last volatile snapshot, restricted RPCD credential management, and optional Avahi and D-Bus APK management.
 endef
 
 define Build/Prepare
