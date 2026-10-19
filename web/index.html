@@ -551,6 +551,21 @@ function openGroup(name=null){
   }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
  $('groupDialog').showModal();$('groupName').focus();
 }
+async function scanGroup(name,test=false){
+ if(loading||scanningGroups.has(name))return;
+ scanningGroups.add(name);render();
+ try{
+  const base='/api/groups/'+encodeURIComponent(name)+'/discovery/';
+  const result=await(await api(base+(test?'test':'scan'),{method:'POST'})).json();
+  if(!test)discoveryResults.set(name,result);
+  if(test)modalMessage('鉴权及扫描权限正常，本次返回 '+result.found+' 条记录（不会更新设备端口）。','ok','groupMessage');
+  else {await load(true);message('「'+name+'」扫描完成：已更新 '+result.updated.length+' 台的共用 ADB 端口；不会自动连接或投屏。','ok');}
+ }catch(e){
+  if(test)modalMessage(e.message,'error','groupMessage');
+  else{discoveryResults.set(name,{error:'发现失败：'+e.message});message('「'+name+'」发现失败：'+e.message,'error');}
+ }finally{scanningGroups.delete(name);render();}
+}
+
 function closeGroup(){if(!loading)$('groupDialog').close();}
 function openFirstPair(id){
  if(loading||!loaded)return;
@@ -744,6 +759,7 @@ $('deleteGroup').addEventListener('click',async()=>{
   message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
 });
+$('testGroupDiscovery').addEventListener('click',()=>{if(editingGroup)scanGroup(editingGroup,true);});
 $('closeGroup').addEventListener('click',closeGroup);
 $('cancelGroup').addEventListener('click',closeGroup);
 $('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
@@ -759,7 +775,21 @@ $('groupForm').addEventListener('submit',async ev=>{
  const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
  try{
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
-  await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const saved=await(await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+  editingGroup=saved.name; // If discovery config fails, retry PUT rather than duplicate POST.
+  const routerUrl=$('groupOpenWrtUrl').value.trim(),routerUser=$('groupOpenWrtUser').value.trim();
+  const original=groups.find(g=>g.name===saved.name);
+  const hadDiscovery=Boolean(original&&original.discovery_configured);
+  if(routerUrl){
+   await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{
+    method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url:routerUrl,username:routerUser||'easyadb',password:$('groupOpenWrtPassword').value})
+   });
+  }else if(hadDiscovery){
+   await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{method:'DELETE'});
+   discoveryResults.delete(saved.name);
+  }
+  $('groupOpenWrtPassword').value='';
   $('groupDialog').close();await load(true);message('分组设置已保存','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
 });
