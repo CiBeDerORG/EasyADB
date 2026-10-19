@@ -102,10 +102,10 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .management-bar label,.management-check{margin:0;display:inline-flex;align-items:center;gap:7px;color:#c5d9f6;cursor:pointer}
 .management-bar input,.management-check input{width:17px;height:17px;flex:none}
 .management-check{padding-top:2px;flex:none}.item-top .item-info{flex:1;min-width:0}
-.device-title{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:6px;min-width:0;margin-bottom:4px}
-.item-name{position:relative;display:inline-flex;align-items:center;font-weight:700;font-size:14px;overflow-wrap:anywhere;min-width:0}
+.device-title{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:6px;min-width:0;margin-bottom:4px;position:relative}
+.item-name{position:static;display:inline-flex;align-items:center;font-weight:700;font-size:14px;overflow-wrap:anywhere;min-width:0}
 .device-model-tooltip{display:none;position:absolute;z-index:18;bottom:calc(100% + 9px);left:0;max-width:min(300px,70vw);min-width:max-content;padding:6px 10px;border-radius:7px;border:1px solid #7691ba;background:#263b57;color:#d9e8ff;font-weight:500;font-size:12px;line-height:1.3;white-space:normal;box-shadow:0 5px 18px #0009;pointer-events:none}
-.item-name:hover .device-model-tooltip,.item-name:focus .device-model-tooltip,.item-name:focus-within .device-model-tooltip{display:block}
+.device-title:hover .device-model-tooltip,.device-title:focus-within .device-model-tooltip{display:block}
 .device-model-tooltip::after{content:"";position:absolute;left:14px;top:100%;border:5px solid transparent;border-top-color:#7691ba}
 .device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
 .device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}

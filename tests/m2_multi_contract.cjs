@@ -139,7 +139,8 @@ assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the rou
 assert.match(page,/const name=elem\('span','item-name',d\.name\)/);
 assert.match(page,/title\.append\(name\)/);
 assert.match(page,/name\.append\(model\)/);
-assert.match(page,/\.item-name:hover \.device-model-tooltip/);
+assert.match(page,/\.device-title:hover \.device-model-tooltip/);
+assert.match(page,/\.device-title\{display:flex;[^\n]*position:relative/);
 assert.doesNotMatch(page,/if\(d\.model\)title\.append\(elem\('span','device-model'/);
 assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-android','Android '\+d\.android_version\)\)/);
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);

@@ -235,7 +235,8 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "const name=elem('span','item-name',d.name)" in html
         assert "title.append(name)" in html
         assert "name.append(model)" in html
-        assert ".item-name:hover .device-model-tooltip" in html
+        assert ".device-title:hover .device-model-tooltip" in html
+        assert ".device-title:focus-within .device-model-tooltip" in html
         assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version))" in html
         assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
