@@ -14,15 +14,12 @@ flag() { if "$@" >/dev/null 2>&1; then printf 'yes'; else printf 'no'; fi; }
 binary_flag() { if command -v "$1" >/dev/null 2>&1; then printf 'yes'; else printf 'no'; fi; }
 unit_flag() { if [ -x "/etc/init.d/$1" ]; then printf 'yes'; else printf 'no'; fi; }
 running() { pidof avahi-daemon >/dev/null 2>&1; }
-umdns_running() { pidof umdns >/dev/null 2>&1; }
 
 service_action() {
     [ "$#" -eq 1 ] || fail '服务操作参数无效'
     case "$1" in
         start|stop|enable|disable)
             op=$1; init=$INIT; unit=avahi ;;
-        umdns-start|umdns-stop|umdns-enable|umdns-disable)
-            op=${1#umdns-}; init=/etc/init.d/umdns; unit=umdns ;;
         dbus-start|dbus-stop|dbus-enable|dbus-disable)
             op=${1#dbus-}; init=/etc/init.d/dbus; unit=dbus ;;
         *) fail '不支持的服务操作' ;;
@@ -35,32 +32,13 @@ service_action() {
        [ -x "$INIT" ] && "$INIT" enabled >/dev/null 2>&1; then
         fail 'Avahi 已启用开机自启，请先关闭 Avahi 自启再关闭 D-Bus 自启'
     fi
-    if [ "$op" = enable ]; then
-        if [ "$unit" = avahi ] && [ -x /etc/init.d/umdns ] &&
-            /etc/init.d/umdns enabled >/dev/null 2>&1; then
-            fail 'umdns 已启用开机自启，请先关闭其自启再启用 Avahi 自启'
-        fi
-        if [ "$unit" = umdns ] && [ -x "$INIT" ] &&
-            "$INIT" enabled >/dev/null 2>&1; then
-            fail 'Avahi 已启用开机自启，请先关闭其自启再启用 umdns 自启'
-        fi
-    fi
     if [ "$op" = start ] && [ "$unit" = avahi ] &&
         ! pidof dbus-daemon >/dev/null 2>&1; then
         fail 'D-Bus 未运行，请先启动 D-Bus 后再启动 Avahi'
     fi
-    if [ "$op" = start ]; then
-        if [ "$unit" = avahi ] && umdns_running; then
-            fail '检测到 umdns 正在运行，请先停止 umdns，再启动 Avahi，以避免 mDNS 服务冲突'
-        fi
-        if [ "$unit" = umdns ] && running; then
-            fail '检测到 Avahi 正在运行，请先停止 Avahi，再启动 umdns，以避免 mDNS 服务冲突'
-        fi
-    fi
     "$init" "$op"
 }
-# Package operations are APK-only and restricted to exactly three managed
-# components. No arguments, URLs, options, shell expressions or force flags
+# Package operations are APK-only and restricted to Avahi and D-Bus only. No arguments, URLs, options, shell expressions or force flags
 # supplied by the browser may reach the package manager.
 require_apk() {
     [ -n "$APK" ] && [ -x "$APK" ] || fail '找不到 APK 软件包管理器'
@@ -70,7 +48,6 @@ package_names() {
     case "$1" in
         avahi) set -- avahi-dbus-daemon avahi-utils ;;
         dbus) set -- dbus ;;
-        umdns) set -- umdns ;;
         *) fail '不支持的软件包组件' ;;
     esac
     printf '%s\n' "$@"
@@ -79,7 +56,7 @@ package_names() {
 package_list() {
     need_no_args "$@"
     require_apk
-    for pkg in avahi-dbus-daemon avahi-utils dbus umdns; do
+    for pkg in avahi-dbus-daemon avahi-utils dbus; do
         if "$APK" info -e "$pkg" >/dev/null 2>&1; then
             # apk v3: info -v means VERBOSE and can emit the entire English
             # description, not a version. Manifest is strictly name + version.
@@ -117,31 +94,15 @@ package_operation() {
     set -- $names
     IFS=$oldIFS
     set +f
-    # If only avahi-utils is missing, install that tool without touching the
-    # already installed daemon. This does not start or reconfigure an mDNS server.
-    utility_only=no
+    # If only avahi-utils is missing, install the missing discovery tool only.
     if [ "$action" = install ] && [ "$target" = avahi ] &&
        "$APK" info -e avahi-dbus-daemon >/dev/null 2>&1 &&
        ! "$APK" info -e avahi-utils >/dev/null 2>&1; then
         set -- avahi-utils
-        utility_only=yes
-    fi
-    if [ "$action" != remove ]; then
-        # New daemon installs/upgrades can activate services through maintainer
-        # scripts; only the isolated utility repair is exempt.
-        if [ "$target" = avahi ] && [ "$utility_only" != yes ] && umdns_running; then
-            fail '检测到 umdns 正在运行：安装或更新 Avahi 前请先停止 umdns'
-        fi
-        if [ "$target" = umdns ] && running; then
-            fail '检测到 Avahi 正在运行：安装或更新 umdns 前请先停止 Avahi'
-        fi
     fi
     if [ "$action" = remove ]; then
         # Do not let the UI remove an actively operating mDNS daemon, or pull
         # D-Bus from a live Avahi session. The operator must stop it first.
-        if [ "$target" = umdns ] && umdns_running; then
-            fail 'umdns 正在运行，请先停止后再卸载'
-        fi
         if [ "$target" = avahi ] && running; then
             fail 'Avahi 正在运行，请先停止后再卸载'
         fi
@@ -182,16 +143,14 @@ case "$cmd" in
         need_no_args "$@"
         installed && printf 'installed=yes\n' || printf 'installed=no\n'
         running && printf 'running=yes\n' || printf 'running=no\n'
-        umdns_running && printf 'umdns=yes\n' || printf 'umdns=no\n'
         pidof dbus-daemon >/dev/null 2>&1 && printf 'dbus=yes\n' || printf 'dbus=no\n'
         printf 'avahi-daemon-bin=%s\n' "$(flag test -x /usr/sbin/avahi-daemon)"
         printf 'avahi-browse-bin=%s\n' "$(flag test -x /usr/bin/avahi-browse)"
-        printf 'umdns-bin=%s\n' "$(binary_flag umdns)"
         printf 'dbus-bin=%s\n' "$(binary_flag dbus-daemon)"
-        for unit in avahi-daemon umdns dbus; do
+        for unit in avahi-daemon dbus; do
             printf '%s-init=%s\n' "$unit" "$(unit_flag "$unit")"
         done
-        for unit in avahi-daemon umdns dbus; do
+        for unit in avahi-daemon dbus; do
             [ -x "/etc/init.d/$unit" ] || continue
             if "/etc/init.d/$unit" enabled >/dev/null 2>&1; then
                 printf '%s-enabled=yes\n' "$unit"
