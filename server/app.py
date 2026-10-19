@@ -2,6 +2,7 @@
 import asyncio
 import ipaddress
 import json
+import logging
 import queue
 from urllib.parse import urlsplit
 import os
@@ -570,6 +571,26 @@ def m2_video_engine():
     return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
 
 
+async def _close_webrtc_peer(pc, stream, device_id, registry):
+    """Keep the original aiortc close alive beyond the WS wait deadline.
+
+    Cancelling pc.close() halfway can leave aiortc internally marked closed
+    without finishing its transport teardown. Reuse this slot only when both
+    peer and scrcpy/ADB worker cleanup have been confirmed.
+    """
+    try:
+        await pc.close()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "WebRTC peer close failed for device %s session %s; keeping slot",
+            device_id, stream.session_id)
+        return False
+    stream.peer_cleanup_complete = True
+    if registry.is_cleaned(stream):
+        registry.release(device_id, stream)
+    return True
+
+
 @app.websocket("/api/devices/{device_id}/m2/live")
 async def m2_live_video(websocket: WebSocket, device_id: str):
     """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
@@ -757,6 +778,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             from aiortc import (RTCPeerConnection, RTCConfiguration,
                                                 RTCSessionDescription, RTCRtpSender)
                             pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+                            stream.peer_cleanup_complete = False
                             sender = pc.addTrack(stream.webrtc_track)
                             transceiver = next(t for t in pc.getTransceivers() if t.sender is sender)
                             h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
@@ -1011,26 +1033,30 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             await asyncio.to_thread(stream.stop)
-            peer_closed = True
+            # SDP/ICE negotiation runs in the receiver task. Stop it before
+            # closing the peer; otherwise it can race against pc.close().
+            if receiver:
+                receiver.cancel()
+                await asyncio.gather(receiver, return_exceptions=True)
             if pc is not None:
+                # Keep a strong reference on this registry-owned session.
+                # Timeout only bounds the WS wait, never cancels peer teardown.
+                stream.peer_close_task = asyncio.create_task(
+                    _close_webrtc_peer(pc, stream, device_id, live_registry))
                 try:
-                    await asyncio.wait_for(pc.close(), 10)
-                except (RuntimeError, OSError, asyncio.TimeoutError):
-                    # A peer that did not close is not an acknowledged clean
-                    # stop: keep this device's registry slot reserved.
-                    peer_closed = False
+                    await asyncio.wait_for(asyncio.shield(stream.peer_close_task), 10)
+                except asyncio.TimeoutError:
+                    logging.getLogger(__name__).warning(
+                        "WebRTC peer close still pending for device %s session %s; "
+                        "will release only after verified late cleanup",
+                        device_id, stream.session_id)
             if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
                 # SDP failure never launched ADB or allocated a worker resource.
                 stream.cleanup_complete = True
                 stream.finished.set()
                 if stream.webrtc_track is not None:
                     stream.webrtc_track.stop()
-            if receiver:
-                receiver.cancel()
-                await asyncio.gather(receiver, return_exceptions=True)
             await asyncio.to_thread(stream.join, 20)
-            if not peer_closed and VIDEO_ENGINE == "webrtc":
-                stream.cleanup_complete = False
             if live_registry.is_cleaned(stream):
                 # Ended(cleanup_complete=true) only after all session-owned
                 # video/control/ADB resources were verifiably released.
