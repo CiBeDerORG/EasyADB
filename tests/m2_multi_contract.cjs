@@ -133,6 +133,12 @@ assert(!page.includes("const connect=action('连接'"),'no single-device connect
 assert(page.includes("$('load').addEventListener('click',loadAndConnect)"),'explicit reload connects once');
 assert(page.includes("if(current.selected_route!==route)"),'clicking current IP can reconnect without route mutation');
 assert(page.includes("multiView.projectionButton(d)"),'projection control lives next to ADB port');
+assert.match(page,/title\.append\(elem\('span','device-port','ADB '\+d\.port\)\);\s*if\(multiView\)title\.append\(multiView\.projectionButton\(d\)\)/);
+assert(page.includes("if(route==='mesh'){"),'mesh IP owns per-device editing');
+assert(page.includes("row.append(change)"),'edit button overlays upper right of mesh address');
+assert(!page.includes('title.append(change)'),'edit button no longer appears in device title');
+assert(page.includes(".device-projector{position:static;"),'stream icon belongs inline after the port');
+assert(page.includes(".device-edit-icon{position:absolute;right:-3px;top:-5px;"),'edit icon overlays the mesh IP chip');
 assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');

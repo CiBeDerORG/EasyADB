@@ -17,6 +17,23 @@ AUTH = {"X-EasyADB-Token": "local-test-token-123"}
 ORIGIN = {"origin": "http://testserver"}
 
 
+def test_live_start_defaults_to_physical_screen_on_unless_explicitly_off():
+    normal = LiveVideo("only-device:5555", "baseline")
+    assert normal.power_on is True
+    assert normal.screen_off is False
+    requested_off = LiveVideo("only-device:5555", "baseline", screen_off=True)
+    assert requested_off.power_on is False
+    assert requested_off.screen_off is True
+    virtual = LiveVideo("only-device:5555", "baseline",
+                        display_source={"mode": "new_resolution",
+                                        "width": 1920, "height": 1080, "dpi": 240})
+    assert virtual.power_on is False
+    assert virtual.screen_off is False
+    # Ensure that startup actually passes the computed scrcpy power option.
+    import inspect
+    assert 'f"power_on={str(self.power_on).lower()}"' in inspect.getsource(LiveVideo._run)
+
+
 def test_scrcpy_v501_display_power_packets_and_startup_wake_cancel(monkeypatch):
     import server.m2_live as live_module
     adb_calls = []

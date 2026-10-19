@@ -109,9 +109,8 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-model-tooltip::after{content:"";position:absolute;left:14px;top:100%;border:5px solid transparent;border-top-color:#7691ba}
 .device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
 .device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
-.device-edit-icon{position:static;flex:none;z-index:1;width:28px;height:28px;min-height:28px;padding:2px;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:7px;font-size:16px}
-.device-title{padding-right:32px}
-.device-projector{position:absolute;top:8px;right:8px;z-index:2;display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
+.device-edit-icon{position:absolute;right:-3px;top:-5px;z-index:2;width:20px;height:20px;min-height:20px;padding:0;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:50%;font-size:12px;line-height:1}
+.device-projector{position:static;flex:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
 .device-projector.starting,.device-projector.queued,.device-projector.stopping{background:#574424;border-color:#aa8743;color:#ffe09c}
 .device-projector.ready,.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
 .device-projector:disabled{opacity:.55;cursor:not-allowed}
@@ -130,7 +129,7 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-addresses{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:8px;min-width:0}
 .address-row{display:inline-flex;position:relative;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;max-width:100%}
 .address-target{display:block;text-align:left;font-size:12px;font-weight:500;padding:7px 10px;max-width:100%;overflow-wrap:anywhere;background:#192b43;border:1px solid #405779;color:#c9daef}
-.address-row.has-remove .address-target{padding-right:25px}
+.address-row.has-remove .address-target,.address-row.has-edit .address-target{padding-right:25px}
 .address-remove{position:absolute;right:-3px;top:-5px;z-index:1;border:1px solid #a35e6d;background:#632c3a;color:#fff;font-size:12px;line-height:1;width:20px;height:20px;border-radius:50%;padding:0}
 .address-add{flex:none;border:1px dashed #6b8dbb;background:#1c3453;color:#bcd9ff;padding:5px 10px;font-size:17px;line-height:1.3;min-width:31px;min-height:31px}
 .address-target[aria-pressed="true"]{background:#24533e;color:#b5f1d0;border-color:#397656}
@@ -641,21 +640,23 @@ function render(){
    title.append(name);
    if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
    title.append(elem('span','device-port','ADB '+d.port));
-   const change=action('✎',()=>edit(d.id),'device-edit-icon');
-   change.title='编辑 '+d.name;
-   change.setAttribute('aria-label','编辑设备 '+d.name);
-   change.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
-   title.append(change);
    if(multiView)title.append(multiView.projectionButton(d));
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
-    const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':''));
+    const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':route==='mesh'?' has-edit':''));
     const target=action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target');
     target.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
     target.setAttribute('aria-pressed',String(chosen));
     target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
     target.title=chosen?'点击对此 IP 主动连接一次':'选择此 IP 并主动连接一次（不自动回退）';
     row.append(target);
+    if(route==='mesh'){
+     const change=action('✎',()=>edit(d.id),'device-edit-icon');
+     change.type='button';change.title='编辑 '+d.name;
+     change.setAttribute('aria-label','编辑设备 '+d.name);
+     change.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+     row.append(change);
+    }
     if(route==='temp'){
      const del=action('×',()=>removeTempAddress(d.id),'address-remove');
      del.type='button';del.title='移除此设备临时 IP（不改变共用端口）';

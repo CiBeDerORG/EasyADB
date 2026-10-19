@@ -221,7 +221,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="tempDialog"' in html
         assert "multiView.projectionButton(d)" in html
         assert "change.title='编辑 '+d.name" in html
-        assert "title.append(change)" in html and "item.append(primary,change)" not in html
+        assert "row.append(change)" in html and "title.append(change)" not in html
+        assert "if(route==='mesh'){" in html
+        assert ".device-edit-icon{position:absolute;right:-3px;top:-5px;" in html
+        assert ".device-projector{position:static;" in html
         assert "if(multiView)title.append(multiView.projectionButton(d))" in html
         assert "name.append(model)" in html and "name.tabIndex=0" in html
         assert "if(d.model)title.append(elem('span','device-model'" not in html

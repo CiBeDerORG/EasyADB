@@ -190,6 +190,10 @@ class LiveVideo:
         self.profile = profile
         self.display_source = display_source  # None keeps the original primary screen.
         self.screen_off = screen_off is True and display_source is None
+        # Default main-display mirroring wakes the physical screen via scrcpy's
+        # native power_on startup option. Explicit screen-off wins; a virtual
+        # display must not change the physical panel's power state.
+        self.power_on = display_source is None and not self.screen_off
         self._wake_requested = False  # a wake during startup cancels deferred off
         # Opaque ID for this user-started session. Used for lifecycle messages
         # and future control-channel binding; it never selects an ADB target.
@@ -566,7 +570,8 @@ class LiveVideo:
                     f"scid={scid}", "video=true", "audio=false", "control=true",
                     "tunnel_forward=true", "send_device_meta=true",
                     "send_frame_meta=true", "send_stream_meta=true",
-                    "send_dummy_byte=true", "cleanup=true", "power_on=false",
+                    "send_dummy_byte=true", "cleanup=true",
+                    f"power_on={str(self.power_on).lower()}",
                     "clipboard_autosync=false",
                     "downsize_on_error=false", "video_codec=h264",
                     f"max_size={settings['max_size']}",
