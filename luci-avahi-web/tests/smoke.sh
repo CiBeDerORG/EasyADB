@@ -2,6 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 node --check htdocs/luci-static/resources/view/avahi-web/overview.js
+node tests/ui-status.js
 for src in root/usr/libexec/luci-avahi-web root/usr/libexec/luci-avahi-scan root/usr/libexec/luci-avahi-auth scripts/build-apk-sdk.sh; do
     sh -n "$src"
 done
