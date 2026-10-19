@@ -2,483 +2,281 @@
 'require view';
 'require fs';
 'require ui';
-'require poll';
 
 var HELPER = '/usr/libexec/luci-avahi-web';
 var SCANNER = '/usr/libexec/luci-avahi-scan';
 
-function call(action, args) {
-	return fs.exec(HELPER, [ action ].concat(args || [])).then(function(res) {
-		if (res.code !== 0)
-			throw new Error((res.stderr || res.stdout || _('Command failed')).trim());
-		return res.stdout || '';
+function command(program, args) {
+	return fs.exec(program, args).then(function(result) {
+		if (result.code !== 0)
+			throw new Error((result.stderr || result.stdout || _('Operation failed')).trim());
+		return result.stdout || '';
 	});
 }
-
-function callScan(action) {
-	return fs.exec(SCANNER, [ action ]).then(function(res) {
-		if (res.code !== 0)
-			throw new Error((res.stderr || res.stdout || _('Scan failed')).trim());
-		return res.stdout || '';
+function control(action, args) { return command(HELPER, [ action ].concat(args || [])); }
+function snapshot() { return command(SCANNER, [ 'last' ]); }
+function values(output) {
+	var obj = {};
+	String(output || '').split('\n').forEach(function(line) {
+		var i = line.indexOf('=');
+		if (i > 0) obj[line.slice(0, i)] = line.slice(i + 1);
 	});
+	return obj;
 }
-
-function keyValues(data) {
+function inventory(output) {
 	var result = {};
-	String(data || '').split('\n').forEach(function(line) {
-		var index = line.indexOf('=');
-		if (index > 0)
-			result[line.slice(0, index)] = line.slice(index + 1);
+	String(output || '').split('\n').forEach(function(line) {
+		var fields = line.split('\t');
+		if (fields.length === 3 && /^[a-z0-9-]+$/.test(fields[0]))
+			result[fields[0]] = { installed: fields[1] === 'installed', version: fields[2] };
 	});
 	return result;
 }
-
-// avahi-browse -p escapes semicolons; plain split(';') corrupts TXT/name fields.
-function splitBrowseLine(line) {
-	var fields = [], current = '', escaped = false;
-	for (var i = 0; i < line.length; i++) {
-		var ch = line.charAt(i);
-		if (escaped) {
-			current += '\\' + ch;
-			escaped = false;
-		}
-		else if (ch === '\\') {
-			escaped = true;
-		}
-		else if (ch === ';') {
-			fields.push(current);
-			current = '';
-		}
-		else {
-			current += ch;
-		}
-	}
-	fields.push(current);
-	return fields;
-}
-
-function parseBrowse(output) {
-	var found = {}, results = [];
-	String(output || '').split('\n').forEach(function(line) {
-		if (line.slice(0, 2) !== '=;')
-			return;
-		var f = splitBrowseLine(line);
-		if (f.length < 9 || !/^\d{1,5}$/.test(f[8]))
-			return;
-		var entry = { iface: f[1], proto: f[2], name: f[3], type: f[4], host: f[6], ip: f[7], port: f[8] };
-		var key = [ entry.iface, entry.proto, entry.name, entry.type, entry.ip, entry.port ].join('|');
-		if (!found[key]) {
-			found[key] = true;
-			results.push(entry);
-		}
-	});
-	return results;
-}
-
-function cell(value) { return E('td', [ value || '-' ]); }
-function checked(value) { return value === 'yes'; }
+function cell(value) { return E('td', [ value == null || value === '' ? '-' : String(value) ]); }
 
 return view.extend({
 	load: function() {
-		return Promise.all([ call('status'), call('config-get').catch(function() { return ''; }), call('package', [ 'list' ]), callScan('last').catch(function() { return ''; }), callScan('log').catch(function() { return ''; }) ]);
-	},
-
-	render: function(data) {
-		var self = this;
-		var conf = keyValues(data[1]);
-		var configReady = data[1] !== '';
-		var packages = E('div');
-		var packageLog = E('pre', { 'style': 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto' });
-		var packageBusy = false;
-		var packageButtons = [];
-		var status = E('div');
-		var discover = E('div');
-		var lastScan = E('div');
-		var scanLog = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto' });
-		var scanBusy = false;
-		var error = E('div');
-		var mode = E('select', { 'class': 'cbi-input-select' }, [
-			E('option', { value: 'adb' }, [ '_adb-tls-connect._tcp' ]),
-			E('option', { value: 'pairing' }, [ '_adb-tls-pairing._tcp' ]),
-			E('option', { value: 'all' }, [ _('All mDNS services') ])
+		return Promise.all([
+			control('status'),
+			control('package', [ 'list' ]),
+			snapshot().catch(function() { return ''; })
 		]);
-		var ipv4 = E('input', { type: 'checkbox', checked: checked(conf['use-ipv4']) });
-		var ipv6 = E('input', { type: 'checkbox', checked: checked(conf['use-ipv6']) });
-		var reflector = E('input', { type: 'checkbox', checked: checked(conf['enable-reflector']) });
-		var reflectIPv = E('input', { type: 'checkbox', checked: checked(conf['reflect-ipv']) });
-		var interfaces = E('input', { type: 'text', 'class': 'cbi-input-text',
-			value: conf['allow-interfaces'] || '', placeholder: 'br-lan' });
-
-		function message(msg, isError) {
-			error.replaceChildren(msg ? E('div', { 'class': isError ? 'alert-message warning' : 'alert-message notice' }, [ msg ]) : '');
+	},
+	render: function(data) {
+		var statusNode = E('div'), packagesNode = E('div');
+		var lastNode = E('div'), noticeNode = E('div');
+		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
+		var busy = false, packageButtons = [];
+		var groups = [
+			{ id: 'avahi', label: 'Avahi', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
+			{ id: 'dbus', label: 'D-Bus', packages: [ 'dbus' ] },
+			{ id: 'umdns', label: 'umdns', packages: [ 'umdns' ] }
+		];
+		function alert(text, error) {
+			noticeNode.replaceChildren(text ? E('p', {
+				'class': error ? 'alert-message warning' : 'alert-message notice'
+			}, [ text ]) : '');
 		}
-
-		function showStatus(text) {
-			var s = keyValues(text);
-			status.replaceChildren(E('p', [
-				_('Avahi installed') + ': ' + (s.installed === 'yes' ? _('Yes') : _('No')) + '  |  ',
-				_('Avahi running') + ': ' + (s.running === 'yes' ? _('Yes') : _('No')) + '  |  ',
-				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped')) + '  |  ',
-				'D-Bus: ' + (s.dbus === 'yes' ? _('Running') : _('Stopped')),
-				E('span', [ '  |  ' + _('Auto-start: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('Yes') : _('No')) +
-					' / umdns ' + (s['umdns-enabled'] === 'yes' ? _('Yes') : _('No')) +
-					' / D-Bus ' + (s['dbus-enabled'] === 'yes' ? _('Yes') : _('No')) ])
+		function renderStatus(output) {
+			var s = values(output);
+			statusNode.replaceChildren(E('p', [
+				'Avahi: ' + (s.running === 'yes' ? _('Running') : _('Stopped')) + ' / ',
+				'D-Bus: ' + (s.dbus === 'yes' ? _('Running') : _('Stopped')) + ' / ',
+				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped')),
+				E('span', [ ' | ' + _('Boot: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('On') : _('Off')) +
+					', umdns ' + (s['umdns-enabled'] === 'yes' ? _('On') : _('Off')) ])
 			]));
-			if (s.umdns === 'yes')
-				status.appendChild(E('p', { 'class': 'alert-message warning' }, [
-					_('umdns is running. This page will not stop it automatically. Stop/disable umdns manually before starting Avahi to avoid mDNS conflicts.')
+			if (s.running === 'yes' && s.umdns === 'yes')
+				statusNode.appendChild(E('p', { 'class': 'alert-message warning' }, [
+					_('Both mDNS daemons are running. Resolve the UDP 5353 conflict before scanning.')
 				]));
 		}
-
-		function pkgInventory(output) {
-			var result = {};
-			String(output || '').split('\n').forEach(function(line) {
-				var cols = line.split('\t');
-				if (cols.length === 3 && /^[a-z0-9-]+$/.test(cols[0]))
-					result[cols[0]] = { installed: cols[1] === 'installed', version: cols[2] };
-			});
-			return result;
+		function refreshStatus() {
+			return control('status').then(renderStatus).catch(function(e) { alert(e.message, true); });
 		}
-
-		function busyPackages(state) {
-			packageBusy = state;
-			packageButtons.forEach(function(btn) {
-				btn.disabled = state || btn._normallyDisabled;
-			});
-		}
-
-		function packageButton(label, target, operation, disabled) {
-			var btn = E('button', {
-				type: 'button',
-				'class': operation === 'remove' ? 'cbi-button cbi-button-negative' : 'cbi-button',
-				disabled: disabled,
-				click: function() { return planPackage(operation, target); }
+		function serviceButton(label, action) {
+			return E('button', { type: 'button', 'class': 'cbi-button',
+				click: function() {
+					var perform = function() {
+						return control('service', [ action ]).then(function() {
+							alert(_('Service action completed.'));
+							return refreshStatus();
+						}).catch(function(e) { alert(e.message, true); });
+					};
+					if ([ 'stop', 'umdns-stop', 'umdns-disable' ].indexOf(action) < 0)
+						return perform();
+					ui.showModal(_('Confirm service action'), [
+						E('p', [ _('Changing mDNS services may interrupt discovery for other clients.') ]),
+						E('p', [ action ]),
+						E('div', { 'class': 'right' }, [
+							E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+							E('button', { 'class': 'btn cbi-button-apply', click: function() {
+								ui.hideModal();
+								return perform();
+							} }, [ _('Confirm') ])
+						])
+					]);
+				}
 			}, [ label ]);
-			btn._normallyDisabled = disabled;
-			packageButtons.push(btn);
-			return btn;
 		}
-
-		var groups = [
-			{ key: 'avahi', name: 'Avahi', pkgs: [ 'avahi-dbus-daemon', 'avahi-utils' ],
-				note: _('Includes the D-Bus daemon and avahi-browse tools.') },
-			{ key: 'dbus', name: 'D-Bus', pkgs: [ 'dbus' ],
-				note: _('May be required by Avahi and other system services.') },
-			{ key: 'umdns', name: 'umdns', pkgs: [ 'umdns' ],
-				note: _('OpenWrt built-in mDNS implementation; check for port 5353 conflicts.') }
-		];
-
-		function displayPackages(output) {
-			var inventory = pkgInventory(output);
+		function setBusy(on) {
+			busy = on;
+			packageButtons.forEach(function(button) {
+				button.disabled = on || button._notAvailable;
+			});
+		}
+		function pkgButton(label, group, action, disabled) {
+			var button = E('button', { type: 'button', 'class': 'cbi-button',
+				disabled: disabled, click: function() { return preview(action, group); }
+			}, [ label ]);
+			button._notAvailable = disabled;
+			packageButtons.push(button);
+			return button;
+		}
+		function renderPackages(output) {
+			var installed = inventory(output);
 			packageButtons = [];
 			var table = E('table', { 'class': 'table' }, [
 				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('Component') ]), E('th', [ _('Installed packages / versions') ]),
-					E('th', [ _('Actions') ])
+					E('th', [ _('Component') ]), E('th', [ _('Packages / version') ]), E('th', [ _('Actions') ])
 				])
 			]);
 			groups.forEach(function(group) {
-				var installedCount = group.pkgs.filter(function(name) {
-					return inventory[name] && inventory[name].installed;
+				var count = group.packages.filter(function(pkg) {
+					return installed[pkg] && installed[pkg].installed;
 				}).length;
-				var versions = group.pkgs.map(function(name) {
-					var info = inventory[name];
-					return E('div', [ name + ': ' + (info && info.installed ?
-						info.version || _('Installed') : _('Not installed')) ]);
+				var details = group.packages.map(function(pkg) {
+					var v = installed[pkg];
+					return E('div', [ pkg + ': ' + (v && v.installed ? v.version || _('Installed') : _('Not installed')) ]);
 				});
-				var controls = E('td', [
-					packageButton(_('Install'), group.key, 'install', installedCount === group.pkgs.length), ' ',
-					packageButton(_('Update'), group.key, 'upgrade', installedCount !== group.pkgs.length), ' ',
-					packageButton(_('Uninstall'), group.key, 'remove', installedCount === 0)
-				]);
 				table.appendChild(E('tr', { 'class': 'tr' }, [
-					E('td', [ E('strong', [ group.name ]), E('div', [ group.note ]) ]),
-					E('td', versions), controls
+					cell(group.label),
+					E('td', details),
+					E('td', [
+						pkgButton(_('Install'), group.id, 'install', count === group.packages.length), ' ',
+						pkgButton(_('Update'), group.id, 'upgrade', count !== group.packages.length), ' ',
+						pkgButton(_('Uninstall'), group.id, 'remove', count === 0)
+					])
 				]));
 			});
-			packages.replaceChildren(table);
-			if (packageBusy)
-				busyPackages(true);
+			packagesNode.replaceChildren(table);
+			if (busy) setBusy(true);
 		}
-
 		function refreshPackages() {
-			return call('package', [ 'list' ]).then(displayPackages).catch(function(e) {
-				message(_('Failed to refresh package status: ') + e.message, true);
-			});
+			return control('package', [ 'list' ]).then(renderPackages).catch(function(e) { alert(e.message, true); });
 		}
-
-		function refreshConfiguration() {
-			return call('config-get').then(function(text) {
-				var next = keyValues(text);
-				ipv4.checked = checked(next['use-ipv4']);
-				ipv6.checked = checked(next['use-ipv6']);
-				reflector.checked = checked(next['enable-reflector']);
-				reflectIPv.checked = checked(next['reflect-ipv']);
-				interfaces.value = next['allow-interfaces'] || '';
-				configReady = true;
-				save.disabled = false;
-			}).catch(function() {
-				configReady = false;
-				save.disabled = true;
-			});
-		}
-
-		function applyPackage(operation, target) {
-			busyPackages(true);
-			packageLog.textContent = _('Executing selected operation…');
-			return call('package', [ 'apply', operation, target ]).then(function(text) {
-				packageLog.textContent = text;
-				message(_('Selected package operation finished. Review the output below.'));
+		function execute(operation, group) {
+			setBusy(true);
+			operationOutput.textContent = _('Executing operation…');
+			return control('package', [ 'apply', operation, group ]).then(function(result) {
+				operationOutput.textContent = result;
+				alert(_('Package operation completed. See output below.'));
 			}).catch(function(e) {
-				packageLog.textContent = e.message;
-				message(_('Package operation failed. No force flags were used.'), true);
+				operationOutput.textContent = e.message;
+				alert(_('Package operation failed; no force flags were used.'), true);
 			}).then(function() {
-				return Promise.all([ refreshPackages(), refreshStatus(), refreshConfiguration() ]);
-			}).then(function() { busyPackages(false); });
+				return Promise.all([ refreshPackages(), refreshStatus() ]);
+			}).then(function() { setBusy(false); }, function(e) {
+				setBusy(false); alert(e.message, true);
+			});
 		}
-
-		function planPackage(operation, target) {
-			if (packageBusy)
-				return;
-			busyPackages(true);
-			packageLog.textContent = _('Checking dependency transaction…');
-			return call('package', [ 'plan', operation, target ]).then(function(plan) {
-				packageLog.textContent = plan;
-				var warning = operation === 'remove'
-					? _('Uninstalling a package may remove orphaned dependencies. Check the simulated transaction carefully. Stop active services first.')
-					: operation === 'upgrade'
-					? _('This is a package-scoped upgrade, not a system upgrade. SNAPSHOT package feeds can change: inspect versions and take a backup first.')
-					: _('Installation uses only the router configured APK repositories. It does not automatically enable or start a daemon.');
-				ui.showModal(_('Confirm package operation'), [
-					E('p', [ warning ]),
-					E('p', [ _('Target: ') + target + ' / ' + operation ]),
-					E('pre', { style: 'max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere' }, [ plan || _('No changes proposed') ]),
+		function preview(operation, group) {
+			if (busy) return;
+			setBusy(true);
+			operationOutput.textContent = _('Checking APK dependency transaction…');
+			return control('package', [ 'plan', operation, group ]).then(function(result) {
+				operationOutput.textContent = result;
+				ui.showModal(_('Confirm APK transaction'), [
+					E('p', [ _('SNAPSHOT repositories may have changed. Inspect every proposed dependency change; no full-system upgrade is performed.') ]),
+					E('p', [ _('Target: ') + group + ' / ' + operation ]),
+					E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto' },
+						[ result || _('No changes proposed') ]),
 					E('div', { 'class': 'right' }, [
-						E('button', { 'class': 'btn', click: function() { ui.hideModal(); busyPackages(false); } }, [ _('Cancel') ]),
-						' ',
+						E('button', { 'class': 'btn', click: function() { ui.hideModal(); setBusy(false); } }, [ _('Cancel') ]), ' ',
 						E('button', { 'class': 'btn cbi-button-apply', click: function() {
 							ui.hideModal();
-							return applyPackage(operation, target);
-						} }, [ _('Confirm and execute') ])
+							return execute(operation, group);
+						} }, [ _('Confirm') ])
 					])
 				]);
 			}).catch(function(e) {
-				packageLog.textContent = e.message;
-				message(_('Package simulation failed; nothing was changed.'), true);
-				busyPackages(false);
+				operationOutput.textContent = e.message;
+				alert(_('Transaction simulation failed; nothing changed.'), true);
+				setBusy(false);
 			});
 		}
-
-		function refreshFeedIndexes() {
-			if (packageBusy)
-				return;
-			ui.showModal(_('Refresh package indexes'), [
-				E('p', [ _('Update APK repository indexes only. No packages will be upgraded. Use firmware-matched SNAPSHOT repositories.') ]),
+		function refreshIndex() {
+			if (busy) return;
+			ui.showModal(_('Refresh APK indexes'), [
+				E('p', [ _('This only refreshes repository indexes; it does not upgrade installed packages.') ]),
 				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]),
-					' ',
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
 						ui.hideModal();
-						busyPackages(true);
-						packageLog.textContent = _('Refreshing repository indexes…');
-						return call('package', [ 'refresh' ]).then(function(text) {
-							packageLog.textContent = text;
-							message(_('Package indexes refreshed.'));
+						setBusy(true);
+						return control('package', [ 'refresh' ]).then(function(out) {
+							operationOutput.textContent = out;
 						}).catch(function(e) {
-							packageLog.textContent = e.message;
-							message(_('Index refresh failed.'), true);
-						}).then(refreshPackages).then(function() { busyPackages(false); });
-					} }, [ _('Refresh indexes') ])
+							operationOutput.textContent = e.message;
+							alert(e.message, true);
+						}).then(refreshPackages).then(function() { setBusy(false); },
+							function(e) { setBusy(false); alert(e.message, true); });
+					} }, [ _('Confirm') ])
 				])
 			]);
 		}
-
-		function showBrowse(output) {
-			var rows = parseBrowse(output);
-			if (!rows.length) {
-				discover.replaceChildren(E('p', [ _('No resolved services were found. Ensure Android native Wireless debugging is enabled; traditional adb tcpip 5555 may not advertise mDNS.') ]));
+		function renderLast(output) {
+			if (!output) {
+				lastNode.replaceChildren(E('p', [ _('No successful NAS-triggered scan is cached.') ]));
 				return;
 			}
-			var table = E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('Name') ]), E('th', [ _('Service') ]), E('th', [ _('Interface') ]),
-					E('th', [ _('Address') ]), E('th', [ _('Port') ])
-				])
-			]);
-			rows.forEach(function(row) {
-				table.appendChild(E('tr', { 'class': 'tr' }, [
-					cell(row.name), cell(row.type), cell(row.iface + ' / ' + row.proto), cell(row.ip), cell(row.port)
-				]));
-			});
-			discover.replaceChildren(table);
-		}
-
-		function displayScan(text) {
 			var result;
-			try { result = JSON.parse(text); }
+			try { result = JSON.parse(output); }
 			catch (e) {
-				lastScan.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('Scan result is not valid JSON.') ]));
+				lastNode.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('The last snapshot is invalid.') ]));
 				return;
 			}
-			var list = result.devices || [];
+			var records = Array.isArray(result.devices) ? result.devices : [];
 			var table = E('table', { 'class': 'table' }, [
 				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('Name') ]), E('th', [ _('Interface') ]),
-					E('th', [ _('Address') ]), E('th', [ _('ADB port') ])
+					E('th', [ _('Service instance') ]), E('th', [ _('Interface') ]),
+					E('th', [ _('IP') ]), E('th', [ _('Port') ])
 				])
 			]);
-			list.forEach(function(d) {
+			records.forEach(function(d) {
 				table.appendChild(E('tr', { 'class': 'tr' }, [
-					cell(d.instance), cell(d.iface), cell(d.address), cell(String(d.port))
+					cell(d.instance), cell(d.iface), cell(d.address), cell(d.port)
 				]));
 			});
-			lastScan.replaceChildren(
-				E('p', [ _('Scan timestamp: ') + (result.scanned_at
-					? new Date(result.scanned_at * 1000).toLocaleString() : '-') +
-					' / ' + _('Resolved endpoints: ') + String(result.count || 0) +
-					' / ' + _('Storage: volatile (/tmp; clears on reboot)') ]),
-				list.length ? table : E('p', [ _('No matching wireless ADB service found on the local LAN.') ])
+			lastNode.replaceChildren(
+				E('p', [ _('Last successful scan: ') + (result.scanned_at ?
+					new Date(result.scanned_at * 1000).toLocaleString() : '-') + ' | ' +
+					_('Endpoints: ') + String(records.length) ]),
+				records.length ? table : E('p', [ _('No advertised ADB TLS service was resolved.') ])
 			);
 		}
-
-		function refreshScanLog() {
-			return callScan('log').then(function(text) { scanLog.textContent = text || _('No records yet.'); });
+		function reloadLast() {
+			return snapshot().then(renderLast).catch(function() { renderLast(''); });
 		}
-
-		function scanOnce() {
-			if (scanBusy) return;
-			scanBusy = true;
-			message(_('Scanning local Android wireless debugging services…'));
-			return callScan('scan').then(function(output) {
-				displayScan(output);
-				message(_('Scan completed and snapshot cached.'));
-			}).catch(function(e) {
-				message(_('Scan failed: ') + e.message, true);
-			}).then(refreshScanLog).then(function() { scanBusy = false; },
-				function(e) { scanBusy = false; message(e.message, true); });
-		}
-
-		function refreshStatus() { return call('status').then(showStatus).catch(function(e) { message(e.message, true); }); }
-		function refreshBrowse() {
-			return call('browse', [ mode.value ]).then(function(text) {
-				showBrowse(text);
-			}).catch(function(e) {
-				discover.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ e.message ]));
-			});
-		}
-		function runService(name) {
-			message(_('Working…'));
-			return call('service', [ name ]).then(function() {
-				message(_('Service action completed.'));
-				return refreshStatus();
-			}).catch(function(e) { message(e.message, true); });
-		}
-		function action(name) {
-			if ([ 'umdns-stop', 'umdns-disable', 'dbus-stop', 'dbus-disable' ].indexOf(name) !== -1) {
-				ui.showModal(_('Confirm service change'), [
-					E('p', [ _('This action may interrupt network discovery or services that rely on D-Bus. Check active dependencies first.') ]),
-					E('p', [ _('Service action: ') + name ]),
-					E('div', { 'class': 'right' }, [
-						E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
-						E('button', { 'class': 'btn cbi-button-apply', click: function() {
-							ui.hideModal();
-							return runService(name);
-						} }, [ _('Confirm and execute') ])
-					])
-				]);
-				return;
-			}
-			return runService(name);
-		}
-		function actionButton(label, actionName, css) {
-			return E('button', { type: 'button', 'class': css || 'cbi-button',
-				click: function() { return action(actionName); } }, [ label ]);
-		}
-		var save = E('button', { type: 'button', 'class': 'cbi-button cbi-button-apply', disabled: !configReady,
-			click: function() {
-				if (!ipv4.checked && !ipv6.checked) {
-					message(_('IPv4 and IPv6 cannot both be disabled.'), true);
-					return;
-				}
-				message(_('Saving Avahi configuration…'));
-				return call('config-set', [ ipv4.checked ? 'yes' : 'no', ipv6.checked ? 'yes' : 'no',
-					interfaces.value.trim(), reflector.checked ? 'yes' : 'no', reflectIPv.checked ? 'yes' : 'no' ])
-					.then(function(text) { message(text.trim() + ' ' + _('Restart Avahi to apply the changes.')); })
-					.catch(function(e) { message(e.message, true); });
-			}
-		}, [ _('Save configuration') ]);
-
-		showStatus(data[0]);
-		displayPackages(data[2]);
-		if (data[3]) displayScan(data[3]);
-		else lastScan.replaceChildren(E('p', [ _('No on-demand scan has been performed yet.') ]));
-		scanLog.textContent = data[4] || _('No records yet.');
-		var root = E('div', {}, [
-			E('h2', [ _('Avahi / ADB Discovery') ]),
-			E('p', [ _('Discover Android Wireless debugging services on this OpenWrt LAN. The service records remain local; this application does not forward multicast over EasyTier or report anything to NAS.') ]),
-			status, error,
+		renderStatus(data[0]);
+		renderPackages(data[1]);
+		renderLast(data[2]);
+		return E('div', [
+			E('h2', [ _('Avahi / EasyADB Agent') ]),
+			E('p', [ _('Only authenticated EasyADB requests trigger mDNS discovery. This page never starts a scan.') ]),
+			noticeNode,
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Package management (APK)') ]),
-				E('p', [ _('Manage Avahi, D-Bus and umdns independently. Installation and removal are opt-in; no forced dependency removal or blanket firmware upgrade is used.') ]),
-				E('button', { type: 'button', 'class': 'cbi-button', click: refreshFeedIndexes }, [ _('Refresh package indexes') ]),
-				' ', E('button', { type: 'button', 'class': 'cbi-button', click: refreshPackages }, [ _('Refresh installed status') ]),
-				packages, E('h4', [ _('Last package operation') ]), packageLog
+				E('h3', [ _('Runtime') ]), statusNode,
+				E('h4', [ _('Avahi') ]),
+				serviceButton(_('Start'), 'start'), ' ', serviceButton(_('Stop'), 'stop'), ' ',
+				serviceButton(_('Enable at boot'), 'enable'), ' ', serviceButton(_('Disable at boot'), 'disable'),
+				E('h4', [ _('umdns') ]),
+				serviceButton(_('Start'), 'umdns-start'), ' ', serviceButton(_('Stop'), 'umdns-stop'), ' ',
+				serviceButton(_('Enable at boot'), 'umdns-enable'), ' ', serviceButton(_('Disable at boot'), 'umdns-disable'),
+				E('h4', [ _('D-Bus') ]),
+				serviceButton(_('Start D-Bus'), 'dbus-start'), ' ',
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshStatus }, [ _('Refresh status') ])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Daemon control') ]),
-				E('div', { 'class': 'cbi-page-actions' }, [
-					actionButton(_('Start'), 'start', 'cbi-button cbi-button-apply'), ' ',
-					actionButton(_('Stop'), 'stop', 'cbi-button cbi-button-reset'), ' ',
-					actionButton(_('Restart'), 'restart'), ' ',
-					actionButton(_('Enable at boot'), 'enable'), ' ',
-					actionButton(_('Disable at boot'), 'disable'), ' ',
-					E('button', { type: 'button', 'class': 'cbi-button', click: refreshStatus }, [ _('Refresh status') ]),
-					E('h4', [ _('umdns service') ]),
-					actionButton(_('Start umdns'), 'umdns-start'), ' ',
-					actionButton(_('Stop umdns'), 'umdns-stop'), ' ',
-					actionButton(_('Enable at boot'), 'umdns-enable'), ' ',
-					actionButton(_('Disable at boot'), 'umdns-disable'),
-					E('h4', [ _('D-Bus service') ]),
-					actionButton(_('Start D-Bus'), 'dbus-start'), ' ',
-					actionButton(_('Stop D-Bus'), 'dbus-stop'), ' ',
-					actionButton(_('Enable at boot'), 'dbus-enable'), ' ',
-					actionButton(_('Disable at boot'), 'dbus-disable')
-				])
+				E('h3', [ _('Latest NAS-triggered scan') ]),
+				E('p', [ _('One volatile snapshot is stored in /tmp. This page can only read it; EasyADB owns the durable device registry.') ]),
+				E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ _('Refresh displayed result') ]),
+				lastNode
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('EasyADB on-demand discovery') ]),
-				E('p', [ _('Each request triggers one local Avahi scan and returns its result. Last result and bounded event log reside only in /tmp. The authenticated RPCD /ubus endpoint is available to an explicitly provisioned EasyADB role.') ]),
-				E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: scanOnce }, [ _('Scan once and cache result') ]), ' ',
-				E('button', { type: 'button', 'class': 'cbi-button', click: function() {
-					return callScan('last').then(displayScan).catch(function(e) { message(e.message, true); });
-				} }, [ _('Load last result') ]), ' ',
-				E('button', { type: 'button', 'class': 'cbi-button', click: refreshScanLog }, [ _('Refresh scan log') ]),
-				lastScan, E('h4', [ _('Recent scan events (last 100; volatile)') ]), scanLog
+				E('h3', [ _('APK package management') ]),
+				E('p', [ _('Avahi (daemon + utilities), D-Bus and umdns are managed separately. APK resolves transitive dependencies; review simulations before changes.') ]),
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex }, [ _('Refresh repository index') ]), ' ',
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshPackages }, [ _('Refresh package status') ]),
+				packagesNode,
+				E('h4', [ _('Last package command output') ]), operationOutput
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Service discovery') ]),
-				E('p', [ _('A resolved record shows the advertised IP and current port, but it does not by itself prove that ADB pairing or TCP connectivity succeeds.') ]),
-				mode, ' ',
-				E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: refreshBrowse }, [ _('Discover now') ]),
-				discover
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Avahi configuration') ]),
-				E('p', [ _('Changes are written to the existing /etc/avahi/avahi-daemon.conf. A backup is retained. Save first, then restart Avahi manually.') ]),
-				E('p', [ E('label', [ ipv4, ' ', _('Enable IPv4') ]) ]),
-				E('p', [ E('label', [ ipv6, ' ', _('Enable IPv6') ]) ]),
-				E('p', [ E('label', [ _('Allowed interfaces (comma-separated; blank = Avahi default): '), interfaces ]) ]),
-				E('p', [ E('label', [ reflector, ' ', _('Enable mDNS reflector (off by default)') ]) ]),
-				E('p', [ E('label', [ reflectIPv, ' ', _('Reflect between IPv4 and IPv6') ]) ]),
-				E('p', [ _('For the EasyADB discovery experiment, br-lan and reflector disabled are recommended. Enabling reflection can expose mDNS advertisements across networks.') ]),
-				save
+				E('h3', [ _('API authorization') ]),
+				E('p', [ _('The existing /ubus RPCD session login and dedicated luci-avahi-easyadb read ACL gate the scan command. Provision a separate non-admin RPCD login before connecting NAS. No anonymous scan, webhook, or separate listening port is enabled.') ])
 			])
 		]);
-		discover.replaceChildren(E('p', [ _('Press Discover now for an additional diagnostic browse. No background scans are scheduled.') ]));
-		poll.add(function() { return refreshStatus(); }, 20);
-		return root;
 	},
-
 	handleSaveApply: null,
 	handleSave: null,
 	handleReset: null
