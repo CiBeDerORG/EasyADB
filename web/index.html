@@ -8,7 +8,24 @@
 *{box-sizing:border-box}body{margin:0;padding:22px 16px}main{width:100%;max-width:none;margin:0 auto}
 h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:0}p{line-height:1.5}
 .hint{color:#9baec9;font-size:13px}
-.workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px}
+.workspace{display:block;min-width:0;margin-top:16px}
+.inventory-drawer{position:fixed;left:0;top:16px;z-index:30;width:min(900px,calc(100vw - 62px));max-height:calc(100dvh - 32px);
+ transform:translateX(calc(-100% + 16px));transition:transform .22s ease;overflow:visible}
+.inventory-drawer.is-open{transform:translateX(0)}
+.inventory-drawer .inventory-panel{width:100%;max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain;
+ opacity:var(--inventory-panel-opacity,.8);border-radius:0 14px 14px 0;box-shadow:0 14px 42px #000b;
+ backdrop-filter:blur(12px);background:#172233}
+.inventory-drawer:not(.is-open) .inventory-panel{pointer-events:none}
+.inventory-toggle{position:absolute;right:-44px;top:clamp(110px,35vh,300px);height:62px;width:44px;
+ border-radius:0 12px 12px 0;border:1px solid #6886b9;border-left:0;background:#365d9b;
+ box-shadow:4px 5px 16px #0009;display:grid;place-content:center;gap:1px;font-size:21px;z-index:1}
+.inventory-toggle small{font-size:10px;line-height:1.2;font-weight:650;writing-mode:vertical-rl;letter-spacing:1px}
+.inventory-drawer.is-open .inventory-toggle{background:#214a40;border-color:#5d9e89}
+.inventory-opacity-setting{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:8px 0 0;
+ color:#c9d9f2;font-size:12px}
+.inventory-opacity-setting input{width:125px;height:22px;padding:0;accent-color:#80a4ff;cursor:pointer}
+.inventory-opacity-setting output{min-width:32px;font-variant-numeric:tabular-nums}
+@media(prefers-reduced-motion:reduce){.inventory-drawer{transition:none}}
 .inventory-title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .inventory-auth{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .inventory-auth input{width:min(245px,60vw);height:36px}
@@ -20,7 +37,7 @@ h1{font-size:28px;margin:0 0 7px}h1 span{color:#80a4ff}h2{font-size:17px;margin:
 .temp-editor button{min-height:36px}
 .inventory-panel,.stage-panel{min-width:0}
 .inventory-panel>.heading{flex-wrap:wrap}
-.stage-panel{padding:22px}
+.stage-panel{padding:22px;min-height:calc(100dvh - 150px)}
 .stage-panel>.heading{margin-bottom:12px}
 .stage-panel>.heading h2{font-size:20px}
 .stage-view{min-width:0}
@@ -188,10 +205,15 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <main>
 <header><h1>EasyADB <span>/ 远程设备工作台</span></h1><p class="hint">先在设备管理中明确选择地址并手动连接，再为任意 1～4 台已连接设备配置画质、开启投屏；每台远控分别手动启用，不自动连接或重试。</p></header>
 <div class="workspace">
- <section class="panel inventory-panel" aria-label="设备管理">
+ <div class="inventory-drawer" id="inventoryDrawer">
+ <section class="panel inventory-panel" id="inventoryPanel" aria-label="设备管理" inert>
   <div class="heading"><div><div class="inventory-title-row"><h2>设备管理</h2>
     <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载设备</button></div></div>
-    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p></div>
+    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p>
+    <label class="inventory-opacity-setting" for="inventoryOpacity">抽屉透明度
+     <input id="inventoryOpacity" type="range" min="0" max="60" step="5" value="20" aria-label="设备管理抽屉透明度">
+     <output id="inventoryOpacityValue" for="inventoryOpacity">20%</output>
+    </label></div>
    <div class="buttons" style="margin:0">
     <button class="secondary" id="newGroup" type="button" disabled>＋ 添加分组</button>
     <button id="newDevice" type="button" disabled>＋ 添加设备</button>
@@ -211,8 +233,10 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <div class="device-list" id="devices" style="margin-top:12px"></div>
   <div id="multiPicker" hidden aria-hidden="true"></div>
  </section>
+ <button id="inventoryToggle" class="inventory-toggle" type="button" aria-label="展开设备管理" aria-expanded="false" aria-controls="inventoryPanel" title="展开设备管理">☷<small>设备管理</small></button>
+ </div>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
-  <div class="heading"><div><h2>实时画面</h2><p class="hint">每路画面按对应手机实际投屏像素宽度展示；可容纳的画面尽量横向排列，空间不够时自动换行，窄屏下等比例缩小。点击画面右侧半隐藏按钮展开操作。批量停止仅影响已选设备。</p></div></div>
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理（5 秒无交互自动收起），不占用画面空间。每路画面按实际视频宽度展示，空间不足时自动换行；点击画面右侧悬浮按钮操作。</p></div></div>
   <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「批量投屏」，或在对应设备行单独开启画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
@@ -326,6 +350,60 @@ const managementSelected=new Set(); // one selection for every batch action
 let multiView=null,displayLabView=null;
 const scanningGroups=new Set(),discoveryResults=new Map();
 const groupOpen=new Map();
+const inventoryDrawer=$('inventoryDrawer'),inventoryPanel=$('inventoryPanel');
+const inventoryToggle=$('inventoryToggle'),inventoryOpacity=$('inventoryOpacity');
+let inventoryCollapseTimer=null;
+// Timer runs only while visible. Keep editing dialogs and ongoing management
+// operations available until the user can safely return to the drawer.
+function inventoryBusy(){
+ return loading||scanningGroups.size>0||
+  [...document.querySelectorAll('dialog')].some(dialog=>dialog.open);
+}
+function clearInventoryTimer(){
+ if(inventoryCollapseTimer!==null){clearTimeout(inventoryCollapseTimer);inventoryCollapseTimer=null;}
+}
+function collapseInventory(force=false){
+ if(!inventoryDrawer.classList.contains('is-open'))return;
+ if(!force&&inventoryBusy()){armInventoryTimer();return;}
+ clearInventoryTimer();
+ inventoryDrawer.classList.remove('is-open');
+ inventoryPanel.inert=true;
+ inventoryToggle.setAttribute('aria-expanded','false');
+ inventoryToggle.setAttribute('aria-label','展开设备管理');
+ inventoryToggle.title='展开设备管理';
+}
+function armInventoryTimer(){
+ clearInventoryTimer();
+ if(inventoryDrawer.classList.contains('is-open'))
+  inventoryCollapseTimer=setTimeout(()=>{inventoryCollapseTimer=null;collapseInventory();},5000);
+}
+function expandInventory(){
+ inventoryPanel.inert=false;
+ inventoryDrawer.classList.add('is-open');
+ inventoryToggle.setAttribute('aria-expanded','true');
+ inventoryToggle.setAttribute('aria-label','收起设备管理');
+ inventoryToggle.title='收起设备管理';
+ armInventoryTimer();
+}
+inventoryToggle.addEventListener('click',()=>{
+ if(inventoryDrawer.classList.contains('is-open'))collapseInventory(true);
+ else expandInventory();
+});
+for(const eventName of ['pointerdown','keydown','input','change','wheel','focusin'])
+ inventoryPanel.addEventListener(eventName,armInventoryTimer,{passive:eventName==='wheel'});
+function updateInventoryOpacity(raw){
+ const amount=Number(raw),value=Number.isFinite(amount)?
+  Math.max(0,Math.min(60,Math.round(amount/5)*5)):20;
+ inventoryOpacity.value=String(value);
+ $('inventoryOpacityValue').textContent=value+'%';
+ inventoryPanel.style.setProperty('--inventory-panel-opacity',String(1-value/100));
+ try{localStorage.setItem('easyadb.inventory-transparency',String(value));}catch{}
+}
+try{
+ const previous=localStorage.getItem('easyadb.inventory-transparency');
+ updateInventoryOpacity(previous===null?20:previous);
+}catch{updateInventoryOpacity(20);}
+inventoryOpacity.addEventListener('input',()=>updateInventoryOpacity(inventoryOpacity.value));
 function adbStatusBadge(d){
  // The selected address is not proof of an active ADB connection.
  // Display active_serial ONLY when connected; after an explicit failed
