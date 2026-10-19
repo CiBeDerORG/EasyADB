@@ -24,7 +24,7 @@ function create({dialog,getDevice,api,multiView}){
     (['a1','a2','b1','b3','cast1','cast2','cast3','castrestore'].includes(action)&&busy)||
     (action==='b1'&&(pending||castPending))||(action==='restore'&&(!pending||busy))||
     (action==='cast1'&&(pending||castPending))||
-    (['cast2','cast3','castrestore'].includes(action)&&!castPending)||
+    (action==='castrestore'&&!castPending)||
     (action==='b3'&&(!select.value||Number(select.value)===0));
   }
   $('labStop').disabled=!d||!busy;
@@ -86,7 +86,7 @@ function create({dialog,getDevice,api,multiView}){
    if(action==='b1')show(result.unchanged?'原本就是此副屏配置，未覆盖原设置。':'模拟副屏指令完成；请继续扫描和预览，不能据此判定已进入华为电脑模式。');
    else if(action==='restore')show('Overlay 已恢复；原始值：'+result.restored);
    else if(action==='cast1')show(result.cast_display?.verified?'已检测到 Type 5 CastPlusDisplay；华为是否接管仍需 B4 验证。':'辅助组件已发起创建，但未验证到符合条件的 Cast+ Display；请导出诊断。',!result.cast_display?.verified);
-   else if(action==='cast2')show('已写入模式偏好并重新创建 Cast+；必须继续验证华为 PC Mode，不能仅凭模式值判断。');
+   else if(action==='cast2')show('已备份原始模式并尝试重建 Cast+；必须继续验证华为 PC Mode，不能仅凭模式值判断。');
    else if(action==='cast3')show(result.switch_result==='permission_denied'?'华为广播权限被拒绝。':result.switch_result==='already_active'?'检测到 PC Mode 已激活，不重复切换。':'广播已发送，但不代表电脑模式启动；继续执行 B4。',result.switch_result==='permission_denied');
    else if(action==='cast4')show(result.pc_mode_evidence?'发现 PC Mode 的系统证据；还需预览原生桌面人工确认。':'尚无完整原生电脑模式证据；请查看诊断，不要将设置横屏误判为桌面。');
    else if(action==='castrestore')show('Cast+ 辅助服务已停止，原始模式设置已恢复：'+result.restored);

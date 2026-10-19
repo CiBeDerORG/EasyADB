@@ -14,6 +14,7 @@ class FakeADB:
         self.running = False
         self.permission_denied = False
         self.pc_mode = "false"
+        self.installed = True
         self.calls = []
 
     def __call__(self, *args, timeout=12):
@@ -48,7 +49,8 @@ class FakeADB:
             result = ("Permission Denial: com.huawei.permission.SWITCH_MODE"
                       if self.permission_denied else "Broadcast completed")
         elif cmd == ("shell", "pm", "path", "com.easyadb.castpluslab"):
-            result = "package:/data/app/com.easyadb.castpluslab/base.apk"
+            result = ("package:/data/app/com.easyadb.castpluslab/base.apk"
+                      if self.installed else "")
         elif cmd == ("shell", "getprop", "hw.pc.cast.mode"):
             result = self.pc_mode
         elif cmd[:2] == ("shell", "getprop"):
@@ -116,3 +118,59 @@ def test_name_alone_or_unrelated_virtual_display_not_success():
     assert not CastPlusMixin._cast_info('Display 7: mDisplayId=7\n  DisplayInfo{"Other", displayId 7, type VIRTUAL}')["verified"]
     assert not CastPlusMixin._cast_info('Display 3: mDisplayId=3\n  DisplayInfo{"CastPlusDisplay", displayId 3, type OVERLAY}')["verified"]
     assert CastPlusMixin._cast_info('Display 3: mDisplayId=3\n  DisplayInfo{"CastPlusDisplay", displayId 3, type VIRTUAL}')["display_id"] == 3
+
+
+def test_manually_installed_helper_can_run_b2_without_b1_or_nas_apk(tmp_path):
+    adb = FakeADB()
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    assert not lab.cast_apk.is_file()
+    assert lab.cast_capabilities(adb.serial)["helper_installed"]
+    outcome = lab.cast_auto("mate", adb.serial)
+    assert outcome["cast_display"]["verified"]
+    assert outcome["pending_castplus"]["previous_mode"] == "0"
+    assert outcome["pending_castplus"]["applied_mode"] == "1"
+    assert adb.mode == "1"
+    assert not any(call[2:4] == ("install", "-r") for call in adb.calls)
+    restarted = DisplayLab(adb, tmp_path / "manual.json")
+    assert restarted.has_pending("mate")
+    assert restarted.cast_restore("mate", adb.serial)["restored"] == "0"
+    assert adb.mode == "0" and not restarted.has_pending("mate")
+
+
+def test_manual_b2_missing_helper_fails_without_changing_mode(tmp_path):
+    adb = FakeADB()
+    adb.installed = False
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    assert not lab.cast_capabilities(adb.serial)["helper_installed"]
+    with pytest.raises(CastError, match="安装"):
+        lab.cast_auto("mate", adb.serial)
+    assert adb.mode == "0"
+    assert not lab.has_pending("mate")
+    assert not (tmp_path / "manual.json.castplus").exists()
+
+
+def test_manual_b3_requires_real_cast_display_but_not_b1_record(tmp_path):
+    adb = FakeADB()
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    with pytest.raises(CastError, match="Type 5"):
+        lab.cast_switch("mate", adb.serial)
+    adb.running = True  # Manually launched installed auxiliary service.
+    adb.permission_denied = True
+    result = lab.cast_switch("mate", adb.serial)
+    assert result["switch_result"] == "permission_denied"
+    assert not lab.has_pending("mate")  # A broadcast alone owns no mode changes.
+    assert adb.mode == "0"
+    assert not any(call[2:4] == ("install", "-r") for call in adb.calls)
+
+
+def test_manual_b2_preserves_foreign_recovery_record_and_serial(tmp_path):
+    adb = FakeADB()
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    lab.pending["mate"] = {"serial": adb.serial, "previous": "null", "applied": "1920x1080/240"}
+    with pytest.raises(CastError, match="Overlay"):
+        lab.cast_auto("mate", adb.serial)
+    assert not lab.cast_pending
+    lab.pending.clear()
+    lab.cast_auto("mate", adb.serial)
+    with pytest.raises(CastError, match="原始 ADB"):
+        lab.cast_auto("mate", "other:5555")

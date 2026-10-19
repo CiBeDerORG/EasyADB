@@ -238,10 +238,14 @@ assert.deepEqual(resolutionGroup.children.map(x=>x.value),[
  'exp:1440x1080','exp:1440x900','exp:1366x768'
 ]);
 assert.equal(quality(0,'max_size').value,'960');
+const normalDpi=quality(0,'dpi');normalDpi.value='320';normalDpi.fire('change');
+assert.equal(multi.getChoice('id-1').dpi,320,'normal mode remembers DPI but does not alter Android');
+assert.equal(multi.getChoice('id-2').dpi,240);
+const defaultDpi=quality(0,'dpi');defaultDpi.value='240';defaultDpi.fire('change');
 assert.equal(quality(0,'video_bit_rate').value,'3000000');
 assert.equal(quality(0,'max_fps').value,'24');
 assert.equal(quality(0,'dpi').value,'240');
-assert.equal(quality(0,'dpi').disabled,true,'DPI is virtual display only');
+assert.equal(quality(0,'dpi').disabled,false,'DPI preference can be selected in normal mode');
 assert.equal(quality(1,'max_size').value,'960');
 assert.equal(quality(1,'video_bit_rate').value,'3000000');
 assert.equal(quality(1,'max_fps').value,'24');
@@ -759,7 +763,7 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').experimental_resolution,null);
  assert.equal(multi.getChoice('id-1').max_size,1600);
  assert.equal(playback(0).children[1].children[0].disabled,false);
- assert.equal(quality(0,'dpi').disabled,true,'normal main-display mirroring cannot override phone DPI');
+ assert.equal(quality(0,'dpi').disabled,false,'normal mode retains selectable DPI preference');
  console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
  console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
   console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');

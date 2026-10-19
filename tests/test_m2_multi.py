@@ -221,6 +221,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="tempDialog"' in html
         assert "multiView.projectionButton(d)" in html
         assert "change.title='编辑 '+d.name" in html
+        assert "title.append(change)" in html and "item.append(primary,change)" not in html
+        assert "if(multiView)title.append(multiView.projectionButton(d))" in html
+        assert "name.append(model)" in html and "name.tabIndex=0" in html
+        assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "const connect=action('连接'" not in html
         assert "$('load').addEventListener('click',loadAndConnect)" in html
         assert "if(current.selected_route!==route)" in html

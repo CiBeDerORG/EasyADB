@@ -154,8 +154,9 @@ class MultiView{
      ?resolutionChoice(value.experimental_resolution?'exp:'+value.experimental_resolution:value.max_size)
      :choice(CUSTOM[key],value[key]);
     sel.setAttribute('aria-label',d.name+' '+label);
-    sel.disabled=busy||!connected||(key==='dpi'&&!value.experimental_resolution);
-    if(key==='dpi'&&!value.experimental_resolution)sel.title='仅实验性虚拟屏幕支持指定 DPI；普通投屏不修改手机系统 DPI';
+    // DPI is always selectable as a per-device preference; only a new
+    // virtual display sends it to scrcpy. Never change Android wm density.
+    sel.disabled=busy||!connected;
     sel.addEventListener('change',()=>{
      if(key==='max_size'){
       const experimental=sel.value.startsWith('exp:')?sel.value.slice(4):null;

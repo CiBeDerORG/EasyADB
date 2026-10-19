@@ -103,13 +103,15 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .management-bar input,.management-check input{width:17px;height:17px;flex:none}
 .management-check{padding-top:2px;flex:none}.item-top .item-info{flex:1;min-width:0}
 .device-title{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:6px;min-width:0;margin-bottom:4px}
-.item-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}
-.device-model{font-size:12px;color:#aab8cd;overflow-wrap:anywhere}
+.item-name{position:relative;display:inline-flex;align-items:center;font-weight:700;font-size:14px;overflow-wrap:anywhere;min-width:0}
+.device-model-tooltip{display:none;position:absolute;z-index:18;bottom:calc(100% + 9px);left:0;max-width:min(300px,70vw);min-width:max-content;padding:6px 10px;border-radius:7px;border:1px solid #7691ba;background:#263b57;color:#d9e8ff;font-weight:500;font-size:12px;line-height:1.3;white-space:normal;box-shadow:0 5px 18px #0009;pointer-events:none}
+.item-name:hover .device-model-tooltip,.item-name:focus .device-model-tooltip,.item-name:focus-within .device-model-tooltip{display:block}
+.device-model-tooltip::after{content:"";position:absolute;left:14px;top:100%;border:5px solid transparent;border-top-color:#7691ba}
 .device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
 .device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
-.device-edit-icon{position:absolute;top:8px;right:8px;z-index:1;width:28px;height:28px;min-height:28px;padding:2px;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:7px;font-size:16px}
+.device-edit-icon{position:static;flex:none;z-index:1;width:28px;height:28px;min-height:28px;padding:2px;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:7px;font-size:16px}
 .device-title{padding-right:32px}
-.device-projector{display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
+.device-projector{position:absolute;top:8px;right:8px;z-index:2;display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
 .device-projector.starting,.device-projector.queued,.device-projector.stopping{background:#574424;border-color:#aa8743;color:#ffe09c}
 .device-projector.ready,.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
 .device-projector:disabled{opacity:.55;cursor:not-allowed}
@@ -360,7 +362,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    </div>
   </section>
   <section class="lab-section"><h3>B 组 · 华为原生电脑模式模拟（Cast+）</h3>
-   <p class="hint">独立辅助 APK 仅创建名称为 CastPlusDisplay 的 Type 5 测试虚拟屏，不是 Miracast/Cast+ 协议实现，也不保证华为接管。需先从仓库手动构建 APK，放到 data/storage/castplus-lab.apk；不需要 ROOT。每步都手动触发，执行前停止本设备实时画面。</p>
+   <p class="hint">独立辅助 APK 仅创建名称为 CastPlusDisplay 的 Type 5 测试虚拟屏，不是 Miracast/Cast+ 协议实现，也不保证华为接管。可先在手机手动安装 APK，再直接执行 B2/B3；只有 B1 自动安装才需要将 APK 放到 data/storage/castplus-lab.apk。不需要 ROOT。每步手动触发，执行前停止本设备实时画面。</p>
    <div class="buttons">
     <button type="button" data-lab-action="cast1">B1 · 安装辅助组件并创建 CastPlusDisplay</button>
     <button type="button" class="secondary" data-lab-action="cast2">B2 · 设置桌面偏好并重建屏幕</button>
@@ -629,10 +631,21 @@ function render(){
    managementLabel.append(managementCheck,elem('span','','选择'));
    const primary=elem('div','device-primary'),addressRows=[];
    const title=elem('div','device-title');
-   title.append(elem('span','item-name',d.name));
-   if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
+   const name=elem('span','item-name',d.name);
+   if(d.model){
+    name.tabIndex=0;
+    name.setAttribute('aria-label',d.name+'，设备型号 '+d.model);
+    const model=elem('span','device-model-tooltip','型号：'+d.model);
+    model.setAttribute('role','tooltip');name.append(model);
+   }
+   title.append(name);
    if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
    title.append(elem('span','device-port','ADB '+d.port));
+   const change=action('✎',()=>edit(d.id),'device-edit-icon');
+   change.title='编辑 '+d.name;
+   change.setAttribute('aria-label','编辑设备 '+d.name);
+   change.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+   title.append(change);
    if(multiView)title.append(multiView.projectionButton(d));
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
@@ -675,11 +688,7 @@ function render(){
    const labButton=action('电脑模式实验',()=>displayLabView.open(d.id),'secondary');
    actions.append(labButton);
    labButton.disabled=loading||!loaded;
-   const change=action('✎',()=>edit(d.id),'device-edit-icon');
-   change.title='编辑 '+d.name;
-   change.setAttribute('aria-label','编辑设备 '+d.name);
-   change.disabled=loading||locked;
-   primary.append(actions);item.append(primary,change);
+   primary.append(actions);item.append(primary);
    const quality=elem('div','device-quality');
    const row=qualityRows.get(d.id);
    if(row){row.prepend(adbStatusBadge(d));quality.append(row);}

@@ -54,6 +54,12 @@ class CastPlusMixin:
     def _mode(self, serial):
         return self._cmd(serial, "settings", "get", "secure", "selected-proj-mode")
 
+    def _helper_installed(self, serial):
+        # Manually installed packages are sufficient; NAS apk storage is only
+        # needed for B1's explicit install action.
+        return any(line.startswith("package:") for line in
+                   self._cmd(serial, "pm", "path", PACKAGE).splitlines())
+
     def cast_capabilities(self, serial):
         props = {}
         for key in ("hw_mc.multiscreen.mdms.value", "hw_pc_support_overlay",
@@ -62,7 +68,7 @@ class CastPlusMixin:
             props[key] = self._cmd(serial, "getprop", key)
         return {"properties": props, "selected_proj_mode": self._mode(serial),
                 "helper_apk_ready": self.cast_apk.is_file(),
-                "helper_installed": PACKAGE in self._cmd(serial, "pm", "path", PACKAGE)}
+                "helper_installed": self._helper_installed(serial)}
 
     @staticmethod
     def _cast_info(raw, before=()):
@@ -151,15 +157,36 @@ class CastPlusMixin:
     def cast_auto(self, device_id, serial):
         with self.lock:
             record = self.cast_pending.get(device_id)
-            if not record or record["serial"] != serial:
-                raise CastError("请先在当前线路执行华为 B1")
+            if record and record["serial"] != serial:
+                raise CastError("请切回已有 Cast+ 实验的原始 ADB 线路")
+            if not record:
+                if device_id in self.pending:
+                    raise CastError("本设备有待恢复的 Overlay 实验，请先恢复后执行 B2")
+                if not self._helper_installed(serial):
+                    raise CastError("未检测到已安装的 Cast+ 辅助 APK；请先手动安装或执行 B1")
+                original = self._mode(serial)
+                if not SAFE_MODE.fullmatch(original):
+                    raise CastError("无法安全备份当前桌面模式设置；未执行 B2")
+                record = {"serial": serial, "previous_mode": original, "applied_mode": None}
+                self.cast_pending[device_id] = record
+                try:
+                    self._save_cast()  # Own a recovery record BEFORE changing settings.
+                except OSError:
+                    del self.cast_pending[device_id]
+                    raise CastError("无法保存 B2 原始设置；未修改手机") from None
+                self._log(device_id, "华为 B2", serial,
+                          "手动安装接入；已备份原始模式 " + original)
             current = self._mode(serial)
-            allowed = {record["previous_mode"], record.get("applied_mode")}
-            if current not in allowed:
+            if current not in {record["previous_mode"], record.get("applied_mode")}:
                 raise CastError("模式设置已由其他操作改变；拒绝覆盖")
             before = self.scan(serial)["display_ids"]
+            previous_applied = record.get("applied_mode")
             record["applied_mode"] = "1"
-            self._save_cast()  # Remember restoration requirement before applying setting.
+            try:
+                self._save_cast()
+            except OSError:
+                record["applied_mode"] = previous_applied
+                raise CastError("无法持久化 B2 恢复记录；未修改手机") from None
             self._cmd(serial, "settings", "put", "secure", "selected-proj-mode", "1")
             if self._mode(serial) != "1":
                 raise CastError("设备拒绝 selected-proj-mode=1；保留恢复记录")
@@ -175,8 +202,12 @@ class CastPlusMixin:
     def cast_switch(self, device_id, serial):
         with self.lock:
             record = self.cast_pending.get(device_id)
-            if not record or record["serial"] != serial:
-                raise CastError("请先在当前线路执行华为 B1")
+            if record and record["serial"] != serial:
+                raise CastError("请切回已有 Cast+ 实验的原始 ADB 线路")
+            # A manually started helper can already own a CastPlusDisplay
+            # without B1/B2. Require device-side installation AND Type 5 evidence.
+            if not self._helper_installed(serial):
+                raise CastError("未检测到已安装的 Cast+ 辅助 APK")
             result = self.cast_scan(serial)
             if not result["cast_display"]["verified"]:
                 raise CastError("未验证到 Type 5 CastPlusDisplay，禁止发送模式切换广播")
