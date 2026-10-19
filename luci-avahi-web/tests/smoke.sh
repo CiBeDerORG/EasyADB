@@ -3,6 +3,8 @@ set -eu
 cd "$(dirname "$0")/.."
 node --check htdocs/luci-static/resources/view/avahi-web/overview.js
 sh -n root/usr/libexec/luci-avahi-web
+sh -n root/usr/libexec/luci-avahi-scan
+test -x root/usr/libexec/luci-avahi-scan
 sh -n scripts/build-ipk.sh
 sh -n scripts/build-apk-sdk.sh
 test -x root/usr/libexec/luci-avahi-web
@@ -15,14 +17,20 @@ acl=json.loads((root/'rpcd/acl.d/luci-app-avahi-web.json').read_text())
 assert menu['admin/services/avahi-web']['depends']['acl']==['luci-app-avahi-web']
 assert menu['admin/services/avahi-web']['action']['path']=='avahi-web/overview'
 assert 'luci-app-avahi-web' in acl
+assert 'luci-avahi-easyadb' in acl
+assert 'unauthenticated' not in acl
+assert sorted(acl['luci-avahi-easyadb']['read']['file']) == sorted(['/usr/libexec/luci-avahi-scan scan', '/usr/libexec/luci-avahi-scan last'])
+assert '/usr/libexec/luci-avahi-scan scan' in acl['luci-app-avahi-web']['read']['file']
 assert '/usr/libexec/luci-avahi-web package list' in acl['luci-app-avahi-web']['read']['file']
 assert '/usr/libexec/luci-avahi-web package plan *' in acl['luci-app-avahi-web']['read']['file']
 assert '/usr/libexec/luci-avahi-web package apply *' in acl['luci-app-avahi-web']['write']['file']
 assert '/usr/libexec/luci-avahi-web package refresh' in acl['luci-app-avahi-web']['write']['file']
 makefile=pathlib.Path('Makefile').read_text()
 assert '+avahi-dbus-daemon' not in makefile and '+avahi-utils' not in makefile
+assert '+uhttpd-mod-ubus' in makefile and '+libubox' in makefile
 js=pathlib.Path('htdocs/luci-static/resources/view/avahi-web/overview.js').read_text()
 assert 'function planPackage(' in js and 'function displayPackages(' in js
+assert 'function scanOnce(' in js and "callScan('last')" in js
 assert "[ 'apply', operation, target ]" in js and "[ 'refresh' ]" in js
 PY
 TEMP=$(mktemp -d)
@@ -105,8 +113,8 @@ if "$TEMP/helper" package apply remove dbus --force >/dev/null 2>&1; then
     echo 'Extra APK flag accepted' >&2; exit 1
 fi
 sh scripts/build-ipk.sh
-ar t dist/luci-app-avahi-web_0.2.0-1_all.ipk | grep -qx 'data.tar.gz'
-ar p dist/luci-app-avahi-web_0.2.0-1_all.ipk control.tar.gz | tar -xzOf - ./control | grep -qx 'Depends: luci-base, rpcd-mod-file'
+ar t dist/luci-app-avahi-web_0.3.0-1_all.ipk | grep -qx 'data.tar.gz'
+ar p dist/luci-app-avahi-web_0.3.0-1_all.ipk control.tar.gz | tar -xzOf - ./control | grep -qx 'Depends: luci-base, rpcd-mod-file, libubox, uhttpd-mod-ubus'
 ! "$TEMP/helper" service umdns-reboot >/dev/null 2>&1
 ! "$TEMP/helper" service dbus-reboot >/dev/null 2>&1
 echo 'smoke tests passed'
