@@ -74,8 +74,11 @@ package_list() {
     require_apk
     for pkg in avahi-dbus-daemon avahi-utils dbus umdns; do
         if "$APK" info -e "$pkg" >/dev/null 2>&1; then
-            # This is display-only; never shell-evaluate the version.
-            version=$("$APK" info -v "$pkg" 2>/dev/null | sed -n '1p' || true)
+            # apk v3: info -v means VERBOSE and can emit the entire English
+            # description, not a version. Manifest is strictly name + version.
+            version=$("$APK" list --installed --manifest "$pkg" 2>/dev/null |
+                awk -v wanted="$pkg" '$1 == wanted && NF == 2 && $2 ~ /^[0-9A-Za-z][0-9A-Za-z._+~:-]*$/ { print $2; exit }' || true)
+            [ -n "$version" ] || version=-
             printf '%s\tinstalled\t%s\n' "$pkg" "$version"
         else
             printf '%s\tabsent\t-\n' "$pkg"
