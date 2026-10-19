@@ -3,7 +3,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
 const source=fs.readFileSync('htdocs/luci-static/resources/view/avahi-web/overview.js','utf8');
 assert.ok(!source.includes("'require poll'")&&!source.includes('poll.add('));
 let modal,scanCalls=0,authCalls=0,applyCalls=0,failStatusOnce=false,browseInstalled=false;
-const running={avahi:true,dbus:true,umdns:true},boot={avahi:true,dbus:true,umdns:true};
+const running={avahi:true,dbus:true},boot={avahi:true,dbus:true};
 function E(tag,attrs,kids) {
  if(Array.isArray(attrs)||attrs==null||typeof attrs==='string'){kids=attrs;attrs={};}
  const n={tag,props:attrs||{},children:kids==null?[]:Array.isArray(kids)?kids:[kids],
@@ -14,12 +14,12 @@ function E(tag,attrs,kids) {
 function walk(v,fn){if(Array.isArray(v))return v.forEach(x=>walk(x,fn));if(v==null||typeof v!=='object')return;if(v.tag)fn(v);walk(v.children,fn);}
 function txt(v){if(Array.isArray(v))return v.map(txt).join(' ');if(v==null)return '';if(typeof v!=='object')return String(v);return txt(v.children);}
 function btn(v,label){const r=[];walk(v,n=>{if(n.tag==='button'&&txt(n)===label)r.push(n);});return r;}
-function packages(){return ['avahi-dbus-daemon\tinstalled\t1.1-r1','avahi-utils\t'+(browseInstalled?'installed\t1.1-r1':'absent\t-'),'dbus\tinstalled\t1.0-r1','umdns\tinstalled\t1.0-r1'].join('\n');}
+function packages(){return ['avahi-dbus-daemon\tinstalled\t1.1-r1','avahi-utils\t'+(browseInstalled?'installed\t1.1-r1':'absent\t-'),'dbus\tinstalled\t1.0-r1'].join('\n');}
 function status(){return [
- 'running='+(running.avahi?'yes':'no'),'dbus='+(running.dbus?'yes':'no'),'umdns='+(running.umdns?'yes':'no'),
- 'avahi-daemon-bin=yes','avahi-browse-bin='+(browseInstalled?'yes':'no'),'umdns-bin=yes','dbus-bin=yes',
- 'avahi-daemon-init=yes','dbus-init=yes','umdns-init=yes',
- 'avahi-daemon-enabled='+(boot.avahi?'yes':'no'),'umdns-enabled='+(boot.umdns?'yes':'no'),'dbus-enabled='+(boot.dbus?'yes':'no')].join('\n');}
+ 'running='+(running.avahi?'yes':'no'),'dbus='+(running.dbus?'yes':'no'),
+ 'avahi-daemon-bin=yes','avahi-browse-bin='+(browseInstalled?'yes':'no'),'dbus-bin=yes',
+ 'avahi-daemon-init=yes','dbus-init=yes',
+ 'avahi-daemon-enabled='+(boot.avahi?'yes':'no'),'dbus-enabled='+(boot.dbus?'yes':'no')].join('\n');}
 const calls=[],snapshot=JSON.stringify({status:'ok',scanned_at:1792400000,count:1,devices:[{instance:'adb-1',iface:'br-lan',address:'192.168.1.5',port:37555}]});
 const rpc={exec:function(program,args){
  calls.push([program,args]);
@@ -36,7 +36,7 @@ const rpc={exec:function(program,args){
   return Promise.resolve({code:0,stdout:status()});
  }
  if(args[0]==='service'){
-  const name=args[1],key=name.startsWith('umdns-')?'umdns':name.startsWith('dbus-')?'dbus':'avahi';
+  const name=args[1],key=name.startsWith('dbus-')?'dbus':'avahi';
   const op=name.includes('-')?name.slice(name.indexOf('-')+1):name;
   if(op==='start')running[key]=true;
   else if(op==='stop')running[key]=false;
@@ -61,10 +61,10 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  const data=await view.load();assert.equal(calls.length,4);
  const page=view.render(data);assert.equal(scanCalls,0);
  const cards=[];walk(page,n=>{if(String(n.props?.class||'').includes('avahi-component-card'))cards.push(n);});
- assert.equal(cards.length,3);
+ assert.equal(cards.length,2);
+ assert.ok(!source.includes('umdns'),'No umdns front-end code should remain');
  assert.ok(!txt(page).includes('avahi-dbus-daemon'),'Installed packages should not be expanded');
  assert.ok(txt(page).includes('缺少软件包：avahi-utils'));
- assert.ok(txt(page).includes('这不等于已经发生 UDP 5353'));
  for(const label of ['补齐安装','更新','停止','关闭自启','卸载','立即发现 ADB'])
   assert.ok(btn(page,label).some(b=>!b.disabled),'Must be clickable: '+label);
  assert.ok(btn(page,'停止').every(b=>b.props.disabled===null),'Boolean attribute false must be absent');
@@ -83,5 +83,5 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  assert.equal(applyCalls,1);assert.ok(txt(page).includes('安装完整'));assert.equal(btn(page,'补齐安装').length,0);
  btn(page,'创建专用账号')[0].props.click();await confirm();
  assert.equal(authCalls,1);assert.ok(!btn(page,'创建专用账号')[0].disabled);
- assert.equal(scanCalls,1);console.log('LuCI unified actions and manual scan interactions passed');
+ assert.equal(scanCalls,1);console.log('Two-component LuCI actions and manual scan interactions passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
