@@ -11,6 +11,13 @@ function create({dialog,getDevice,api,multiView}){
   const d=current&&getDevice(current),connected=Boolean(d&&d.status==='connected'&&
    d.selected_serial&&d.active_serial===d.selected_serial&&!d.connect_failed);
   const busy=Boolean(d&&multiView.isBusyFor(d.id));
+  const chosen=select.value;
+  select.replaceChildren();
+  for(const id of ids.filter(id=>id>0)){
+   const option=document.createElement('option');option.value=String(id);
+   option.textContent='Display '+id;select.append(option);
+  }
+  if(ids.includes(Number(chosen)))select.value=chosen;
   for(const b of dialog.querySelectorAll('[data-lab-action]')){
    const action=b.dataset.labAction;
    b.disabled=working||!connected||
@@ -22,13 +29,6 @@ function create({dialog,getDevice,api,multiView}){
   }
   $('labStop').disabled=!d||!busy;
   $('labPending').textContent=[pending?'Overlay 副屏待恢复':'',castPending?'Cast+ 实验待恢复':''].filter(Boolean).join('；')||'暂无待恢复设置';
-  const chosen=select.value;
-  select.replaceChildren();
-  for(const id of ids.filter(id=>id>0)){
-   const option=document.createElement('option');option.value=String(id);
-   option.textContent='Display '+id;select.append(option);
-  }
-  if(ids.includes(Number(chosen)))select.value=chosen;
   const output=report.slice(-40).map(x=>'['+x.at+'] '+x.action+' · '+x.detail);
   logs.textContent=output.join('\n')||'暂无操作记录';
   raw.textContent=excerpt||'尚未扫描显示器';
