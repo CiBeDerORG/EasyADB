@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 node --check htdocs/luci-static/resources/view/avahi-web/overview.js
 sh -n root/usr/libexec/luci-avahi-web
 sh -n scripts/build-ipk.sh
+sh -n scripts/build-apk-sdk.sh
+test -x root/usr/libexec/luci-avahi-web
 sh -n scripts/check-router.sh
 python3 - <<'PY'
 import json, pathlib
