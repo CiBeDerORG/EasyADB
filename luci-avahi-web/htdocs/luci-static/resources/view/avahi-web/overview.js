@@ -50,7 +50,7 @@ return view.extend({
 	},
 	render: function(data) {
 		var componentsNode = E('div'), summaryNode = E('div');
-		var lastNode = E('div'), noticeNode = E('div');
+		var lastNode = E('div'), noticeNode = E('div'), scanFeedback = E('div');
 		var authStateNode = E('div'), authCredentialNode = E('div');
 		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
 		var operationDetails = E('details', { style: 'margin-top:12px;' }, [
@@ -424,10 +424,19 @@ return view.extend({
 				records.length ? table : E('p', [ _('本次未发现已发布的 ADB TLS 服务。') ])
 			);
 		}
+		function scanMessage(message, error) {
+			scanFeedback.replaceChildren(
+				E('p', { role: 'status', style: 'margin:9px 0;overflow-wrap:anywhere;color:' +
+					(error ? '#ac342b' : 'var(--text-color-high,#28673a)') + ';' }, [ message ])
+			);
+		}
 		function reloadLast() {
-			return snapshot().then(renderLast).catch(function(e) {
+			return snapshot().then(function(output) {
+				renderLast(output);
+				scanMessage('已读取最近一次发现记录。', false);
+			}).catch(function(e) {
 				renderLast('');
-				alert('读取最近结果失败：' + e.message, true);
+				scanMessage('无法读取最近记录：' + e.message, true);
 			});
 		}
 		function scanOnce() {
@@ -435,15 +444,19 @@ return view.extend({
 			scanBusy = true;
 			scanButton.disabled = true;
 			scanButton.textContent = '正在发现…';
+			scanMessage('正在执行一次 Avahi 发现，请稍候（最多约 8 秒）……', false);
 			return scan().then(function(output) {
+				var result = JSON.parse(output);
+				if (result.status !== 'ok' || !Array.isArray(result.devices))
+					throw new Error('扫描返回数据格式不正确');
 				renderLast(output);
-				alert('已完成一次本地 ADB 无线调试服务发现，结果已更新。');
-			}, function(e) {
-				alert('发现失败：' + e.message + '。请确认 Avahi 已启动且 avahi-utils 已安装。', true);
+				scanMessage('发现完成：本次检测到 ' + result.devices.length + ' 个 ADB 端点。', false);
+			}).catch(function(e) {
+				scanMessage('发现失败：' + e.message, true);
 			}).then(function() {
 				scanBusy = false;
 				scanButton.textContent = '立即发现 ADB';
-				scanButton.disabled = false;
+				scanButton.disabled = locked();
 			});
 		}
 		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
@@ -490,7 +503,7 @@ return view.extend({
 					E('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, [ scanButton,
 						E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ '刷新结果' ]) ])
 				]),
-				lastNode
+				scanFeedback, lastNode
 			])
 		]);
 	},
