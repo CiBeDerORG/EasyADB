@@ -43,7 +43,8 @@ First gather read-only router details:
 ```sh
 apk --version
 apk --print-arch
-cat /etc/apk/repositories
+ls -la /etc/apk/repositories.d
+cat /etc/apk/repositories.d/*.list
 cat /etc/openwrt_release
 ```
 
