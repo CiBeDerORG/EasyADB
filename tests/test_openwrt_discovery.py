@@ -281,7 +281,7 @@ def test_authorization_test_without_lan_prefix_never_applies_ports(monkeypatch, 
         scan = client.post("/api/groups/Home/discovery/scan", headers=AUTH)
         assert scan.status_code == 409 and "内网 IP 前缀" in scan.json()["detail"]
         assert client.get("/api/groups/Home/discovery/last", headers=AUTH).json()["last"] is None
-        assert calls == ["login", "exec", "exec"]
+        assert calls == ["login", "exec"], "Formal scan without LAN prefix must not call OpenWrt"
 
 
 def test_unconfigured_not_exposed_and_unauthorized_does_not_scan(monkeypatch, tmp_path):
