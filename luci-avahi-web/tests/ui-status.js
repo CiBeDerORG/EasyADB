@@ -142,6 +142,14 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  await btn(page,'复制密钥')[0].props.click();
  assert.equal(clipboardValue,SECRET,'Copy button should copy the actual generated credential');
  assert.ok(txt(page).includes('密钥已复制'));
+ // HTTP-only OpenWrt pages may not expose navigator.clipboard. Test the
+ // manual-selection fallback so users can still copy their one-time key.
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
+ let selected=false;
+ globalThis.window={getSelection:function(){return {removeAllRanges:function(){},addRange:function(){selected=true;}};}};
+ globalThis.document={createRange:function(){return {selectNodeContents:function(node){assert.equal(txt(node),SECRET);}};},execCommand:function(cmd){assert.equal(cmd,'copy');return false;}};
+ await btn(page,'复制密钥')[0].props.click();
+ assert.ok(selected);assert.ok(txt(page).includes('Ctrl+C'));
  // A failed rotation must leave the earlier visible key intact.
  authSuccess=false;
  btn(page,'重新生成密钥')[0].props.click();await confirm();
