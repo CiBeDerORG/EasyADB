@@ -164,8 +164,7 @@ chmod +x "$TEMP/mock-auth"
 grep -qx 'state=managed' "$TEMP/create.out"
 first=$(sed -n 's/^password=//p' "$TEMP/create.out")
 [ "$(printf %s "$first" | wc -c)" -eq 64 ]
-printf %s "$first" | grep -Eq '^[a-f0-9]{64}
-
+printf %s "$first" | grep -Eq '^[a-f0-9]{64}$'
 "$TEMP/mock-auth" status | grep -qx 'state=managed'
 ! "$TEMP/mock-auth" status | grep -q '^password='
 python3 - <<'PY'
@@ -174,8 +173,7 @@ data=json.load(open(os.environ['MOCK_UCI_STATE']))
 assert data['username']=='easyadb'
 assert data['read']=='luci-avahi-easyadb'
 assert 'write' not in data
-assert data['password'].startswith('$6
-)
+assert data['password'].startswith('$6$')
 PY
 "$TEMP/mock-auth" rotate > "$TEMP/rotate.out"
 second=$(sed -n 's/^password=//p' "$TEMP/rotate.out")
