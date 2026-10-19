@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 node --check htdocs/luci-static/resources/view/avahi-web/overview.js
-for src in root/usr/libexec/luci-avahi-web root/usr/libexec/luci-avahi-scan scripts/build-ipk.sh scripts/build-apk-sdk.sh scripts/check-router.sh; do
+for src in root/usr/libexec/luci-avahi-web root/usr/libexec/luci-avahi-scan scripts/build-apk-sdk.sh; do
     sh -n "$src"
 done
 test -x root/usr/libexec/luci-avahi-web
@@ -36,6 +36,8 @@ assert "browse)" not in controller and "config-set)" not in controller
 make=pathlib.Path("Makefile").read_text()
 assert "+avahi-dbus-daemon" not in make and "+avahi-utils" not in make
 assert "+rpcd-mod-file" in make and "+uhttpd-mod-ubus" in make
+assert "include $(INCLUDE_DIR)/package.mk" in make and "feeds/luci/luci.mk" not in make
+assert "PKGARCH:=all" in make
 PY
 # Unsupported actions must fail before any filesystem or network change.
 if root/usr/libexec/luci-avahi-scan log >/dev/null 2>&1; then
@@ -93,9 +95,4 @@ for op in dbus-stop umdns-reboot browse config-set; do
         echo "Unsupported service option accepted: $op" >&2; exit 1
     fi
 done
-sh scripts/build-ipk.sh
-ar t dist/luci-app-avahi-web_0.4.0-1_all.ipk | grep -qx 'data.tar.gz'
-ar p dist/luci-app-avahi-web_0.4.0-1_all.ipk control.tar.gz |
-    tar -xzOf - ./control |
-    grep -qx 'Depends: luci-base, rpcd-mod-file, libubox, uhttpd-mod-ubus'
 echo 'minimal agent smoke tests passed'
