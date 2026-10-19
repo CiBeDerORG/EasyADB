@@ -1,6 +1,6 @@
 # M3 · OpenWrt 授权发现接入（EasyADB NAS 端）
 
-实现分支：feat/m3-openwrt-discovery。OpenWrt LuCI APK v0.6.0 端保持不变。
+实现分支：feat/m3-openwrt-discovery。OpenWrt 需使用 LuCI APK v0.6.1 或以上：NAS 专用 ACL 同时包含 HTTP ubus.file.exec 方法许可及固定扫描脚本的精确执行许可。
 
 ## 职责及连接
 
@@ -45,3 +45,9 @@
 4. 实机验证 EasyTier 到 OpenWrt /ubus 的连通性，以及 NAS 到手机内网 IP:新端口的实际路由。**发现成功不等于 ADB 可连接。** 它也不会修复 EasyTier 子网路由、防火墙或安卓无线调试授权。
 
 自动化测试使用模拟 RPCD 与 ADB，不代表已经使用真实路由器账号完成 NAS 联调。
+
+## v0.6.1 专用 ACL 与 NAS RPCD 错误处理
+
+OpenWrt v0.6.0 的 NAS 专用角色漏配 `read.ubus.file=["exec"]`：`uhttpd-mod-ubus` 会先以 `session.access(object=file,function=exec)` 校验 HTTP ubus 方法权限，即使角色已拥有 `read.file["/usr/libexec/luci-avahi-scan scan"]=["exec"]`，也可能在到达扫描脚本前得到 JSON-RPC `-32002 Access denied`。v0.6.1 补充 `ubus.file.exec`，脚本执行仍仅允许固定命令和 `scan` 参数，其他权限不变。升级 APK 无需轮换专用密码。
+
+EasyADB 不再将 JSON-RPC `error` 统一归为「RPCD 返回协议错误」：按 `session.login`、`file.exec` 区分阶段，报告公开错误码及诊断方向，不记录专用密码、会话令牌或完整原始 RPCD 响应。NAS 与路由器需分别升级后再按组点击「测试授权」及「立即发现 ADB」。
