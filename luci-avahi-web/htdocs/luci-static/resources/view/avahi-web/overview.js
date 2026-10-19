@@ -327,6 +327,7 @@ return view.extend({
 			]);
 		}
 		function renderAuth(output) {
+			authOutput = output;
 			var current = values(output);
 			var state = current.state || 'error';
 			var text = state === 'managed'
@@ -355,49 +356,67 @@ return view.extend({
 		function authButton(label, action, disabled) {
 			return E('button', { type: 'button',
 				'class': action === 'revoke' ? 'cbi-button cbi-button-negative' : 'cbi-button',
-				disabled: disabled,
-				click: function() { return confirmAuth(action); }
+				disabled: disabled || authBusy,
+				click: function() {
+					if (disabled || authBusy) return;
+					return confirmAuth(action);
+				}
 			}, [ label ]);
 		}
 		function applyAuth(action) {
-			authCredentialNode.replaceChildren();
+			if (authBusy) return Promise.resolve();
+			authBusy = true;
+			renderAuth(authOutput);
 			return auth(action).then(function(out) {
 				var info = values(out);
 				if (action !== 'revoke') {
 					if (!/^[0-9a-f]{64}$/.test(info.password || ''))
-						throw new Error(_('账号已操作，但没有收到有效的一次性凭据，请检查 RPCD 状态。'));
+						throw new Error('账号可能已修改，但未收到有效的一次性凭据，请检查 RPCD 状态。');
+					// Never erase an earlier, still-visible one-time credential
+					// until a successful new value has been received.
 					authCredentialNode.replaceChildren(
 						E('p', { 'class': 'alert-message warning' }, [
-							_('请立即复制并妥善保存密码！页面刷新后无法再次查看。')
+							'请立即复制并妥善保存密码！页面刷新后无法再次查看。'
 						]),
-						E('p', [ _('NAS 专用用户名：'), E('strong', [ info.username || 'easyadb' ]) ]),
+						E('p', [ 'NAS 专用用户名：', E('strong', [ info.username || 'easyadb' ]) ]),
 						E('textarea', { readonly: '', rows: 2, 'class': 'cbi-input-textarea',
 							style: 'max-width:100%;width:560px', value: info.password }),
-						E('p', [ _('RPCD 即将重新加载。请在 EasyADB 中配置此凭据，不要使用路由器管理员密码。') ])
+						E('p', [ 'RPCD 即将重新加载。请在 EasyADB 中配置此凭据，不要使用路由器管理员密码。' ])
 					);
 				}
-				else
-					alert(_('NAS 专用授权已撤销，RPCD 会话将重新加载。'), false);
-				return refreshAuth();
-			}).catch(function(e) {
-				alert(_('授权操作：') + e.message, true);
-				return refreshAuth();
+				else {
+					authCredentialNode.replaceChildren();
+					alert('NAS 专用授权已撤销，RPCD 会话将重新加载。', false);
+				}
+			}, function(e) {
+				alert('授权操作失败：' + e.message, true);
+			}).then(refreshAuth).then(function() {
+				authBusy = false;
+				renderAuth(authOutput);
+			}, function(e) {
+				authBusy = false;
+				renderAuth(authOutput);
+				alert('读取账号状态失败：' + e.message, true);
 			});
 		}
 		function confirmAuth(action) {
+			if (authBusy) return;
 			var warning = action === 'create'
-				? _('创建名为 easyadb 的最小权限 RPCD 账户，随机密码仅显示一次。')
+				? '创建名为 easyadb 的最小权限 RPCD 账户，随机密码仅显示一次。'
 				: action === 'rotate'
-				? _('将生成新的随机密码，必须同步更新 EasyADB 配置；重新加载 RPCD 后，旧密码不能用于再次登录。')
-				: _('仅撤销本组件管理的 easyadb 专用账号，RPCD 重新加载后不再授权新的 NAS 扫描请求。');
-			ui.showModal(_('确认 NAS 授权操作'), [
+				? '将生成新的随机密码，必须同步更新 EasyADB 配置；重新加载 RPCD 后，旧密码不能用于再次登录。'
+				: '仅撤销本组件管理的 easyadb 专用账号，RPCD 重新加载后不再授权新的 NAS 扫描请求。';
+			var confirmed = false;
+			ui.showModal('确认 NAS 授权操作', [
 				E('p', [ warning ]),
 				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('取消') ]), ' ',
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
+						if (confirmed || authBusy) return;
+						confirmed = true;
 						ui.hideModal();
 						return applyAuth(action);
-					} }, [ _('确认执行') ])
+					} }, [ '确认执行' ])
 				])
 			]);
 		}
