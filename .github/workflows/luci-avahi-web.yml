@@ -1,0 +1,29 @@
+name: LuCI Avahi Web
+on:
+  push:
+    branches: [feat/luci-avahi-web]
+    paths:
+      - "luci-avahi-web/**"
+      - ".github/workflows/luci-avahi-web.yml"
+  pull_request:
+    paths:
+      - "luci-avahi-web/**"
+      - ".github/workflows/luci-avahi-web.yml"
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check syntax, ACL, config safety and build development IPK
+        run: |
+          cd luci-avahi-web
+          sh tests/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-avahi-web-dev-ipk
+          path: luci-avahi-web/dist/*.ipk
