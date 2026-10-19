@@ -20,7 +20,8 @@ function status(){return [
  'avahi-daemon-bin=yes','avahi-browse-bin='+(browseInstalled?'yes':'no'),'dbus-bin=yes',
  'avahi-daemon-init=yes','dbus-init=yes',
  'avahi-daemon-enabled='+(boot.avahi?'yes':'no'),'dbus-enabled='+(boot.dbus?'yes':'no')].join('\n');}
-const calls=[],snapshot=JSON.stringify({status:'ok',scanned_at:1792400000,count:1,devices:[{instance:'adb-1',iface:'br-lan',address:'192.168.1.5',port:37555}]});
+const calls=[],endpoint={instance:'adb-1',iface:'br-lan',address:'192.168.1.5',port:37555};
+const snapshot=JSON.stringify({status:'ok',scanned_at:1792400000,count:2,devices:[endpoint,Object.assign({},endpoint)]});
 const rpc={exec:function(program,args){
  calls.push([program,args]);
  if(program.includes('luci-avahi-scan')){
@@ -66,6 +67,18 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  const page=view.render(data);assert.equal(scanCalls,0);
  const cards=[];walk(page,n=>{if(String(n.props?.class||'').includes('avahi-component-card'))cards.push(n);});
  assert.equal(cards.length,2);
+ const grids=[];walk(page,n=>{if(n.props?.class==='avahi-service-grid')grids.push(n);});
+ assert.equal(grids.length,1);assert.equal(grids[0].children.length,2,'Both components should share one row on desktop');
+ const sections=[];walk(page,n=>{if(n.tag==='section'&&n.props?.class==='avahi-panel')sections.push(n);});
+ assert.equal(sections.length,3);assert.ok(txt(sections[0]).includes('组件与服务管理'));
+ assert.ok(txt(sections[1]).includes('ADB 设备发现'));assert.ok(txt(sections[2]).includes('NAS 接口授权'));
+ assert.ok(source.includes('repeat(2,minmax(0,1fr))')&&source.includes('@media (max-width:800px)'));
+ assert.ok(!source.includes('refreshIndex')&&!source.includes('operationDetails'));
+ assert.ok(!txt(page).includes('查看最近一次软件包操作输出'));
+ assert.ok(!txt(page).includes('刷新 APK 软件源索引'));
+ assert.ok(!txt(page).includes('安装完整'));
+ for(const label of ['立即发现 ADB','刷新结果','创建专用账号'])
+  assert.ok(btn(page,label).every(n=>String(n.props.class).includes('avahi-action')),'Button needs visible boundary: '+label);
  assert.ok(!source.includes('umdns'),'No umdns front-end code should remain');
  assert.ok(!txt(page).includes('avahi-dbus-daemon'),'Installed packages should not be expanded');
  assert.ok(txt(page).includes('缺少软件包：avahi-utils'));
@@ -75,6 +88,14 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  await btn(page,'立即发现 ADB')[0].props.click();
  assert.equal(scanCalls,1);assert.ok(txt(page).includes('37555'));
  assert.ok(txt(page).includes('发现完成：本次检测到 1 个 ADB 端点'));
+ const tables=[];walk(page,n=>{if(n.tag==='table'&&n.props?.class==='avahi-result-table')tables.push(n);});
+ assert.equal(tables.length,1);
+ const table=tables[0];const head=[],body=[],cols=[];
+ walk(table,n=>{if(n.tag==='thead')head.push(n);if(n.tag==='tbody')body.push(n);if(n.tag==='col')cols.push(n);});
+ assert.equal(cols.length,4);assert.equal(head.length,1);assert.equal(body.length,1);
+ assert.equal(body[0].children.length,1,'Duplicated endpoint must occupy only one row');
+ assert.equal(head[0].children[0].children.length,4);
+ assert.ok(String(table.props.class).includes('avahi-result-table'));
  failScanOnce=true;
  await btn(page,'立即发现 ADB')[0].props.click();
  assert.ok(txt(page).includes('发现失败：Scan state directory owner UID 100 differs from scanner UID 0'),
@@ -91,7 +112,7 @@ function confirm(){assert.ok(modal);const b=btn(modal,'确认').concat(btn(modal
  modal=undefined;assert.ok(!btn(page,'补齐安装')[0].disabled,'Dialog dismiss should unlock');
  await btn(page,'补齐安装')[0].props.click();
  const c=btn(modal,'确认执行')[0],a=c.props.click(),b=c.props.click();await Promise.all([a,b]);
- assert.equal(applyCalls,1);assert.ok(txt(page).includes('安装完整'));assert.equal(btn(page,'补齐安装').length,0);
+ assert.equal(applyCalls,1);assert.ok(!txt(page).includes('缺少软件包：avahi-utils'));assert.equal(btn(page,'补齐安装').length,0);
  btn(page,'创建专用账号')[0].props.click();await confirm();
  assert.equal(authCalls,1);assert.ok(!btn(page,'创建专用账号')[0].disabled);
  assert.equal(scanCalls,2);console.log('Two-component LuCI actions and manual scan interactions passed');
