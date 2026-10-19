@@ -208,6 +208,16 @@ package_operation() {
     set -- $names
     IFS=$oldIFS
     set +f
+    if [ "$action" != remove ]; then
+        # Package install/upgrade scripts may start their service themselves.
+        # Require the conflicting daemon stopped before applying either.
+        if [ "$target" = avahi ] && umdns_running; then
+            fail 'Stop and disable umdns before installing/updating Avahi'
+        fi
+        if [ "$target" = umdns ] && running; then
+            fail 'Stop and disable Avahi before installing/updating umdns'
+        fi
+    fi
     if [ "$action" = remove ]; then
         # Do not let the UI remove an actively operating mDNS daemon, or pull
         # D-Bus from a live Avahi session. The operator must stop it first.
