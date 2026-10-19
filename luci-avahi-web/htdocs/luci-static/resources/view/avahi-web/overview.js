@@ -16,6 +16,7 @@ function command(program, args) {
 }
 function control(action, args) { return command(HELPER, [ action ].concat(args || [])); }
 function snapshot() { return command(SCANNER, [ 'last' ]); }
+function scan() { return command(SCANNER, [ 'scan' ]); }
 function auth(action) { return command(AUTH, [ action ]); }
 function values(output) {
 	var obj = {};
@@ -55,13 +56,14 @@ return view.extend({
 		var operationDetails = E('details', { style: 'margin-top:12px;' }, [
 			E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]), operationOutput
 		]);
-		var busy = false, runtimeBusy = false, refreshing = false, authBusy = false;
+		var busy = false, runtimeBusy = false, refreshing = false, authBusy = false, scanBusy = false;
+		var scanButton;
 		var authOutput = 'state=error';
 		var manualButton, indexButton;
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', note: '用于发现 Android 无线调试动态端口', process: 'running', init: 'avahi-daemon', bins: [ ['avahi-daemon-bin','avahi-daemon'], ['avahi-browse-bin','avahi-browse'] ], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
-			{ id: 'dbus', label: 'D-Bus', note: 'Avahi 的进程间通信依赖', process: 'dbus', init: 'dbus', bins: [ ['dbus-bin','dbus-daemon'] ], start: 'dbus-start', packages: [ 'dbus' ] },
+			{ id: 'dbus', label: 'D-Bus', note: 'Avahi 的进程间通信依赖', process: 'dbus', init: 'dbus', bins: [ ['dbus-bin','dbus-daemon'] ], start: 'dbus-start', stop: 'dbus-stop', enable: 'dbus-enable', disable: 'dbus-disable', packages: [ 'dbus' ] },
 			{ id: 'umdns', label: 'umdns', note: 'OpenWrt 自带的 mDNS 服务', process: 'umdns', init: 'umdns', bins: [ ['umdns-bin','umdns'] ], start: 'umdns-start', stop: 'umdns-stop', enable: 'umdns-enable', disable: 'umdns-disable', packages: [ 'umdns' ] }
 		];
 		function alert(text, error) {
@@ -88,153 +90,118 @@ return view.extend({
 			return { state: missing.length === 0 ? 'complete' :
 				missing.length === group.packages.length ? 'absent' : 'partial', missing: missing };
 		}
-		function serviceButton(label, group, action, disabled, kind) {
+		function locked() { return runtimeBusy || busy || refreshing || authBusy; }
+		function actionButton(label, action, disabled, kind) {
+			var blocked = !!disabled || locked();
 			return E('button', {
 				type: 'button',
 				'class': 'cbi-button ' + (kind === 'danger' ? 'cbi-button-negative' :
-					kind === 'positive' ? 'cbi-button-positive' : 'cbi-button-neutral'),
-				disabled: disabled || runtimeBusy || busy || refreshing || authBusy,
-				click: function() {
-					if (disabled || runtimeBusy || busy || refreshing || authBusy) return;
-					var perform = function() {
-						runtimeBusy = true;
-						drawComponents();
-						return control('service', [ action ]).then(function() {
-							alert(group.label + '：操作已完成。');
-						}).catch(function(e) {
-							alert(group.label + '：' + e.message, true);
-						}).then(refreshStatus).then(function() {
-							runtimeBusy = false; drawComponents();
-						}, function(e) {
-							runtimeBusy = false; drawComponents(); alert(e.message, true);
-						});
-					};
-					if ([ 'stop', 'umdns-stop', 'umdns-disable' ].indexOf(action) < 0)
-						return perform();
-					ui.showModal('确认服务操作', [
-						E('p', [ '停止或禁用 ' + group.label + ' 可能影响局域网内其他设备的发现。' ]),
-						E('p', [ '即将执行：' + label ]),
-						E('div', { 'class': 'right' }, [
-							E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
-							E('button', { 'class': 'btn cbi-button-apply', click: function() {
-								ui.hideModal();
-								return perform();
-							} }, [ '确认操作' ])
-						])
-					]);
-				}
+					kind === 'positive' ? 'cbi-button-positive' : 'cbi-button-action'),
+				// LuCI E() must receive null, not false, for an absent boolean attribute.
+				disabled: blocked ? '' : null,
+				click: function() { if (!blocked && !locked()) return action(); }
 			}, [ label ]);
 		}
-		function pkgButton(label, group, action, disabled) {
-			return E('button', {
-				type: 'button',
-				'class': 'cbi-button ' + (action === 'install' ? 'cbi-button-positive' :
-					action === 'remove' ? 'cbi-button-negative' : 'cbi-button-action'),
-				disabled: disabled || runtimeBusy || busy || refreshing || authBusy,
-				click: function() {
-					if (disabled || runtimeBusy || busy || refreshing || authBusy) return;
-					return preview(action, group.id);
-				}
-			}, [ label ]);
+		function serviceAction(group, operation, label) {
+			if (locked()) return Promise.resolve();
+			var perform = function() {
+				if (locked()) return Promise.resolve();
+				runtimeBusy = true;
+				drawComponents();
+				return control('service', [ operation ]).then(function() {
+					alert(group.label + '：' + label + '成功。');
+				}, function(e) {
+					alert(group.label + '：' + e.message, true);
+				}).then(refreshStatus).catch(function(e) {
+					alert('状态回读失败：' + e.message, true);
+				}).then(function() {
+					runtimeBusy = false;
+					drawComponents();
+				});
+			};
+			if ([ 'stop', 'umdns-stop', 'dbus-stop', 'disable', 'umdns-disable', 'dbus-disable' ].indexOf(operation) < 0)
+				return perform();
+			var confirmed = false;
+			ui.showModal('确认服务操作', [
+				E('p', [ '即将对 ' + group.label + ' 执行「' + label + '」。停止 D-Bus 等基础服务可能影响依赖它的系统功能。' ]),
+				E('div', { 'class': 'right' }, [
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
+					E('button', { 'class': 'btn cbi-button-apply', click: function() {
+						if (confirmed || locked()) return;
+						confirmed = true;
+						ui.hideModal();
+						return perform();
+					} }, [ '确认' ])
+				])
+			]);
 		}
 		function drawComponents() {
-			if (manualButton) manualButton.disabled = busy || runtimeBusy || refreshing || authBusy;
-			if (indexButton) indexButton.disabled = busy || runtimeBusy || refreshing || authBusy;
+			if (manualButton) manualButton.disabled = locked();
+			if (indexButton) indexButton.disabled = locked();
+			if (scanButton) scanButton.disabled = scanBusy;
 			renderAuth(authOutput);
-			var s = currentStatus, conflict = s.running === 'yes' && s.umdns === 'yes';
-			var cards = groups.map(function(group) {
-				var pkg = packageState(group), running = s[group.process] === 'yes';
-				var init = s[group.init + '-init'] === 'yes';
-				var enabled = s[group.init + '-enabled'] === 'yes';
-				var missingBins = group.bins.filter(function(bin) { return s[bin[0]] !== 'yes'; })
-					.map(function(bin) { return bin[1]; });
-				var ready = pkg.state === 'complete' && missingBins.length === 0 && init;
-				var otherRunning = group.id === 'avahi' ? s.umdns === 'yes' :
-					group.id === 'umdns' ? s.running === 'yes' : false;
-				var otherBoot = group.id === 'avahi' ? s['umdns-enabled'] === 'yes' :
-					group.id === 'umdns' ? s['avahi-daemon-enabled'] === 'yes' : false;
-				var utilityRepair = group.id === 'avahi' && pkg.state === 'partial' &&
-					currentPackages['avahi-dbus-daemon'] && currentPackages['avahi-dbus-daemon'].installed &&
-					currentPackages['avahi-utils'] && !currentPackages['avahi-utils'].installed;
-				var installLabel = pkg.state === 'complete' ?
-					(ready ? '安装完整' : '运行条件不完整') :
-					pkg.state === 'partial' ? '部分安装' :
-					pkg.state === 'absent' ? '未安装' : '状态未知';
-				var installedCount = group.packages.length - pkg.missing.length;
-				var packageRows = group.packages.map(function(name) {
-					var p = currentPackages[name], ok = !!p && p.installed;
-					return E('div', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-color-low,#eee);min-width:0;' }, [
-						E('code', { style: 'min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;' }, [ name ]),
-						E('span', { style: 'max-width:100%;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;text-align:right;font-size:.91em;opacity:.85;' },
-							[ ok ? (p.version && p.version !== '-' ? p.version : '版本未知') : '未安装' ])
-					]);
-				});
-				var actions = [
-					serviceButton('启动', group, group.start, !ready || running || otherRunning || (group.id === 'avahi' && s.dbus !== 'yes'), 'positive')
-				];
-				if (group.stop) actions.push(serviceButton('停止', group, group.stop, !running, 'danger'));
-				if (group.enable) actions.push(serviceButton('启用自启', group, group.enable, !ready || enabled || otherBoot, 'positive'));
-				if (group.disable) actions.push(serviceButton('关闭自启', group, group.disable, !init || !enabled, 'neutral'));
-				var missing = [];
-				if (pkg.state !== 'unknown' && pkg.missing.length)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少软件包：' + pkg.missing.join('、') ]));
+			var st = currentStatus;
+			var conflict = st.running === 'yes' && st.umdns === 'yes';
+			var cards = groups.map(function(g) {
+				var pkg = packageState(g), running = st[g.process] === 'yes';
+				var init = st[g.init + '-init'] === 'yes', enabled = st[g.init + '-enabled'] === 'yes';
+				var daemonBin = st[g.bins[0][0]] === 'yes';
+				var missingBins = g.bins.filter(function(b) { return st[b[0]] !== 'yes'; }).map(function(b) { return b[1]; });
+				var complete = pkg.state === 'complete' && !missingBins.length && init;
+				var missing = pkg.missing;
+				var packLabel = pkg.state === 'complete' ? (complete ? '安装完整' : '运行条件不完整') :
+					pkg.state === 'partial' ? '部分安装' : pkg.state === 'absent' ? '未安装' : '状态未知';
+				var runLabel = running ? '停止' : '启动';
+				var runAction = running ? g.stop : g.start;
+				var bootLabel = enabled ? '关闭自启' : '启用自启';
+				var bootAction = enabled ? g.disable : g.enable;
+				var packageAction = pkg.state === 'complete' ? 'upgrade' : 'install';
+				var packageLabel = pkg.state === 'complete' ? '更新' :
+					pkg.state === 'partial' ? '补齐安装' : '安装';
+				var info = [];
+				if (pkg.state !== 'complete' && pkg.state !== 'unknown' && missing.length)
+					info.push(E('p', { style: 'margin:5px 0;' }, [ '缺少软件包：' + missing.join('、') ]));
 				if (pkg.state === 'complete' && missingBins.length)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少运行文件：' + missingBins.join('、') ]));
-				if (pkg.state === 'complete' && !init)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少服务启动脚本：' + group.init ]));
-				if (group.id === 'avahi' && s.dbus !== 'yes')
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ 'Avahi 启动前须先启动 D-Bus。' ]));
-				if (otherBoot && group.enable)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '另一项 mDNS 服务已启用开机自启，请先关闭对方的自启。' ]));
-				if (otherRunning && group.stop)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ utilityRepair ?
-						'当前只缺 avahi-utils，可以单独补齐发现工具；启动或更新守护进程仍需先停止 umdns。' :
-						'启动、安装或更新该 mDNS 组件前，请先停止另一项 mDNS 服务。' ]));
-				if (group.id === 'dbus' && running)
-					missing.push(E('p', { style: 'margin:6px 0;opacity:.8;' }, [ 'D-Bus 正在运行，为保护依赖它的进程，禁止直接卸载。' ]));
+					info.push(E('p', { style: 'margin:5px 0;' }, [ '缺少运行文件：' + missingBins.join('、') ]));
+				if (!init && pkg.state !== 'absent')
+					info.push(E('p', { style: 'margin:5px 0;' }, [ '缺少服务启动脚本：' + g.init ]));
+				var actions = E('div', {
+					style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;'
+				}, [
+					actionButton(runLabel, function() { return serviceAction(g, runAction, runLabel); },
+						!init || (!running && !daemonBin), running ? 'danger' : 'positive'), ' ',
+					actionButton(bootLabel, function() { return serviceAction(g, bootAction, bootLabel); },
+						!init, 'normal'), ' ',
+					actionButton(packageLabel, function() { return preview(packageAction, g.id); },
+						pkg.state === 'unknown', 'positive'), ' ',
+					actionButton('卸载', function() { return preview('remove', g.id); },
+						pkg.state === 'absent' || pkg.state === 'unknown', 'danger')
+				]);
 				return E('div', { 'class': 'avahi-component-card',
-					style: 'box-sizing:border-box;min-width:0;width:100%;max-width:100%;overflow:hidden;margin:0;padding:16px;border:1px solid var(--border-color-medium, #d5d9dc);border-radius:8px;background:var(--background-color-high,#fff);' }, [
-					E('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:start;flex-wrap:wrap;' }, [
-						E('div', [
-							E('h3', { style: 'margin:0 0 4px;' }, [ group.label ]),
-							E('p', { style: 'margin:0 0 8px;opacity:.78;' }, [ group.note ])
-						]),
-						statusMark(installLabel, ready ? 'ok' : pkg.state === 'absent' ? 'bad' : pkg.state === 'unknown' ? 'idle' : 'warn')
+					style: 'box-sizing:border-box;min-width:0;width:100%;max-width:100%;overflow:hidden;margin:0;padding:15px;border:1px solid var(--border-color-medium,#d5d9dc);border-radius:8px;background:var(--background-color-high,#fff);' }, [
+					E('div', { style: 'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:start;' }, [
+						E('div', [ E('h3', { style: 'margin:0 0 4px;' }, [ g.label ]),
+							E('p', { style: 'margin:0;opacity:.8;' }, [ g.note ]) ]),
+						statusMark(packLabel, complete ? 'ok' : pkg.state === 'absent' ? 'bad' : 'warn')
 					]),
-					E('div', { style: 'margin:5px 0 12px;' }, [
+					E('div', { style: 'margin:12px 0 8px;' }, [
 						statusMark(running ? '● 运行中' : '○ 已停止', running ? 'ok' : 'idle'),
 						statusMark(!init ? '启动脚本缺失' : enabled ? '已启用自启' : '未启用自启',
 							!init ? 'bad' : enabled ? 'ok' : 'idle')
 					]),
-					E('div', { style: 'margin-bottom:10px;' }, [
-						E('strong', [ '服务控制' ]),
-						E('div', { style: 'display:flex;gap:7px;flex-wrap:wrap;margin-top:7px;' }, actions)
-					]),
-					E('div', { style: 'padding-top:10px;border-top:1px solid var(--border-color-medium, #ddd);' }, [
-						E('div', { style: 'display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;' }, [
-							E('strong', [ '软件包' ]),
-							E('span', [ '已安装 ' + installedCount + ' / ' + group.packages.length ])
-						]),
-						E('div', { style: 'font-size:.93em;margin:5px 0 8px;' }, packageRows),
-						E('div', missing),
-						E('div', { style: 'display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;' }, [
-							pkgButton(pkg.state === 'partial' ? '补齐安装' : '安装',
-								group, 'install', pkg.state === 'complete' || pkg.state === 'unknown' || (otherRunning && !utilityRepair)), 
-							pkgButton('更新', group, 'upgrade', pkg.state !== 'complete' || otherRunning),
-							pkgButton('卸载', group, 'remove', pkg.state === 'absent' || pkg.state === 'unknown' || running)
-						])
+					E('div', { style: 'min-height:0;overflow-wrap:anywhere;color:var(--text-color-secondary,#826226);font-size:.93em;' }, info),
+					E('div', { style: 'padding-top:9px;border-top:1px solid var(--border-color-medium,#ddd);' }, [
+						E('strong', [ '服务控制' ]), actions
 					])
 				]);
 			});
-			var installedGroups = groups.filter(function(g) { return packageState(g).state === 'complete'; }).length;
-			var runningGroups = groups.filter(function(g) { return s[g.process] === 'yes'; }).length;
-			summaryNode.replaceChildren(
-				E('span', [ '组件完整：' + installedGroups + ' / 3　·　运行中：' + runningGroups + ' / 3' ])
-			);
+			var completeCount = groups.filter(function(g) { return packageState(g).state === 'complete'; }).length;
+			var runningCount = groups.filter(function(g) { return st[g.process] === 'yes'; }).length;
+			summaryNode.replaceChildren(E('span', [ '安装完整 ' + completeCount + '/3　·　运行中 ' + runningCount + '/3' ]));
 			componentsNode.replaceChildren(
-				conflict ? E('div', { style: 'box-sizing:border-box;max-width:100%;margin-bottom:12px;padding:10px 12px;background:#fff8e5;color:#765400;border:1px solid #e6ca85;border-radius:6px;overflow-wrap:anywhere;' },
-					[ '注意：检测到 Avahi 与 umdns 进程同时运行，仅提示可能存在 mDNS 端口竞争，并不代表端口冲突已发生；本页面不会自动停止任何服务。' ]) : '',
-				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;align-items:start;min-width:0;width:100%;box-sizing:border-box;' }, cards)
+				conflict ? E('div', { style: 'margin:0 0 12px;padding:9px 12px;border-radius:6px;background:#fff8e5;color:#765400;border:1px solid #e6ca85;overflow-wrap:anywhere;' },
+					[ '提示：Avahi 与 umdns 均在运行。这不等于已经发生 UDP 5353 端口冲突；若发现失败或出现重复应答，再检查实际监听和服务行为。这里不会自动关闭它们。' ]) : '',
+				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;min-width:0;align-items:start;' }, cards)
 			);
 		}
 		function refreshStatus() {
