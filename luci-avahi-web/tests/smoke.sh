@@ -57,7 +57,9 @@ assert "function drawComponents(" in code and "function packageState(" in code
 assert "组件与服务管理" in code and "缺少软件包" in code
 assert "umdns" not in code and "umdns" not in controller
 assert "disabled: blocked ? '' : null" in code
-assert "disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null" in code
+assert "disabled: (authBusy || busy || runtimeBusy || refreshing) ? '' : null" in code
+assert "function showCredential(" in code and "function copyCredential(" in code
+assert "E('textarea', { readonly:" not in code and "'avahi-secret'" in code
 assert "手动刷新组件状态" in code and "grid-template-columns" in code
 assert "poll.add(" not in code and "'require poll'" not in code
 assert "avahi-action" in code and "avahi-service-grid" in code
