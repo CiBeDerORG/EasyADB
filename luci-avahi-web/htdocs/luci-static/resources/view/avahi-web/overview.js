@@ -5,6 +5,7 @@
 
 var HELPER = '/usr/libexec/luci-avahi-web';
 var SCANNER = '/usr/libexec/luci-avahi-scan';
+var AUTH = '/usr/libexec/luci-avahi-auth';
 
 function command(program, args) {
 	return fs.exec(program, args).then(function(result) {
@@ -15,6 +16,7 @@ function command(program, args) {
 }
 function control(action, args) { return command(HELPER, [ action ].concat(args || [])); }
 function snapshot() { return command(SCANNER, [ 'last' ]); }
+function auth(action) { return command(AUTH, [ action ]); }
 function values(output) {
 	var obj = {};
 	String(output || '').split('\n').forEach(function(line) {
@@ -39,12 +41,14 @@ return view.extend({
 		return Promise.all([
 			control('status'),
 			control('package', [ 'list' ]),
-			snapshot().catch(function() { return ''; })
+			snapshot().catch(function() { return ''; }),
+			auth('status').catch(function() { return 'state=error'; })
 		]);
 	},
 	render: function(data) {
 		var statusNode = E('div'), packagesNode = E('div');
 		var lastNode = E('div'), noticeNode = E('div');
+		var authStateNode = E('div'), authCredentialNode = E('div');
 		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
 		var busy = false, packageButtons = [];
 		var groups = [
@@ -205,6 +209,81 @@ return view.extend({
 				])
 			]);
 		}
+		function renderAuth(output) {
+			var current = values(output);
+			var state = current.state || 'error';
+			var text = state === 'managed'
+				? _('Enabled: easyadb (scan only)')
+				: state === 'absent'
+				? _('Not created')
+				: state === 'conflict'
+				? _('Conflict: an existing RPCD entry uses the reserved account or section; no changes will be made.')
+				: _('Unable to read authorization status.');
+			authStateNode.replaceChildren(
+				E('p', [ _('Current status: ') + text ]),
+				E('p', [ _('Role: ') + 'luci-avahi-easyadb' ]),
+				E('div', [
+					authButton(_('Create account'), 'create', state !== 'absent'), ' ',
+					authButton(_('Rotate credential'), 'rotate', state !== 'managed'), ' ',
+					authButton(_('Revoke authorization'), 'revoke', state !== 'managed')
+				])
+			);
+		}
+		function refreshAuth() {
+			return auth('status').then(renderAuth).catch(function(e) {
+				renderAuth('state=error');
+				alert(e.message, true);
+			});
+		}
+		function authButton(label, action, disabled) {
+			return E('button', { type: 'button',
+				'class': action === 'revoke' ? 'cbi-button cbi-button-negative' : 'cbi-button',
+				disabled: disabled,
+				click: function() { return confirmAuth(action); }
+			}, [ label ]);
+		}
+		function applyAuth(action) {
+			authCredentialNode.replaceChildren();
+			return auth(action).then(function(out) {
+				var info = values(out);
+				if (action !== 'revoke') {
+					if (!/^[0-9a-f]{64}$/.test(info.password || ''))
+						throw new Error(_('Account changed but no valid one-time credential was returned. Review RPCD state.'));
+					authCredentialNode.replaceChildren(
+						E('p', { 'class': 'alert-message warning' }, [
+							_('Copy this password now. The application cannot display it again; reload clears this view.')
+						]),
+						E('p', [ _('NAS username: '), E('strong', [ info.username || 'easyadb' ]) ]),
+						E('textarea', { readonly: '', rows: 2, 'class': 'cbi-input-textarea',
+							style: 'max-width:100%;width:560px', value: info.password }),
+						E('p', [ _('RPCD will reload shortly. Configure EasyADB with this dedicated credential, not your router admin password.') ])
+					);
+				}
+				else
+					alert(_('NAS RPCD authorization revoked; existing sessions will be refreshed.'), false);
+				return refreshAuth();
+			}).catch(function(e) {
+				alert(_('Authorization operation: ') + e.message, true);
+				return refreshAuth();
+			});
+		}
+		function confirmAuth(action) {
+			var warning = action === 'create'
+				? _('Create a restricted RPCD account named easyadb with a randomly generated password. The password will be shown only once.')
+				: action === 'rotate'
+				? _('Generate a new credential. EasyADB must be updated; the old password will stop working after RPCD reload.')
+				: _('Remove only the dedicated easyadb RPCD login. EasyADB requests will no longer be authorized after RPCD reload.');
+			ui.showModal(_('Confirm NAS authorization change'), [
+				E('p', [ warning ]),
+				E('div', { 'class': 'right' }, [
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+					E('button', { 'class': 'btn cbi-button-apply', click: function() {
+						ui.hideModal();
+						return applyAuth(action);
+					} }, [ _('Confirm') ])
+				])
+			]);
+		}
 		function renderLast(output) {
 			if (!output) {
 				lastNode.replaceChildren(E('p', [ _('No successful NAS-triggered scan is cached.') ]));
@@ -241,6 +320,7 @@ return view.extend({
 		renderStatus(data[0]);
 		renderPackages(data[1]);
 		renderLast(data[2]);
+		renderAuth(data[3]);
 		return E('div', [
 			E('h2', [ _('Avahi / EasyADB Agent') ]),
 			E('p', [ _('Only authenticated EasyADB requests trigger mDNS discovery. This page never starts a scan.') ]),
@@ -272,8 +352,10 @@ return view.extend({
 				E('h4', [ _('Last package command output') ]), operationOutput
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('API authorization') ]),
-				E('p', [ _('The existing /ubus RPCD session login and dedicated luci-avahi-easyadb read ACL gate the scan command. Provision a separate non-admin RPCD login before connecting NAS. No anonymous scan, webhook, or separate listening port is enabled.') ])
+				E('h3', [ _('NAS API authorization') ]),
+				E('p', [ _('Create, rotate or revoke the dedicated RPCD login here. The NAS role allows only one scan command; no package or service-management privileges. Existing /ubus RPCD authentication is required.') ]),
+				authStateNode, authCredentialNode,
+				E('p', [ _('The generated credential is shown only once. This page never reveals a stored password hash or automatically exposes /ubus to the Internet.') ])
 			])
 		]);
 	},
