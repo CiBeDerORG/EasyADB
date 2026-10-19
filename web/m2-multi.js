@@ -196,25 +196,6 @@ class MultiView{
    screenOff.setAttribute('aria-label',d.name+' 投屏时关闭手机物理屏幕');
    screenOff.addEventListener('change',()=>this.setChoice(d.id,{screen_off:screenOff.checked}));
    panel.append(screenOff,make('span','','投屏时关闭手机物理屏幕（远端画面继续显示）'));
-   // Same-page, session-owned live status. It is intentionally NOT the
-   // database's ADB connected status and never starts a background poll.
-   const live=this.liveState(d.id);
-   const liveRow=make('div','multi-live');
-   const liveStatus=make('span','multi-live-status '+live.code,'实时画面：'+live.label);
-   liveStatus.setAttribute('role','status');
-   const liveButton=make('button',live.active?'danger':'secondary',
-    live.active?'关闭此设备画面':'开启此设备画面');
-   liveButton.type='button';
-   liveButton.setAttribute('aria-label',d.name+' '+(live.active?'关闭':'开启')+'实时画面');
-   liveButton.disabled=live.active?
-    live.code==='stopping':
-    !connected||this.opening||this.getManagementBusy?.()||
-    this.checking.has(d.id)||this.cards.size>=MAX_DEVICES;
-   liveButton.addEventListener('click',()=>{
-    if(liveButton.disabled)return;
-    if(live.active)this.stopFor(d.id);else this.startFor(d.id);
-   });
-   liveRow.append(liveStatus,liveButton);
    const playback=make('details','multi-playback-options');
    playback.open=this.playbackOpen.has(d.id);
    playback.addEventListener('toggle',()=>{
@@ -222,7 +203,7 @@ class MultiView{
     if(playback.open)this.playbackOpen.add(d.id);else this.playbackOpen.delete(d.id);
    });
    playback.append(make('summary','','播放选项'),panel,latency);
-   item.append(liveRow,playback);
+   item.append(playback);
    this.picker.append(item);
   }
   // Existing cards, including pending stop/cleanup, retain their server slots.
@@ -268,6 +249,25 @@ class MultiView{
   if(this.launchQueue.some(item=>item.device.id===id))
    return {code:'queued',label:'排队中',active:true};
   return {code:'idle',label:this.lastLiveStatus.get(id)||'未开启',active:false};
+ }
+ projectionButton(d){
+  // The sole single-device stream control is rendered next to the ADB port.
+  // This is an owned, per-device session action; it does not modify batch selections.
+  const live=this.liveState(d.id);
+  const button=make('button','device-projector '+live.code,live.active?'■':'▶');
+  button.type='button';
+  button.title=live.active?'关闭此设备投屏 · '+live.label:'开启此设备投屏 · '+live.label;
+  button.setAttribute('aria-label',d.name+' '+button.title);
+  button.setAttribute('aria-pressed',String(live.active));
+  button.disabled=live.active
+   ?live.code==='stopping'
+   :!this.isAdbReady(d)||this.opening||this.getManagementBusy?.()||
+    this.checking.has(d.id)||this.cards.size>=MAX_DEVICES;
+  button.addEventListener('click',()=>{
+   if(button.disabled)return;
+   if(live.active)this.stopFor(d.id);else this.startFor(d.id);
+  });
+  return button;
  }
  startFor(id){
   // Only this target. Never inherit the other checked devices from the batch

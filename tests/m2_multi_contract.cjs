@@ -125,7 +125,14 @@ assert(page.includes("row.append(del)"),'temporary IP has its own close control'
 assert(!page.includes("removeButton=action('删除'"),'no single-device delete control');
 assert(!page.includes("const tempEdit=action("),'no duplicate temporary IP editor button');
 assert.match(page,/if\(!confirm\('将从列表永久删除以下 '/,'batch deletion still asks for confirmation');
-assert(page.includes("port.value=String(d.port)"),'temporary IP editor starts from the shared port');
+assert(page.includes("$('tempSharedPort').value=String(d.port)"),'temporary IP modal starts from shared port');
+assert(page.includes('id="tempDialog"'),'temporary IP editor is a real dialog');
+assert(page.includes("editingTemp=d.id"),'temporary IP dialog owns its selected device');
+assert(page.includes("change.title='编辑 '+d.name"),'single-device edit is a card icon');
+assert(!page.includes("const connect=action('连接'"),'no single-device connect button');
+assert(page.includes("$('load').addEventListener('click',loadAndConnect)"),'explicit reload connects once');
+assert(page.includes("if(current.selected_route!==route)"),'clicking current IP can reconnect without route mutation');
+assert(page.includes("multiView.projectionButton(d)"),'projection control lives next to ADB port');
 assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
@@ -186,9 +193,10 @@ const multi=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
 const quality=(i,key)=>picker.children[i].children[0].children[
  ({max_size:0,video_bit_rate:1,max_fps:2,dpi:3})[key]].children[0];
 const playback=i=>picker.children[i].children.find(x=>x.className==='multi-playback-options');
-const liveRow=i=>picker.children[i].children.find(node=>node.className==='multi-live');
-const liveButton=i=>liveRow(i).children[1];
-const liveStatus=i=>liveRow(i).children[0].textContent;
+const liveButton=i=>multi.projectionButton(devices[i]);
+const liveStatus=i=>multi.liveState(devices[i].id).label;
+assert.equal(picker.children[0].children.some(node=>node.className==='multi-live'),false,
+ 'duplicate projection status/action row must be removed');
 function select(i){batchSelected.add(devices[i].id);multi.updatePicker();}
 function init(ws,sid){
  ws.emit('init',{session_id:sid,width:720,height:1280,
@@ -554,7 +562,8 @@ async function waitForCheck(id){
  assert.equal(batchSelected.has('id-1'),false,'independent row start does not alter bulk selection');
  assert.match(liveStatus(0),/启动中/);
  assert.match(liveStatus(1),/未开启|已停止/);
- assert.match(liveRow(0).children[1].textContent,/关闭此设备画面/);
+ assert.match(liveButton(0).title,/关闭此设备投屏/);
+ assert.match(liveButton(0).className,/starting/);
  const ownA=sockets.at(-1);ownA.open();ownA.emit('starting',{session_id:'own-A'});
  init(ownA,'own-A');assert.match(liveStatus(0),/等待画面/);
  multi.cards.get('id-1').player.triggerPlaying();
@@ -757,7 +766,7 @@ async function waitForCheck(id){
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
  console.log('M2 parallel batch launch and out-of-order stop acknowledgements: OK');
  console.log('M2 selected-only batch stop preserves unselected live/control: OK');
- console.log('M2 independent row live status/start/stop/queue-cancel: OK');
+ console.log('M2 per-device title projection control/start/stop/queue-cancel: OK');
  console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');
  console.log('M2 per-device quality/diagnostics and selected-only launch: OK');
 console.log('M2 aspect-correct video and 5s radial floating controls: OK');

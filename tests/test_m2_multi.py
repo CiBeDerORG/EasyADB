@@ -192,9 +192,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "startFor(id)" in multi_js and "stopFor(id)" in multi_js
         assert "this._startDevices([d])" in multi_js
         assert "this.lastLiveStatus.set(card.id" in multi_js
-        assert "multi-live-status" in multi_js
-        assert "开启此设备画面" in multi_js and "关闭此设备画面" in multi_js
-        assert ".multi-live-status.playing" in html
+        assert "projectionButton(d)" in multi_js
+        assert "开启此设备投屏" in multi_js and "关闭此设备投屏" in multi_js
+        assert ".device-projector.ready,.device-projector.playing" in html
+        assert "item.append(liveRow,playback)" not in multi_js
         assert "getManagementBusy:()=>loading" in html
         # The existing batch-management checkboxes now also drive at-most-four
         # video launches. Destructive actions still require confirmation.
@@ -209,14 +210,21 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)))" in html
         assert "if(!confirm('将从列表永久删除以下 " in html
         assert "managementSelected.clear();render();" in html
-        # Route selection acts directly on the displayed IP; no separate
-        # selected/switch label or automatic ADB connect on clicking route.
+        # Route selection acts directly on its IP and triggers one explicit connect.
+        # The separate batch status check remains probe-only.
         assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
         assert "title.append(elem('span','device-port','ADB '+d.port))" in html
         assert "addressList.append(...addressRows)" in html
         assert "addressList.append(plus)" in html
         assert "removeButton=action('删除'" not in html
-        assert "port.value=String(d.port)" in html
+        assert "$('tempSharedPort').value=String(d.port)" in html
+        assert 'id="tempDialog"' in html
+        assert "multiView.projectionButton(d)" in html
+        assert "change.title='编辑 '+d.name" in html
+        assert "const connect=action('连接'" not in html
+        assert "$('load').addEventListener('click',loadAndConnect)" in html
+        assert "if(current.selected_route!==route)" in html
+        assert "function runConnect(id)" not in html
         assert "临时 ADB 端口：" not in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html
         assert "⇄ 切换" not in html and "✓ 当前选择" not in html

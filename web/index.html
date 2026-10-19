@@ -41,6 +41,7 @@ body.video-fullscreen-active .inventory-drawer{display:none!important}
 .discovery-group-name{font-size:13px;font-weight:700;margin-bottom:8px}
 @media(max-width:480px){.toast-host{left:10px;right:10px;top:10px;width:auto}}
 .temp-editor{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:8px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#142033}
+/* Temporary address editor is modal; no embedded form may expand a device row. */
 .temp-editor[hidden]{display:none!important}
 .temp-editor label{margin:0;min-width:130px;flex:1}
 .temp-editor input{height:36px;margin-top:5px}
@@ -91,7 +92,7 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
 .modal-status{min-height:0;margin-top:12px}
 .modal-status:empty{display:none}
-.item{border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(305px,.9fr);align-items:start;gap:18px;width:100%}
+.item{position:relative;border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(305px,.9fr);align-items:start;gap:18px;width:100%}
 .device-primary{min-width:0}.device-primary>.muted{margin-top:6px}
 .device-quality{min-width:0;border-left:1px solid #34445e;padding-left:16px}
 .device-quality .multi-choice{border:0;background:transparent;padding:0}
@@ -106,6 +107,12 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-model{font-size:12px;color:#aab8cd;overflow-wrap:anywhere}
 .device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
 .device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
+.device-edit-icon{position:absolute;top:8px;right:8px;z-index:1;width:28px;height:28px;min-height:28px;padding:2px;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:7px;font-size:16px}
+.device-title{padding-right:32px}
+.device-projector{display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
+.device-projector.starting,.device-projector.queued,.device-projector.stopping{background:#574424;border-color:#aa8743;color:#ffe09c}
+.device-projector.ready,.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
+.device-projector:disabled{opacity:.55;cursor:not-allowed}
 .device-port{display:inline-flex;align-items:center;gap:5px;border:1px solid #7b6437;background:#3b3020;color:#ffe0a0;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
 .device-port::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
 .muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
@@ -147,12 +154,6 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-log .multi-check-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;background:#172233;border-radius:7px;padding:8px}
 .multi-log .muted{font-size:12px}
 .multi-choice input{width:17px;height:17px;flex:none}
-.multi-live{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid #34445e;padding-top:10px}
-.multi-live-status{font-size:13px;font-weight:600;color:#b8d0ee}
-.multi-live-status.playing{color:#80d7ad}
-.multi-live-status.ready{color:#b5d8ff}
-.multi-live-status.stopping,.multi-live-status.starting,.multi-live-status.queued{color:#ecc181}
-.multi-live button{margin:0;min-width:120px}
 .multi-latency,.multi-screen-off{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
 .multi-help{margin-top:12px}.multi-help .muted{margin-top:8px}
 .multi-grid{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start;gap:18px;margin-top:12px;min-width:0;width:100%}
@@ -230,13 +231,13 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 </head>
 <body>
 <main>
-<header><h1>EasyADB <span>/ 远程设备工作台</span></h1><p class="hint">先在设备管理中明确选择地址并手动连接，再为任意 1～4 台已连接设备配置画质、开启投屏；每台远控分别手动启用，不自动连接或重试。</p></header>
+<header><h1>EasyADB <span>/ 远程设备工作台</span></h1><p class="hint">在设备管理中选择 IP 后会主动连接一次，点击加载/刷新设备也会对非投屏设备尝试连接一次；无后台轮询、不自动切换 IP 或重试。</p></header>
 <div class="workspace">
  <div class="inventory-drawer" id="inventoryDrawer">
  <section class="panel inventory-panel" id="inventoryPanel" aria-label="设备管理" inert>
   <div class="heading"><div><div class="inventory-title-row"><h2>设备管理</h2>
-    <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载设备</button></div></div>
-    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP:端口保存为第三条线路，不自动连接或回退。</p>
+    <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载/刷新设备</button></div></div>
+    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP 保存为第三条线路，三条线路共用 ADB 端口；切换 IP 时主动连接一次，不自动回退。</p>
     <label class="inventory-opacity-setting" for="inventoryOpacity">抽屉透明度
      <input id="inventoryOpacity" type="range" min="0" max="60" step="5" value="20" aria-label="设备管理抽屉透明度">
      <output id="inventoryOpacityValue" for="inventoryOpacity">20%</output>
@@ -263,7 +264,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
   <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理（5 秒无交互自动收起），不占用画面空间。每路画面按实际视频宽度展示，空间不足时自动换行；点击画面右侧悬浮按钮操作。</p></div></div>
-  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选设备左侧「选择」并点击「批量投屏」，或在对应设备行单独开启画面。</div>
+  <div id="multiInfo" class="status" role="status" aria-live="polite">勾选已连接设备后点击「批量投屏」，也可点击设备标题中 ADB 端口后的投屏图标单独开启或关闭画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
 </div>
@@ -287,12 +288,22 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   </details>
  </div>
 </dialog>
+<dialog class="device-dialog" id="tempDialog" aria-labelledby="tempDialogTitle">
+ <div class="modal-head"><h2 id="tempDialogTitle">添加临时 IP</h2><button class="secondary" type="button" id="closeTempDialog" aria-label="关闭临时 IP 弹窗">×</button></div>
+ <div class="modal-body"><form id="tempForm">
+  <label for="tempIp">临时 IPv4</label><input id="tempIp" required autocomplete="off" spellcheck="false" placeholder="例如 10.10.10.4">
+  <label for="tempSharedPort">ADB 共用端口（组网 / 内网 / 临时 IP）</label>
+  <input id="tempSharedPort" type="number" required min="1" max="65535" placeholder="共用端口">
+  <div id="tempMessage" class="status error modal-status" role="alert" hidden></div>
+  <div class="modal-actions"><button type="button" class="secondary" id="cancelTempDialog">取消</button><button type="submit" id="saveTempDialog">保存临时 IP 与共用端口</button></div>
+ </form></div>
+</dialog>
 <dialog class="device-dialog" id="groupDialog" aria-labelledby="groupFormTitle">
  <div class="modal-head"><h2 id="groupFormTitle">添加分组</h2><button class="secondary" type="button" id="closeGroup" aria-label="关闭分组弹窗">×</button></div>
  <div class="modal-body"><form id="groupForm">
   <label for="groupName">分组名称</label><input id="groupName" required maxlength="64" placeholder="家里 OpenWrt">
   <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
-  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。组网/内网 IP 共用设备的一个 ADB 端口；临时地址保留自己的独立端口。</p>
+  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。组网、内网、临时 IP 共用一个 ADB 端口。</p>
   <details class="group-discovery-config" id="groupDiscoveryPanel">
    <summary>OpenWrt 发现（可选，按分组配置）</summary>
    <label for="groupOpenWrtUrl">RPCD 地址</label><input id="groupOpenWrtUrl" placeholder="http://10.10.10.2/ubus" autocomplete="off" spellcheck="false">
@@ -320,7 +331,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <div id="firstPairMessage" class="status modal-status" role="status" aria-live="polite" hidden></div>
    <div class="modal-actions"><button class="secondary" id="cancelFirstPair" type="button">取消</button><button id="submitFirstPair" type="submit">执行配对</button></div>
   </form>
-  <p class="hint">配对成功后关闭弹窗，仍需手动点击设备「连接」。不会自动重试或切换 IP。</p>
+  <p class="hint">配对成功后可点击当前 IP 重新选择并触发一次连接，或点击加载/刷新设备；不会后台重试或自动切换 IP。</p>
  </div>
 </dialog>
 <dialog class="device-dialog lab-dialog" id="displayLabDialog" aria-labelledby="labTitle">
@@ -386,7 +397,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <script src="/display-lab.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
+let devices=[],groups=[],selected=null,editing=null,editingTemp=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
 const managementSelected=new Set(); // one selection for every batch action
 let multiView=null,displayLabView=null;
 const scanningGroups=new Set();
@@ -623,14 +634,15 @@ function render(){
    if(d.model)title.append(elem('span','device-model','（'+d.model+'）'));
    if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
    title.append(elem('span','device-port','ADB '+d.port));
+   if(multiView)title.append(multiView.projectionButton(d));
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':''));
     const target=action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target');
-    target.disabled=loading||chosen||Boolean(multiView&&multiView.isBusyFor(d.id));
+    target.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
     target.setAttribute('aria-pressed',String(chosen));
     target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
-    target.title=chosen?'当前使用此线路，点击另一地址即可切换':'点击将此地址设为当前连接线路（不会自动连接）';
+    target.title=chosen?'点击对此 IP 主动连接一次':'选择此 IP 并主动连接一次（不自动回退）';
     row.append(target);
     if(route==='temp'){
      const del=action('×',()=>removeTempAddress(d.id),'address-remove');
@@ -650,10 +662,9 @@ function render(){
    addAddress('组网 IP','mesh',d.mesh_ip||d.ip);
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
    if(d.temp_ip)addAddress('临时 IP','temp',d.temp_ip);
-   const editor=elem('form','temp-editor');editor.hidden=true;
    const addressList=elem('div','device-addresses');
    addressList.append(...addressRows);
-   const plus=action('＋',()=>openTempEditor(d,editor),'address-add');
+   const plus=action('＋',()=>openTempEditor(d),'address-add');
    plus.title=d.temp_ip?'修改临时 IP 与共用端口':'添加临时 IP';
    plus.setAttribute('aria-label',plus.title);
    plus.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
@@ -662,13 +673,14 @@ function render(){
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
-   const connect=action('连接',()=>runConnect(d.id));
-   const change=action('编辑',()=>edit(d.id));
    const labButton=action('电脑模式实验',()=>displayLabView.open(d.id),'secondary');
-   connect.disabled=change.disabled=loading||locked;
-   actions.append(connect,change,labButton);
+   actions.append(labButton);
    labButton.disabled=loading||!loaded;
-   primary.append(actions,editor);item.append(primary);
+   const change=action('✎',()=>edit(d.id),'device-edit-icon');
+   change.title='编辑 '+d.name;
+   change.setAttribute('aria-label','编辑设备 '+d.name);
+   change.disabled=loading||locked;
+   primary.append(actions);item.append(primary,change);
    const quality=elem('div','device-quality');
    const row=qualityRows.get(d.id);
    if(row){row.prepend(adbStatusBadge(d));quality.append(row);}
@@ -723,7 +735,8 @@ async function load(quiet=false){
   const availableIds=new Set(data.map(d=>d.id));
   for(const id of managementSelected)if(!availableIds.has(id))managementSelected.delete(id);
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
- }catch(e){if(!quiet)message(e.message,'error');}
+  return true;
+ }catch(e){if(!quiet)message(e.message,'error');return false;}
 }
 function reset(){
  editing=null;$('form').reset();$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
@@ -848,63 +861,85 @@ async function switchRoute(id,route){
  loading=true;render();
  message('正在保存当前连接地址…');
  try{
-  const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
-   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
-  })).json();
-  devices=devices.map(d=>d.id===id?result:d);
-  await load(true);
-  message('已切换为'+({lan:'内网 IP',temp:'临时 IP',mesh:'组网 IP'}[route]||'所选线路')+'，需要点击「连接」才能建立 ADB 连接','ok');
- }catch(e){message(e.message,'error');await load(true);}
- finally{loading=false;render();}
+  const current=devices.find(d=>d.id===id);
+  if(!current)throw Error('设备已从列表移除');
+  if(current.selected_route!==route){
+   const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
+    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
+   })).json();
+   devices=devices.map(d=>d.id===id?result:d);render();
+  }
+  // Exactly one explicit connect for the newly selected route. No fallback or retry.
+  const connected=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
+  devices=devices.map(d=>d.id===id?connected:d);
+  message('已切换为'+({lan:'内网 IP',temp:'临时 IP',mesh:'组网 IP'}[route]||'所选线路')+'并连接 '+connected.selected_serial,'ok');
+ }catch(e){message('地址切换/连接：'+e.message,'error');}
+ finally{await load(true);loading=false;render();}
 }
-function openTempEditor(d,editor){
+function openTempEditor(d){
  if(loading||multiView&&multiView.isBusyFor(d.id))return;
- editor.replaceChildren();editor.hidden=false;
- const ipLabel=elem('label','','临时 IPv4'),ip=elem('input');
- ip.required=true;ip.placeholder='例如 10.10.30.206';ip.value=d.temp_ip||'';
- ip.setAttribute('autocomplete','off');ipLabel.append(ip);
- const portLabel=elem('label','','ADB 共用端口（组网 / 内网 / 临时 IP）'),port=elem('input');
- port.type='number';port.required=true;port.min='1';port.max='65535';port.placeholder='共用端口';
- port.value=String(d.port);portLabel.append(port);
- const save=elem('button','','保存临时 IP 与共用端口');save.type='submit';
- const cancel=action('取消',()=>{editor.hidden=true;},'secondary');
- editor.append(ipLabel,portLabel,save,cancel);
- editor.onsubmit=event=>{
-  event.preventDefault();
-  if(!editor.hidden)saveTempAddress(d.id,ip.value.trim(),Number(port.value));
- };
- ip.focus();
+ editingTemp=d.id;
+ $('tempDialogTitle').textContent=d.temp_ip?'修改临时 IP':'添加临时 IP';
+ $('tempIp').value=d.temp_ip||'';
+ $('tempSharedPort').value=String(d.port);
+ $('tempMessage').hidden=true;$('tempMessage').textContent='';
+ $('tempDialog').showModal();$('tempIp').focus();
 }
+function closeTempDialog(){if(loading)return;$('tempDialog').close();}
+$('closeTempDialog').addEventListener('click',closeTempDialog);
+$('cancelTempDialog').addEventListener('click',closeTempDialog);
+$('tempDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('tempDialog').addEventListener('close',()=>{editingTemp=null;});
+$('tempForm').addEventListener('submit',async ev=>{
+ ev.preventDefault();
+ const id=editingTemp;
+ if(!id||loading)return;
+ const ip=$('tempIp').value.trim(),port=Number($('tempSharedPort').value);
+ const success=await saveTempAddress(id,ip,port);
+ if(success)$('tempDialog').close();
+});
 async function saveTempAddress(id,ip,port){
- if(loading||multiView&&multiView.isBusyFor(id))return;
+ if(loading||multiView&&multiView.isBusyFor(id))return false;
  loading=true;render();message('正在保存临时线路…');
  try{
   await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})
   });
-  await load(true);message(ip?'临时 IP 已保存；共用端口已同步至组网、内网及临时线路，连接前请手动重新连接':'临时 IP 已移除，共用端口保持不变；如原线路已选中，则已恢复组网线路（未自动连接）','ok');
- }catch(e){message(e.message,'error');await load(true);}
- finally{loading=false;render();}
+  await load(true);message(ip?'临时 IP 与共用端口已保存；请选择 IP 或点击加载/刷新设备后连接':'临时 IP 已移除，共用端口保持不变','ok');
+  return true;
+ }catch(e){
+  message(e.message,'error');
+  if($('tempDialog').open){$('tempMessage').hidden=false;$('tempMessage').textContent=e.message;}
+  await load(true);return false;
+ }finally{loading=false;render();}
 }
 function removeTempAddress(id){
  const d=devices.find(x=>x.id===id);
  if(!d||loading||multiView&&multiView.isBusyFor(id))return;
  if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
 }
-async function runConnect(id){
+async function loadAndConnect(){
  if(loading)return;
- if(multiView&&multiView.isBusyFor(id)){
-  message('这台设备正在投屏或启动中，请先停止此路；可继续连接其他设备。','error');return;
- }
- select(id);loading=true;render();message('正在连接所选设备…');
+ loading=true;render(); // Guard rapid double-clicks before the first request.
+ const ok=await load(true);
+ if(!ok){loading=false;render();message('设备列表加载失败，请检查访问密钥或服务端连接','error');return;}
+ const candidates=devices.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const skipped=devices.length-candidates.length;
+ if(!candidates.length){loading=false;render();message('设备列表已刷新；没有需要连接的空闲设备','ok');return;}
+ message('设备列表已刷新，正在并发连接 '+candidates.length+' 台设备（最多 4 台）…');
+ let results;
  try{
-  const d=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
-  devices=devices.map(x=>x.id===id?d:x);message(d.name+' 已连接','ok');
-  await load(true);
- }catch(e){message(e.message,'error');await load(true);}
- finally{loading=false;render();}
+  results=await runDeviceBatch(candidates,async d=>{
+   if(multiView&&multiView.isBusyFor(d.id))throw Error('已启动投屏，跳过');
+   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
+  },(done,total)=>message('本次连接：已完成 '+done+' / '+total+' 台'));
+ }finally{
+  await load(true);loading=false;render();
+ }
+ const success=results.filter(result=>result.status==='fulfilled').length;
+ message('刷新并连接完成：成功 '+success+' 台，失败 '+(results.length-success)+' 台，投屏中跳过 '+skipped+' 台；每台仅尝试一次，不自动切换线路。',success===results.length?'ok':'error');
 }
-$('load').addEventListener('click',()=>load());
+$('load').addEventListener('click',loadAndConnect);
 $('token').addEventListener('input',()=>{if(multiView)multiView.closeAll();loaded=false;devices=[];groups=[];selected=null;managementSelected.clear();render();});
 $('bulkSelectAll').addEventListener('change',()=>{
  if(loading||!loaded)return;
