@@ -496,6 +496,12 @@ async function load(quiet=false){
  try{
   const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
   devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected))selected=null;
+  // Only read NAS persistence. Page load never triggers OpenWrt scan.
+  await Promise.all(configs.filter(g=>g.discovery_configured).map(async g=>{
+   try{const data=await(await api('/api/groups/'+encodeURIComponent(g.name)+'/discovery/last')).json();
+    if(data.last)discoveryResults.set(g.name,data.last);
+   }catch{/* A missing history must not break device management. */}
+  }));
   const availableIds=new Set(data.map(d=>d.id));
   for(const id of managementSelected)if(!availableIds.has(id))managementSelected.delete(id);
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
@@ -754,7 +760,7 @@ $('deleteGroup').addEventListener('click',async()=>{
  loading=true;render();
  try{
   const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
-  $('groupDialog').close();groupOpen.delete('named:'+name);
+  $('groupDialog').close();groupOpen.delete('named:'+name);discoveryResults.delete(name);
   await load(true);
   message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
@@ -774,12 +780,16 @@ $('groupForm').addEventListener('submit',async ev=>{
  loading=true;render();
  const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
  try{
+  const previousName=editingGroup,previous=groups.find(g=>g.name===editingGroup);
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
   const saved=await(await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
   editingGroup=saved.name; // If discovery config fails, retry PUT rather than duplicate POST.
+  if(previousName&&previousName!==saved.name){
+   const old=discoveryResults.get(previousName);discoveryResults.delete(previousName);
+   if(old)discoveryResults.set(saved.name,old);
+  }
   const routerUrl=$('groupOpenWrtUrl').value.trim(),routerUser=$('groupOpenWrtUser').value.trim();
-  const original=groups.find(g=>g.name===saved.name);
-  const hadDiscovery=Boolean(original&&original.discovery_configured);
+  const hadDiscovery=Boolean(previous&&previous.discovery_configured);
   if(routerUrl){
    await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{
     method:'PUT',headers:{'Content-Type':'application/json'},
