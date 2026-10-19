@@ -60,7 +60,10 @@ assert "disabled: blocked ? '' : null" in code
 assert "disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null" in code
 assert "手动刷新组件状态" in code and "grid-template-columns" in code
 assert "poll.add(" not in code and "'require poll'" not in code
-assert "cbi-button-positive" in code and "cbi-button-negative" in code
+assert "avahi-action" in code and "avahi-service-grid" in code
+assert "avahi-result-table" in code and "E(\'thead\'" in code and "E(\'tbody\'" in code
+assert "安装完整" not in code and "operationDetails" not in code and "refreshIndex" not in code
+assert "/usr/libexec/luci-avahi-web package refresh" not in admin["write"]["file"]
 assert "Only authenticated EasyADB requests" not in code
 make=pathlib.Path("Makefile").read_text()
 assert "+avahi-dbus-daemon" not in make and "+avahi-utils" not in make
@@ -183,12 +186,13 @@ fi
 "$TEMP/helper" package apply install avahi | grep -q Applied
 "$TEMP/helper" package apply upgrade dbus | grep -q Applied
 "$TEMP/helper" package apply remove avahi | grep -q Applied
-"$TEMP/helper" package refresh | grep -q Applied
+if "$TEMP/helper" package refresh >/dev/null 2>&1; then
+    echo "Removed package refresh API is still accessible" >&2; exit 1
+fi
 grep -qx -- '--simulate add avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'add avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'upgrade dbus' "$TEMP/apk.log"
 grep -qx -- 'del avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
-grep -qx -- 'update' "$TEMP/apk.log"
 # The previous system may have umdns installed/running. It is out of scope:
 # neither an Avahi installation nor an Avahi upgrade may inspect it.
 MOCK_AVAHI_DAEMON=1 "$TEMP/helper" package plan install avahi | grep -q Simulation
