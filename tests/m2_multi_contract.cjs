@@ -136,8 +136,11 @@ assert(page.includes("multiView.projectionButton(d)"),'projection control lives 
 assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
 assert.doesNotMatch(page,/⇄ 切换|✓ 当前选择/,'the IP itself is the route control');
-assert.match(page,/title\.append\(elem\('span','item-name',d\.name\)\)/);
-assert.match(page,/if\(d\.model\)title\.append\(elem\('span','device-model','（'\+d\.model\+'）'\)\)/);
+assert.match(page,/const name=elem\('span','item-name',d\.name\)/);
+assert.match(page,/title\.append\(name\)/);
+assert.match(page,/name\.append\(model\)/);
+assert.match(page,/\.item-name:hover \.device-model-tooltip/);
+assert.doesNotMatch(page,/if\(d\.model\)title\.append\(elem\('span','device-model'/);
 assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-android','Android '\+d\.android_version\)\)/);
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');

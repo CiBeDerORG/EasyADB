@@ -232,8 +232,11 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "临时 ADB 端口：" not in html
         assert "target.setAttribute('aria-pressed',String(chosen))" in html
         assert "⇄ 切换" not in html and "✓ 当前选择" not in html
-        assert "title.append(elem('span','item-name',d.name))" in html
-        assert "if(d.model)title.append(elem('span','device-model','（'+d.model+'）'))" in html
+        assert "const name=elem('span','item-name',d.name)" in html
+        assert "title.append(name)" in html
+        assert "name.append(model)" in html
+        assert ".item-name:hover .device-model-tooltip" in html
+        assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version))" in html
         assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
         assert ".device-android{" in html
