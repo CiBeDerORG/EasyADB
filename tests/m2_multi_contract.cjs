@@ -23,8 +23,12 @@ class El{
 }
 const timers=new Map();let nextTimer=1;
 function advanceMenuTimers(){
- const due=[...timers.entries()];timers.clear();
- for(const [,fn] of due)fn();
+ const due=[...timers.entries()].filter(([,timer])=>timer.ms===5000);
+ for(const [id,{fn}] of due){timers.delete(id);fn();}
+}
+function advanceStopTimers(){
+ const due=[...timers.entries()].filter(([,timer])=>timer.ms===40000);
+ for(const [id,{fn}] of due){timers.delete(id);fn();}
 }
 const sockets=[];
 class WS{
@@ -38,7 +42,7 @@ class WS{
 let clock=0;
 const root={
  document:{createElement:tag=>new El(tag)},WebSocket:WS,
- setTimeout(fn,ms){assert.equal(ms,5000);const id=nextTimer++;timers.set(id,fn);return id;},
+ setTimeout(fn,ms){assert([5000,40000].includes(ms));const id=nextTimer++;timers.set(id,{fn,ms});return id;},
  clearTimeout(id){timers.delete(id);},
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
@@ -209,6 +213,14 @@ assert.match(page,/\.multi-choice>\.buttons\[hidden\],\.multi-choice>\.multi-pro
 const latency0=picker.children[0].children.at(-1).children[0];
 assert.equal(latency0.checked,true,'low latency defaults enabled for every device');
 assert.equal(multi.getChoice('id-2').low_latency,true,'B retains its own default');
+const panel0=picker.children[0].children.at(-2).children[0];
+assert.equal(panel0.checked,false,'physical display remains on by default');
+assert.equal(multi.getChoice('id-2').screen_off,false,'another phone remains independent');
+panel0.checked=true;panel0.fire('change');
+assert.equal(multi.getChoice('id-1').screen_off,true);
+assert.equal(multi.getChoice('id-2').screen_off,false);
+assert.match(page,/fab-up-wake/);
+assert.match(page,/fab-up-reconnect/);
 latency0.checked=false;latency0.fire('change');
 assert.equal(multi.getChoice('id-1').low_latency,false,'A can opt out independently');
 assert.equal(multi.getChoice('id-2').low_latency,true,'A opting out does not alter B');
@@ -237,10 +249,18 @@ assert.equal(pa.quality.video_bit_rate,20000000);
 assert.equal(pa.quality.max_size,1280);
 assert.equal(pa.quality.max_fps,60);
 assert.equal(pa.selected_serial,devices[0].selected_serial);
+assert.equal(pa.screen_off,true,'single-device choice is pinned in handshake');
 assert.equal(multi.cards.size,1);
 assert.equal(grid.children.length,1);
 a.emit('starting',{session_id:'only-one'});
 assert.equal(sockets.length,1);
+const early=multi.cards.get('id-1');
+assert.equal(early.wakeButton.disabled,false,'wake must work before first media frame');
+early.wakeButton.fire('click');
+assert.equal(JSON.parse(a.sent.at(-1)).type,'wake');
+assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
+a.emit('wake_accepted',{session_id:'only-one',message:'WAKEUP dispatched'});
+assert.equal(early.wakePending,false);
 init(a,'only-one');
 const ca=multi.cards.get('id-1');
 assert.equal(quality(0,'max_size').disabled,true,'no hot switching while streaming');
@@ -255,10 +275,12 @@ assert.equal(ca.screen.style.width,'100%');
 assert.equal(ca.box.style.width,'746px','card follows source width plus 26px of padding and borders');
 ca.fitScreen(1280,720);
 assert.equal(ca.screen.style.aspectRatio,'1280 / 720','landscape card keeps source aspect');
+assert.equal(ca.screen['data-orientation'],'landscape');
 assert.equal(ca.box.style.width,'1306px','landscape source width sets independent card width');
 ca.fitScreen(393,873);
 assert.equal(ca.box.style.width,'419px','narrow stream sets its own width');
 assert.equal(ca.screen.style.aspectRatio,'393 / 873');
+assert.equal(ca.screen['data-orientation'],'portrait');
 ca.fitScreen(720,1280);
 assert.equal(ca.logPanel.hidden,true,'diagnostics start hidden inside video');
 assert.equal(ca.menuOpen,false);
@@ -310,18 +332,19 @@ assert.equal(multi.getChoice('id-1').video_bit_rate,20000000);
 assert.equal(multi.getChoice('id-1').max_fps,60);
 select(0);select(1);
 assert.equal(startButton.disabled,false);
-startButton.fire('click');assert.equal(sockets.length,2,'sequential first launch');
-const b=sockets.at(-1);b.open();assert.equal(JSON.parse(b.sent[0]).profile,'custom');
+startButton.fire('click');assert.equal(sockets.length,3,'both selected sessions open before either phone initializes');
+const b=sockets[1],c=sockets[2];
+assert.equal(multi.cards.size,2,'all batch cards reserved immediately');
+b.open();assert.equal(JSON.parse(b.sent[0]).profile,'custom');
 b.emit('starting',{session_id:'second-a'});
-assert.equal(sockets.length,2,'starting alone does not start next');
-init(b,'second-a');
-assert.equal(sockets.length,3);
-const c=sockets.at(-1);c.open();
+assert.equal(sockets.length,3,'neither phone waits for the other first frame');
+c.open();
 assert.equal(JSON.parse(c.sent[0]).profile,'custom');
 assert.equal(JSON.parse(c.sent[0]).quality.video_bit_rate,18000000);
 assert.equal(JSON.parse(c.sent[0]).quality.max_fps,55);
 assert.equal(JSON.parse(c.sent[0]).quality.max_size,960);
 c.emit('starting',{session_id:'second-b'});init(c,'second-b');
+init(b,'second-a'); // slower A may initialize AFTER B without blocking it
 const cb=multi.cards.get('id-1'),cc=multi.cards.get('id-2');
 assert.equal(cc.toggle.disabled,false);
 cb.toggle.fire('click');b.emit('control_enabled',{session_id:'second-a'});
@@ -350,19 +373,23 @@ assert.equal(grid.children.length,2,'two selected devices create exactly two vis
 // start the same selection again. No old window may remain behind.
 multi.stopAll();
 assert.equal(b.sent.at(-1),'stop');assert.equal(c.sent.at(-1),'stop');
-b.emit('ended',{session_id:'second-a',cleanup_complete:true});
+assert.equal(multi.stopBatch.total,2,'batch stop dispatches both WS before first ack');
 c.emit('ended',{session_id:'second-b',cleanup_complete:true});
+assert.equal(multi.stopBatch.pending.has('id-1'),true,'slow A cannot block C cleanup');
+assert.equal(multi.cards.get('id-1').state,'stopping');
+b.emit('ended',{session_id:'second-a',cleanup_complete:true});
+assert.equal(multi.stopBatch,null,'independent acknowledgements settle progress');
 assert.equal(grid.children.length,0,'stop-all must clear ALL old windows');
 assert.equal(multi.cards.size,0);
 assert.equal(batchSelected.size,2,'selection is retained but restart remains manual');
 assert.equal(startButton.disabled,false);
 startButton.fire('click');
-assert.equal(grid.children.length,1,'restart adds only the first requested device');
-assert.equal(sockets.length,4);
-const d=sockets[3];d.open();d.emit('starting',{session_id:'restart-a'});init(d,'restart-a');
-assert.equal(grid.children.length,2,'restart must show exactly two NEW video cards');
+assert.equal(grid.children.length,2,'parallel restart reserves two NEW cards immediately');
 assert.equal(sockets.length,5);
-const e=sockets[4];e.open();e.emit('starting',{session_id:'restart-b'});init(e,'restart-b');
+const d=sockets[3],e=sockets[4];
+e.open();e.emit('starting',{session_id:'restart-b'});init(e,'restart-b');
+assert.equal(multi.cards.get('id-1').state,'connecting','slow peer A must not block B');
+d.open();d.emit('starting',{session_id:'restart-a'});init(d,'restart-a');
 assert.equal(grid.children.length,2,'no stale/duplicate windows after second init');
 multi.stopAll();
 d.emit('ended',{session_id:'restart-a',cleanup_complete:true});
@@ -431,14 +458,14 @@ async function waitForCheck(id){
  assert.equal(liveCardA.enabled,true,'append preserves existing remote control');
  assert.equal(liveA.readyState,WS.OPEN,'existing WS was not closed');
  assert.equal(liveA.sent.filter(x=>x.includes('"type":"control_disable"')).length,0);
- // Appending up to four must be sequential and never duplicate existing slots.
+ // Appending B+C opens both simultaneously, without changing A/F sessions.
  select(1);select(2);
- startButton.fire('click');
- const liveB=sockets.at(-1);liveB.open();liveB.emit('starting',{session_id:'append-B'});
- assert.equal(multi.cards.size,3,'wait for B init before opening C');
- init(liveB,'append-B');
- const liveC=sockets.at(-1);liveC.open();liveC.emit('starting',{session_id:'append-C'});
- init(liveC,'append-C');
+ const appendIndex=sockets.length;startButton.fire('click');
+ assert.equal(sockets.length,appendIndex+2,'both append WS opened without waiting for init');
+ assert.equal(multi.cards.size,4,'all four server slots are immediately reserved');
+ const liveB=sockets[appendIndex],liveC=sockets[appendIndex+1];
+ liveC.open();liveC.emit('starting',{session_id:'append-C'});init(liveC,'append-C');
+ liveB.open();liveB.emit('starting',{session_id:'append-B'});init(liveB,'append-B');
  assert.equal(multi.cards.size,4);
  assert.equal(grid.children.length,4);
  assert.equal(multi.cards.size,4,'fifth concurrent device unavailable');
@@ -508,16 +535,19 @@ async function waitForCheck(id){
  ownB.emit('ended',{session_id:'own-B',cleanup_complete:true});
  ownARestart.emit('ended',{session_id:'own-A2',cleanup_complete:true});
  assert.equal(grid.children.length,0);
- // A queued device can independently cancel without ever opening a WS.
+ // Parallel start has no waiting queue: stopping D must not affect C.
  batchSelected.clear();multi.updatePicker();select(2);select(3);
  const queueCount=sockets.length;startButton.fire('click');
- assert.equal(sockets.length,queueCount+1);
- assert.match(liveStatus(3),/排队中/);
- assert.match(liveButton(3).textContent,/关闭此设备画面/);
- liveButton(3).fire('click');
- assert.match(liveStatus(3),/已取消排队/);
- const ownC=sockets.at(-1);ownC.open();ownC.emit('starting',{session_id:'own-C'});init(ownC,'own-C');
- assert.equal(sockets.length,queueCount+1,'cancel queued D without opening its WS');
+ assert.equal(sockets.length,queueCount+2,'C and D both start, no queued device');
+ const ownC=sockets[queueCount],ownD=sockets[queueCount+1];
+ assert.match(liveStatus(3),/启动中/);
+ ownD.open();ownD.emit('starting',{session_id:'own-D'});
+ liveButton(3).fire('click');assert.equal(ownD.sent.at(-1),'stop');
+ assert.match(liveStatus(3),/停止中/);
+ assert.equal(multi.cards.get('id-3').closed,false,'D stop cannot cancel C');
+ ownC.open();ownC.emit('starting',{session_id:'own-C'});init(ownC,'own-C');
+ ownD.emit('ended',{session_id:'own-D',cleanup_complete:true});
+ assert.equal(multi.cards.size,1,'D acknowledgement leaves C running');
  multi.stopAll();ownC.emit('ended',{session_id:'own-C',cleanup_complete:true});
  assert.equal(grid.children.length,0);
  // The batch stop button must only stop selected devices, not all live cards.
@@ -542,6 +572,86 @@ async function waitForCheck(id){
  assert.equal(batchA.sent.at(-1),'stop');
  batchA.emit('ended',{session_id:'batch-A',cleanup_complete:true});
  assert.equal(grid.children.length,0);
+ // Explicit one-shot reconnect: must wait for acknowledged cleanup, preserve B,
+ // target the same serial and frozen quality/screen-off without adb connect.
+ batchSelected.clear();multi.updatePicker();
+ const base=sockets.length;
+ liveButton(0).fire('click');
+ const reboot=sockets.at(-1);reboot.open();reboot.emit('starting',{session_id:'user-restart'});
+ init(reboot,'user-restart');
+ const oldCard=multi.cards.get('id-1');
+ assert.equal(oldCard.reconnectButton.disabled,false);
+ liveButton(1).fire('click');
+ const peer=sockets.at(-1);peer.open();peer.emit('starting',{session_id:'peer'});init(peer,'peer');
+ const peerCard=multi.cards.get('id-2'),peerSocket=peer;
+ const beforeReconnect=sockets.length;
+ oldCard.reconnectButton.fire('click');
+ assert.equal(reboot.sent.at(-1),'stop');
+ assert.equal(sockets.length,beforeReconnect,'must not create a duplicate before cleanup ack');
+ assert.equal(oldCard.reconnectButton.disabled,true,'only one click accepted');
+ reboot.emit('ended',{session_id:'user-restart',cleanup_complete:true});
+ assert.equal(sockets.length,beforeReconnect+1,'one new session only after cleanup ack');
+ const newSocket=sockets.at(-1);newSocket.open();
+ const newRequest=JSON.parse(newSocket.sent[0]);
+ assert.equal(newRequest.selected_serial,devices[0].selected_serial);
+ assert.equal(newRequest.screen_off,true);
+ assert.equal(multi.cards.get('id-2'),peerCard);
+ assert.equal(peerCard.ws,peerSocket);
+ assert.equal(peerSocket.sent.includes('stop'),false,'peer session was not interrupted');
+ newSocket.emit('starting',{session_id:'restarted'});init(newSocket,'restarted');
+ assert.equal(multi.cards.size,2);
+ multi.stopAll();
+ peer.emit('ended',{session_id:'peer',cleanup_complete:true});
+ newSocket.emit('ended',{session_id:'restarted',cleanup_complete:true});
+ assert.equal(multi.cards.size,0);
+ // Failure/unclean cleanup must not silently restart.
+ liveButton(0).fire('click');
+ const failed=sockets.at(-1);failed.open();failed.emit('starting',{session_id:'fail-restart'});init(failed,'fail-restart');
+ const failedCard=multi.cards.get('id-1');
+ failedCard.reconnectButton.fire('click');
+ const countOnFailure=sockets.length;
+ failed.emit('ended',{session_id:'fail-restart',cleanup_complete:false});
+ assert.equal(sockets.length,countOnFailure,'dirty cleanup may not open replacement');
+ assert.equal(multi.cards.size,0);
+ assert.equal(sockets.length>=base+3,true);
+
+ // Real WebRTC stop regression: hiding a black screen/FAB must not depend on
+ // an indefinite server wait, but timeout cannot claim cleanup or reconnect.
+ root.EasyADBWebRTC={create:(_video,cbs)=>({
+  async start(){},initialize(){cbs.onState('ready');},
+  diagnostics(){return{queueBytes:0,sourceState:'connected',sourceRanges:0,
+   rangeEnd:null,currentTime:0,queueChunks:0,appendCalls:0,completedUpdates:0,
+   videoError:null,webrtcBytes:0,webrtcFrames:0};},
+  pollStats(){},resume(){},destroy(){this.destroyed=true;}
+ })};
+ multi.videoEngine='webrtc';multi.engineReady=true;multi.engineSupported=true;
+ batchSelected.clear();multi.updatePicker();
+ const webrtcCount=sockets.length;
+ liveButton(0).fire('click');
+ const rtcWS=sockets.at(-1);rtcWS.open();
+ assert.equal(JSON.parse(rtcWS.sent[0]).player,'webrtc');
+ rtcWS.emit('starting',{session_id:'webrtc-stop'});
+ init(rtcWS,'webrtc-stop');
+ const rtcCard=multi.cards.get('id-1');
+ rtcCard.main.fire('click');
+ rtcCard.stop.fire('click');
+ assert.equal(rtcWS.sent.at(-1),'stop');
+ assert.equal(rtcCard.fab.hidden,true,'stop immediately hides floating controls');
+ assert.equal(rtcCard.logPanel.hidden,true,'stop hides diagnostic overlay');
+ assert.equal(rtcCard.closed,false,'do not claim cleanup on stop request');
+ assert([...timers.values()].some(t=>t.ms===40000),'WebRTC stop has bounded no-ack wait');
+ advanceStopTimers(); // server never acknowledged cleanup: no indefinite black card
+ assert.equal(rtcCard.closed,true);
+ assert.equal(multi.cards.size,0);
+ assert.equal(grid.children.length,0);
+ assert.equal(sockets.length,webrtcCount+1,'a timeout must NOT auto-reconnect');
+ assert.equal(multi.lastLiveStatus.get('id-1'),'异常结束',
+  'timeout must NOT report cleanup_complete or falsely mark clean stop');
+ assert.match(info.textContent,/资源已释放|资源未释放|资源未确认释放/);
+ assert.equal(timers.size,0,'teardown cancels WebRTC stop timeout');
+ console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
+ console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
+ console.log('M2 parallel batch launch and out-of-order stop acknowledgements: OK');
  console.log('M2 selected-only batch stop preserves unselected live/control: OK');
  console.log('M2 independent row live status/start/stop/queue-cancel: OK');
  console.log('M2 append selected-only / active-control isolation / four-slot cap: OK');

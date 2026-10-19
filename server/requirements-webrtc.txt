@@ -1,0 +1,2 @@
+# Optional WebRTC engine: aiortc RTP/DTLS-SRTP with pre-encoded av.Packet (no transcoding).
+aiortc>=1.13,<2

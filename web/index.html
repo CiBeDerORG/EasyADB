@@ -107,7 +107,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-live-status.ready{color:#b5d8ff}
 .multi-live-status.stopping,.multi-live-status.starting,.multi-live-status.queued{color:#ecc181}
 .multi-live button{margin:0;min-width:120px}
-.multi-latency{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
+.multi-latency,.multi-screen-off{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0;color:#b8d0ee;font-size:12px;cursor:pointer}
 .multi-help{margin-top:12px}.multi-help .muted{margin-top:8px}
 .multi-grid{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start;gap:18px;margin-top:12px;min-width:0;width:100%}
 .multi-grid:empty:after{content:"勾选已连接的设备并点击开始，实时画面将显示在这里。";color:#9baec9;font-size:13px;display:flex;justify-content:center;align-items:center;text-align:center;width:100%;min-height:240px;border:1px dashed #40536f;border-radius:9px;padding:20px;background:#101a2a}
@@ -115,7 +115,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-card .heading{margin-bottom:9px;flex-wrap:wrap}
 .multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
 .multi-video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent;touch-action:auto}
-.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(54px,32%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
+.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(170px,40%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
 .multi-fab.is-open{right:12px}
 .multi-fab button{display:flex;justify-content:center;align-items:center;line-height:1;box-shadow:0 5px 17px #0008}
 .multi-fab .fab-main,.multi-fab .fab-action{position:absolute;width:42px;height:42px;border-radius:50%;padding:0;color:#fff;background:#263d66;border:1px solid #7798cf;font-size:23px}
@@ -124,6 +124,13 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-fab.is-open .fab-action:not([hidden]){opacity:1;pointer-events:auto;transform:scale(1)}
 .multi-fab.is-open .fab-action:disabled{opacity:.38;cursor:not-allowed}
 .multi-fab .fab-up{bottom:52px;right:0}
+.multi-fab .fab-up-wake{bottom:104px;right:0}
+.multi-fab .fab-up-reconnect{bottom:156px;right:0}
+.multi-screen[data-orientation="landscape"] .multi-fab{top:52%}
+.multi-screen[data-orientation="landscape"] .fab-up-wake{bottom:52px;right:52px}
+.multi-screen[data-orientation="landscape"] .fab-up-reconnect{bottom:52px;right:104px}
+.multi-screen[data-orientation="landscape"] .fab-nav-home{top:52px;right:52px}
+.multi-screen[data-orientation="landscape"] .fab-nav-recents{top:52px;right:104px}
 .multi-fab .fab-remote{right:52px;top:0}
 .multi-fab .fab-text{right:104px;top:0}
 .multi-fab .fab-nav-back{top:48px;right:0}
@@ -157,6 +164,12 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 @media(max-width:480px){
  .multi-custom{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+.lab-dialog{width:min(820px,calc(100% - 26px))!important;max-width:820px!important}
+.lab-section{border:1px solid #40536f;border-radius:10px;padding:12px;margin-top:12px}
+.lab-section h3{font-size:14px;margin:0 0 6px}.lab-section .buttons{margin-top:9px}
+.lab-pre{white-space:pre-wrap;word-break:break-word;max-height:170px;overflow:auto;
+ background:#101a2a;border:1px solid #34445e;border-radius:8px;padding:9px;font-size:12px}
+.lab-dialog select{background:#101a2a;border:1px solid #50627d;border-radius:8px;color:#fff;padding:8px}
 </style>
 </head>
 <body>
@@ -240,17 +253,57 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
   <p class="hint">配对成功后关闭弹窗，仍需手动点击设备「连接」。不会自动重试或切换 IP。</p>
  </div>
 </dialog>
+<dialog class="device-dialog lab-dialog" id="displayLabDialog" aria-labelledby="labTitle">
+ <div class="modal-head"><h2 id="labTitle">电脑模式实验室 · A/B 组</h2>
+  <button type="button" class="secondary" id="labClose" aria-label="关闭实验室">×</button></div>
+ <div class="modal-body">
+  <p class="hint">只操作当前选定的已连接 ADB 设备。新建虚拟屏幕和模拟副屏为不同实验，不能并行；实验画面沿用原有实时画面卡片。</p>
+  <div id="labStatus" class="status" role="status" aria-live="polite">等待操作</div>
+  <div id="labEnvironment" class="muted" style="margin-top:10px">尚未检测设备环境</div>
+  <div class="buttons"><button type="button" class="secondary" data-lab-action="env">检测设备环境</button></div>
+  <section class="lab-section"><h3>A 组 · scrcpy 虚拟屏幕</h3>
+   <p class="hint">固定 1920×1080 / 240 DPI；需停止此设备原有画面。A2 仅尝试启动系统设置，不代表已激活华为电脑模式。</p>
+   <div class="buttons">
+    <button type="button" data-lab-action="a1">A1 · 创建虚拟屏幕并预览</button>
+    <button type="button" class="secondary" data-lab-action="a2">A2 · 虚拟屏幕 + 打开设置</button>
+   </div>
+  </section>
+  <section class="lab-section"><h3>B 组 · 系统副屏模拟</h3>
+   <p class="hint">B1 会先持久化备份旧配置，再写入 overlay_display_devices；B2 读取真实 ID，B3 从已有显示源预览。</p>
+   <div class="buttons">
+    <button type="button" data-lab-action="b1">B1 · 模拟 1080P 副屏</button>
+    <button type="button" class="secondary" data-lab-action="b2">B2 · 扫描显示器</button>
+   </div>
+   <div class="buttons"><label for="labDisplayId" style="margin:0">显示源</label>
+    <select id="labDisplayId" aria-label="选择实验显示器"></select>
+    <button type="button" data-lab-action="b3">B3 · 在实时画面预览副屏</button>
+   </div>
+  </section>
+  <section class="lab-section"><h3>恢复及记录</h3>
+   <p id="labPending" class="hint">暂无待恢复的副屏设置</p>
+   <div class="buttons">
+    <button class="danger" type="button" id="labStop">停止此设备实验画面</button>
+    <button class="secondary" type="button" data-lab-action="restore">恢复原始副屏配置</button>
+    <button class="secondary" type="button" id="labExport">导出诊断 JSON</button>
+   </div>
+   <details><summary>显示器扫描原始输出</summary><pre class="lab-pre" id="labRaw">尚未扫描显示器</pre></details>
+   <details><summary>本轮操作日志</summary><pre class="lab-pre" id="labLogs">暂无操作记录</pre></details>
+  </section>
+ </div>
+</dialog>
 </main>
 <script src="/m2-player.js"></script>
+<script src="/m2-webrtc.js"></script>
 <script src="/m2-traffic.js"></script>
 <script src="/m2-touch.js"></script>
 <script src="/m2-metrics.js"></script>
 <script src="/m2-multi.js"></script>
+<script src="/display-lab.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
 const managementSelected=new Set(); // one selection for every batch action
-let multiView=null;
+let multiView=null,displayLabView=null;
 const groupOpen=new Map();
 function adbStatusBadge(d){
  // The selected address is not proof of an active ADB connection.
@@ -282,6 +335,23 @@ function elem(tag,className,text){
 }
 function action(label,handler,cls='secondary'){
  const b=elem('button',cls,label);b.type='button';b.addEventListener('click',handler);return b;
+}
+// Browser requests are async, while FastAPI's sync ADB endpoints execute in
+// separate server threadpool workers. Bound this batch to four concurrent
+// devices: a slow/offline phone must never block the other selected phones.
+async function runDeviceBatch(items,task,onProgress,parallelism=4){
+ const results=new Array(items.length);let next=0,completed=0;
+ const workers=Array.from({length:Math.min(parallelism,items.length)},async()=>{
+  while(next<items.length){
+   const index=next++; // claimed before the first await: one worker per device
+   try{results[index]={status:'fulfilled',value:await task(items[index])};}
+   catch(error){results[index]={status:'rejected',reason:error};}
+   completed++;
+   onProgress?.(completed,items.length,items[index],results[index]);
+  }
+ });
+ await Promise.all(workers);
+ return results;
 }
 function select(id){selected=id;render();}
 function render(){
@@ -355,11 +425,13 @@ function render(){
    const connect=action('连接',()=>runConnect(d.id));
    const change=action('编辑',()=>edit(d.id));
    const removeButton=action('删除',()=>remove(d.id),'danger');
+   const labButton=action('电脑模式实验',()=>displayLabView.open(d.id),'secondary');
    const tempEdit=action(d.temp_ip?'修改临时 IP':'＋ 临时 IP',()=>openTempEditor(d,editor),'secondary');
    const tempRemove=d.temp_ip?action('移除临时 IP',()=>removeTempAddress(d.id),'secondary'):null;
    connect.disabled=change.disabled=removeButton.disabled=tempEdit.disabled=loading||locked;
    if(tempRemove)tempRemove.disabled=loading||locked;
-   actions.append(connect,change,tempEdit);
+   actions.append(connect,change,tempEdit,labButton);
+   labButton.disabled=loading||!loaded;
    if(tempRemove)actions.append(tempRemove);
    actions.append(removeButton);
    const editor=elem('form','temp-editor');editor.hidden=true;
@@ -552,16 +624,24 @@ $('bulkConnect').addEventListener('click',async()=>{
  const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
- loading=true;render();let success=0;const failed=[];
- for(const d of candidates){
-  message('批量连接中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
-  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：已启动投屏，跳过');continue;}
-  try{
-   await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'});
-   success++;
-  }catch(e){failed.push(d.name+'：'+e.message);}
+ loading=true;render();
+ message('批量连接：'+candidates.length+' 台设备并发执行（最多同时 4 台）…');
+ let results;
+ try{
+  results=await runDeviceBatch(candidates,async d=>{
+   if(multiView&&multiView.isBusyFor(d.id))throw Error('已启动投屏，跳过');
+   // This existing per-device POST is a sync FastAPI endpoint, served by
+   // separate backend threads; DeviceManager locks ONLY this device's ID.
+   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
+  },(done,total)=>message('批量连接中：已完成 '+done+' / '+total+' 台（最多 4 台并发）'));
+ }finally{
+  await load(true);loading=false;render();
  }
- await load(true);loading=false;render();
+ let success=0;const failed=[];
+ results.forEach((result,i)=>{
+  if(result.status==='fulfilled')success++;
+  else failed.push(candidates[i].name+'：'+(result.reason?.message||'连接失败'));
+ });
  message('批量连接完成：成功 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
   (failed.length?'；'+failed.join('；'):'')+'。未自动切换线路。',failed.length?'error':'ok');
 });
@@ -718,6 +798,10 @@ multiView=EasyADBMulti.create({
   method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile})
  })).json(),
  onChange:()=>render()
+});
+displayLabView=EasyADBDisplayLab.create({
+ dialog:$('displayLabDialog'),getDevice:id=>devices.find(d=>d.id===id),
+ api,multiView
 });
 render();
 </script>

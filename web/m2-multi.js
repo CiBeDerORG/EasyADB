@@ -30,7 +30,7 @@ const choice=(options,value)=>{
  select.value=String(value);return select;
 };
 const defaults=()=>({profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24,
- low_latency:true});
+ low_latency:true,screen_off:false});
 const qualityPayload=v=>v.profile==='custom'
  ?{profile:'custom',quality:{max_size:v.max_size,video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
  :{profile:v.profile};
@@ -41,6 +41,22 @@ class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
+  this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
+  this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
+  if(typeof root.fetch==='function'){
+   this.engineReady=false;
+   root.fetch('/api/m2/video-engine',{cache:'no-store'})
+    .then(r=>{if(!r.ok)throw Error('无法加载服务端视频引擎配置');return r.json();})
+    .then(data=>{
+     if(!['mse','webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
+     this.videoEngine=data.engine;this.engineSupported=data.implemented===true;
+     this.engineReady=true;
+     this.status('当前视频引擎：'+({mse:'FFmpeg + MSE',webrtc:'WebRTC',
+      webcodecs:'WebCodecs（尚未实现）'})[data.engine]+
+      (this.engineSupported?'':'；请在 .env 改用 mse 或 webrtc'),!this.engineSupported);
+     this.updatePicker();
+    }).catch(e=>{this.engineReady=false;this.status(e.message+'；暂不允许启动投屏',true);});
+  }
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.checking=new Set();this.lastLiveStatus=new Map();
   startButton.addEventListener('click',()=>this.start());
@@ -135,6 +151,12 @@ class MultiView{
    low.setAttribute('aria-label',d.name+' 低延迟播放实验');
    low.addEventListener('change',()=>this.setChoice(d.id,{low_latency:low.checked}));
    latency.append(low,make('span','','低延迟播放实验（仅浏览器追帧，不改变手机编码）'));
+   const panel=make('label','multi-screen-off'),screenOff=make('input');
+   screenOff.type='checkbox';screenOff.checked=value.screen_off===true;
+   screenOff.disabled=busy||!connected;
+   screenOff.setAttribute('aria-label',d.name+' 投屏时关闭手机物理屏幕');
+   screenOff.addEventListener('change',()=>this.setChoice(d.id,{screen_off:screenOff.checked}));
+   panel.append(screenOff,make('span','','投屏时关闭手机物理屏幕（远端画面继续显示）'));
    // Same-page, session-owned live status. It is intentionally NOT the
    // database's ADB connected status and never starts a background poll.
    const live=this.liveState(d.id);
@@ -154,7 +176,7 @@ class MultiView{
     if(live.active)this.stopFor(d.id);else this.startFor(d.id);
    });
    liveRow.append(liveStatus,liveButton);
-   item.append(liveRow,latency);
+   item.append(liveRow,panel,latency);
    this.picker.append(item);
   }
   // Existing cards, including pending stop/cleanup, retain their server slots.
@@ -167,8 +189,9 @@ class MultiView{
   const remaining=MAX_DEVICES-this.cards.size;
   this.startButton.disabled=this.opening||this.getManagementBusy?.()||available.length<1||
    available.length>remaining||available.some(d=>this.checking.has(d.id));
-  const selectedRunning=selectedDevices.filter(d=>this.isBusyFor(d.id));
-  this.stopButton.disabled=selectedRunning.length===0;
+  const selectedRunning=selectedDevices.filter(d=>this.cards.has(d.id)&&
+   this.cards.get(d.id).state!=='stopping');
+  this.stopButton.disabled=selectedRunning.length===0||Boolean(this.stopBatch);
   this.stopButton.textContent='批量停止投屏（'+selectedRunning.length+' 台）';
   this.startButton.textContent=(this.cards.size?'批量追加投屏':'批量投屏')+
    '（待新增 '+available.length+' 台 / 剩余 '+remaining+' 路）';
@@ -221,6 +244,19 @@ class MultiView{
   if(!additions.length)return false;
   return this._startDevices(additions);
  }
+ startLabFor(id,experiment){
+  // The lab uses the same per-device MSE card, never a second transport.
+  const d=(this.getDevices()||[]).find(item=>item.id===id);
+  if(!d||!this.isAdbReady(d)||this.isBusyFor(id)||this.opening||
+     this.cards.size>=MAX_DEVICES||this.getManagementBusy?.()||!this.getToken()||
+     !this.engineReady||!this.engineSupported)return false;
+  if(!experiment||!["new","new_settings","display"].includes(experiment.mode))return false;
+  const choice=this.getChoice(id);
+  this.lastLiveStatus.delete(id);
+  this.open(d,qualityPayload(choice),null,choice.low_latency===true,experiment,false);
+  this.updatePicker();
+  return true;
+ }
  _startDevices(additions){
   if(this.opening||this.getManagementBusy?.())return false;
   if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
@@ -229,35 +265,52 @@ class MultiView{
    this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多四路）。',true);
    this.updatePicker();return false;
   }
+  if(!this.engineReady||!this.engineSupported){this.status('当前视频引擎未就绪或尚未实现。',true);return false;}
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return false;}
   const batch=additions.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
-   lowLatency:this.getChoice(d.id).low_latency===true}));
+   lowLatency:this.getChoice(d.id).low_latency===true,
+   screenOff:this.getChoice(d.id).screen_off===true}));
   const isAppend=this.cards.size>0;
   for(const d of additions)this.lastLiveStatus.delete(d.id);
   this.opening=true;
-  // Only this explicit user-requested batch is launched sequentially.
-  // Never reopen/modify currently running WS, MSE or touch controller.
+  // Reserve the complete batch before creating cards. Every device opens
+  // its OWN WS immediately; each synchronous FastAPI startup / scrcpy worker
+  // proceeds concurrently. Do not wait for device A's first frame to start B.
   this.launchQueue=batch;
-  this.status((isAppend?'正在追加 ':'正在依次启动 ')+additions.length+
-   ' 路独立投屏；已经运行的设备保持原会话与远控。');
+  this.status((isAppend?'正在并发追加 ':'正在并发启动 ')+additions.length+
+   ' 路独立投屏；最多同时四路，已经运行的设备保持原会话与远控。');
   this._launchNext();
   this.updatePicker();
   return true;
  }
  _launchNext(){
   if(!this.opening)return;
-  const next=this.launchQueue.shift();
-  if(!next){
-   this.opening=false;this.updatePicker();return;
+  // A single JS event-loop turn atomically reserves and dispatches the batch.
+  // The sessions, offers, ADB processes and results then progress independently.
+  const pending=this.launchQueue.splice(0);
+  try{
+   for(const next of pending){
+    try{this.open(next.device,next.quality,null,next.lowLatency,null,next.screenOff);}
+    catch(error){
+     this.lastLiveStatus.set(next.device.id,'启动失败');
+     this.status(next.device.name+'：'+error.message,true);
+    }
+   }
+  }finally{
+   this.opening=false;
+   for(const card of this.cards.values())card.refresh?.();
+   this.updatePicker();
   }
-  this.open(next.device,next.quality,()=>this._launchNext(),next.lowLatency);
  }
- open(d,quality,nextLaunch,lowLatency=false){
+ open(d,quality,nextLaunch,lowLatency=false,experiment=null,screenOff=false){
   if(this.cards.has(d.id)){ // Never create a second video/WS for this device.
    if(nextLaunch)nextLaunch();
    return;
   }
-  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,
+  const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,experiment,
+   engine:this.videoEngine,
+   screenOff:screenOff===true&&!experiment,reconnectRequested:false,wakePending:false,
+   stopTimer:null,
    ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    keepSelected:false,
@@ -267,7 +320,8 @@ class MultiView{
    permissionWarningShown:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
-  header.append(make('strong','',d.name),make('span','muted',d.selected_serial));
+  header.append(make('strong','',d.name+(experiment?' · 电脑模式实验':'')),
+   make('span','muted',d.selected_serial+(experiment?.mode==='display'?' · Display '+experiment.display_id:'')));
   const screen=make('div','multi-screen');
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;
   video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
@@ -278,6 +332,7 @@ class MultiView{
   const fitScreen=(width,height)=>{
    if(!(Number.isInteger(width)&&Number.isInteger(height)&&width>0&&height>0))return;
    screen.style.aspectRatio=width+' / '+height;
+   screen.setAttribute('data-orientation',width>height?'landscape':'portrait');
    screen.style.width='100%';
    box.style.width=(width+26)+'px';
   };
@@ -288,8 +343,10 @@ class MultiView{
   });
   const state=make('div','status','正在建立本轮会话…');
   const stats=make('div','muted','等待浏览器诊断…');
-  const qualityLine=make('div','muted','本设备画质：'+briefQuality(this.getChoice(d.id))+
-   (lowLatency?' / 低延迟播放实验已开启':'')+'（本轮固定）');
+  const qualityLine=make('div','muted','视频引擎：'+(card.engine==='webrtc'?'WebRTC':'FFmpeg + MSE')+
+   ' / 本设备画质：'+briefQuality(this.getChoice(d.id))+
+   (lowLatency?' / 低延迟播放实验已开启':'')+
+   (card.screenOff?' / 已请求投屏时关闭物理屏幕':'')+'（本轮固定）');
   const detail=make('div','multi-log');
   const initInfo=make('div','muted',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
   const diagnostic=make('div','multi-check-log','等待本轮视频统计…');
@@ -300,7 +357,7 @@ class MultiView{
    xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
   xiaomi.append(xiaomiTitle,xiaomiHelp);
   detail.append(make('h4','','会话与画质'),qualityLine,state,stats,initInfo,
-   make('h4','','MSE / 资源详情'),diagnostic,
+   make('h4','',card.engine==='webrtc'?'WebRTC / 资源详情':'MSE / 资源详情'),diagnostic,
    make('h4','','本轮事件日志'),eventLog,
    make('h4','','本页历史'),history,xiaomi);
   const logPanel=make('section','multi-log-panel');logPanel.hidden=true;
@@ -320,6 +377,9 @@ class MultiView{
   main.setAttribute('aria-label','展开悬浮操作');main.setAttribute('aria-expanded','false');
   main.title='展开悬浮操作';
   const logButton=icon('fab-up','☷','查看日志');
+  const wakeButton=icon('fab-up-wake','☀','唤醒手机屏幕');
+  const reconnectButton=icon('fab-up-reconnect','↻','重连此路实时画面');
+  wakeButton.disabled=true;reconnectButton.disabled=true;
   const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
   const form=make('form','multi-text-panel');form.hidden=true;
@@ -352,10 +412,10 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,toggle,textButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,toggle,textButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
-   qualityLine,form,fab,main,logButton,logPanel,logClose,toggle,stop,
+   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,logPanel,logClose,toggle,stop,
    textButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
    menuTimer:null});
@@ -401,6 +461,8 @@ class MultiView{
   input.addEventListener('input',resetMenuTimer);
   toggle.addEventListener('pointerdown',resetMenuTimer);
   logButton.addEventListener('pointerdown',resetMenuTimer);
+  wakeButton.addEventListener('pointerdown',resetMenuTimer);
+  reconnectButton.addEventListener('pointerdown',resetMenuTimer);
   card.refreshMenu=()=>{
    fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
     (card.enabled?' is-control-enabled':'');
@@ -430,6 +492,10 @@ class MultiView{
   const refresh=()=>{
    // Control readiness belongs to scrcpy's control socket, not to the
    // browser decoder's "playing" event (which may be delayed/throttled).
+   const sessionReady=!card.closed&&card.session&&card.ws&&
+    card.ws.readyState===WebSocket.OPEN&&card.state!=='stopping';
+   wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
+   reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
    const canToggle=!card.closed&&card.ready&&!card.permissionWarningShown&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
@@ -446,7 +512,19 @@ class MultiView{
   };
   card.refresh=refresh;
   try{
-   card.player=root.EasyADBPlayers.create('mse',video,{
+   card.player=(card.engine==='webrtc'?root.EasyADBWebRTC.create(video,{
+    onState:stage=>{
+     if(card.closed)return;
+     if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='ready';mark('WebRTC 已就绪，远控独立于媒体连接');refresh();this.updatePicker();
+     }
+     if(stage==='playing'&&card.state!=='stopping'&&card.state!=='playing'){
+      card.state='playing';mark('WebRTC 画面播放中');refresh();this.updatePicker();
+     }
+     if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
+    },
+    onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
+   }):root.EasyADBPlayers.create('mse',video,{
     lowOverhead:true,lowLatency:card.lowLatency,
     onState:stage=>{
      if(card.closed)return;
@@ -461,22 +539,25 @@ class MultiView{
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
     },
     onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
-   });
+   }));
    const scheme=location.protocol==='https:'?'wss:':'ws:';
    const ws=new WebSocket(scheme+'//'+location.host+
     '/api/devices/'+encodeURIComponent(d.id)+'/m2/live');
    ws.binaryType='arraybuffer';card.ws=ws;
    ws.onopen=()=>{
     if(card.closed)return;
-    const payload={token:this.getToken(),player:'mse',selected_serial:card.serial,
+    const payload={token:this.getToken(),player:card.engine,selected_serial:card.serial,
       profile:quality.profile};
     if(quality.quality)payload.quality=quality.quality;
+    if(card.experiment)payload.display_experiment=card.experiment;
+    payload.screen_off=card.screenOff;
     ws.send(JSON.stringify(payload));
    };
    ws.onmessage=ev=>{
     if(card.closed)return;
     if(typeof ev.data!=='string'){
      if(card.state==='stopping')return;
+     if(card.engine==='webrtc'){mark('WebRTC 会话意外收到 MSE 视频片段',true);this.end(card,false);return;}
      const len=ev.data.byteLength;card.meter.record(len);card.metrics.recordBytes(len);
      try{card.player.append(new Uint8Array(ev.data));}
      catch(e){mark(e.message,true);this.end(card,false);}
@@ -488,7 +569,26 @@ class MultiView{
     }
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
-     this.updatePicker();
+     refresh();this.updatePicker();
+     if(card.engine==='webrtc')card.player.start(ws,card.session).catch(e=>{
+      if(!card.closed){mark('WebRTC Offer 失败：'+e.message,true);this.end(card,false);}
+     });
+    }else if(m.type==='webrtc_answer'){
+     if(card.engine!=='webrtc'){mark('意外的 WebRTC Answer',true);this.end(card,false);return;}
+     card.player.answer(m.sdp).catch(e=>{
+      if(!card.closed){mark('WebRTC Answer 失败：'+e.message,true);this.end(card,false);}
+     });
+    }else if(m.type==='screen_power_notice'){
+     mark(m.message||'已发送显示屏电源指令');
+    }else if(m.type==='wake_accepted'){
+     card.wakePending=false;mark(m.message||'已发送唤醒请求');refresh();
+    }else if(m.type==='wake_error'){
+     card.wakePending=false;mark(m.message||'唤醒失败',true);refresh();
+     if(m.code==='adb_disconnected')this.onDeviceDisconnected?.(card.id);
+    }else if(m.type==='lab_notice'){
+     mark(m.message||'显示器实验结果待确认');
+     this.status(d.name+'：'+(m.message||'显示器实验已执行')+
+      (Number.isInteger(m.display_id)?'（Display '+m.display_id+'）':''));
     }else if(m.type==='diagnostic'){
      if(card.session&&m.session_id===card.session&&card.state!=='stopping'&&
         ws.readyState===WebSocket.OPEN){
@@ -506,7 +606,10 @@ class MultiView{
        catch{this.end(card,false);return;}
       }
      }
-     const traffic=card.meter.sample(performance.now());
+     if(card.engine==='webrtc')card.player.pollStats(delta=>{
+       if(!card.closed){card.meter.record(delta);card.metrics.recordBytes(delta);}
+      });
+      const traffic=card.meter.sample(performance.now());
      const pd=card.player.diagnostics();
      const stat=card.metrics.sample(video,performance.now(),{
       renderedFrames:card.frameCount,
@@ -517,24 +620,29 @@ class MultiView{
      stats.textContent=root.EasyADBMetrics.format(stat)+'｜提示：'+root.EasyADBMetrics.advice(stat)+
        '｜本路累计 '+root.EasyADBTraffic.size(traffic.totalBytes)+
        '｜本路本地进程 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+
-       fmt(m.proc_rss_mib)+' MiB（仅 FFmpeg/ADB shell）';
+       fmt(m.proc_rss_mib)+' MiB（'+(card.engine==='webrtc'?'仅 ADB shell':'仅 FFmpeg/ADB shell')+'）';
      const age=v=>Number.isFinite(v)?fmt(v/1000,2)+'s':'—';
      diagnostic.textContent='会话 '+card.session+' / ADB 检查 '+(card.adbCheckMs??'—')+'ms'+
       ' / 阶段 '+m.stage+' / 已运行 '+age(m.elapsed_ms)+
       '\n手机编码包 '+(m.phone_packets??'—')+' / 距上包 '+age(m.phone_idle_ms)+
-      ' / MP4 读取 '+(m.mux_chunks??'—')+' / 完整分片 '+(m.media_fragments??'—')+
-      ' / 距上包 '+age(m.mux_idle_ms)+
-      '\nFFmpeg 初始化 '+age(m.init_ready_ms)+
-      ' / WS 已发 '+root.EasyADBTraffic.size(m.ws_video_bytes||0)+
+      (card.engine==='webrtc'?
+       ' / WebRTC 已取帧 '+(m.webrtc_sent_frames??0)+' / 入轨队列丢帧 '+(m.webrtc_dropped_frames??0):
+       ' / MP4 读取 '+(m.mux_chunks??'—')+' / 完整分片 '+(m.media_fragments??'—')+
+       ' / 距上包 '+age(m.mux_idle_ms))+
+      '\n'+(card.engine==='webrtc'?'WebRTC 首关键帧 ':'FFmpeg 初始化 ')+age(m.init_ready_ms)+
+      ' / '+(card.engine==='webrtc'?'RTP 浏览器累计接收 ':'WS 已发 ')+
+       root.EasyADBTraffic.size(card.engine==='webrtc'?pd.webrtcBytes:(m.ws_video_bytes||0))+
       ' / 浏览器收到 '+root.EasyADBTraffic.size(traffic.totalBytes)+
-      '\nMSE '+pd.sourceState+' / 区间 '+pd.sourceRanges+
+      '\n'+(card.engine==='webrtc'?'WebRTC ':'MSE ')+pd.sourceState+' / 区间 '+pd.sourceRanges+
       ' / 缓冲端 '+fmt(pd.rangeEnd,2)+'s / 播放点 '+fmt(pd.currentTime,2)+'s'+
       ' / 待追加 '+pd.queueChunks+' 块 '+pd.queueBytes+'B'+
       ' / append '+pd.appendCalls+' / update '+pd.completedUpdates+
       ' / video error '+(pd.videoError??'无')+
       '\n本路 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+fmt(m.proc_rss_mib,2)+' MiB'+
       ' / 播放倍率 '+fmt(pd.playbackRate)+'x / 低延迟实验 '+(pd.lowLatency?'开':'关')+
-      ' / Android 控制提示 '+(m.control_warning||'无已确认拒绝');
+      ' / Android 控制提示 '+(m.control_warning||'无已确认拒绝')+
+      (card.engine==='webrtc'?' / 解码帧 '+(pd.webrtcFrames??'—')+
+       ' / 丢帧 '+(pd.webrtcDrops??'—'):'');
     }else if(m.type==='init'){
      card.ready=m.control_available===true;
      card.size={width:m.width,height:m.height};
@@ -592,7 +700,13 @@ class MultiView{
      card.state='stopping';mark('正在清理此路资源…');refresh();this.updatePicker();
     }else if(m.type==='ended'){
      if(m.cleanup_complete!==true){mark('服务端未确认完整清理',true);this.end(card,false);}
-     else{mark('已停止，资源已释放');this.end(card,true);}
+     else{
+      const restart=card.reconnectRequested;
+      mark('已停止，资源已释放');this.end(card,true);
+      // Only the explicit one-shot reconnect path may create this new card,
+      // after the server has confirmed cleanup and released its slot.
+      if(restart)this.reopenAfterClean(card);
+     }
     }else if(m.type==='error'){
      mark(m.message||'本路视频异常',true);
      if(m.code==='adb_disconnected')this.onDeviceDisconnected?.(card.id);
@@ -622,6 +736,16 @@ class MultiView{
     refresh();
    }catch(e){mark('控制请求发送失败：'+e.message,true);this.end(card,false);}
   });
+  wakeButton.addEventListener('click',()=>{
+   if(wakeButton.disabled||!card.session||card.closed)return;
+   card.wakePending=true;refresh();resetMenuTimer();
+   try{card.ws.send(JSON.stringify({type:'wake',session_id:card.session}));}
+   catch(e){card.wakePending=false;mark('唤醒请求发送失败：'+e.message,true);refresh();}
+  });
+  reconnectButton.addEventListener('click',()=>{
+   if(reconnectButton.disabled)return;
+   this.reconnectFor(card.id);resetMenuTimer();
+  });
   stop.addEventListener('click',()=>this.stop(card));
   form.addEventListener('submit',ev=>{
    ev.preventDefault();resetMenuTimer();
@@ -642,6 +766,26 @@ class MultiView{
   try{card.ws.send(JSON.stringify({type,session_id:card.session,...body}));}
   catch(e){card.lastInput=false;card.keyStatus.textContent=e.message;this.end(card,false);}
  }
+ reconnectFor(id){
+  const card=this.cards.get(id);
+  if(!card||card.closed||card.reconnectRequested||card.state==='stopping'||
+     !card.session||!card.ws||card.ws.readyState!==WebSocket.OPEN||this.opening)return false;
+  card.reconnectRequested=true;
+  this.stop(card,true);this.status(card.name+'：正在清理旧实时画面，清理完成后仅重启此路。');
+  return true;
+ }
+ reopenAfterClean(previous){
+  const d=(this.getDevices()||[]).find(item=>item.id===previous.id);
+  if(!d||!this.isAdbReady(d)||d.selected_serial!==previous.serial||
+     this.isBusyFor(previous.id)||this.opening||this.cards.size>=MAX_DEVICES||
+     !this.getToken()){
+   this.status(previous.name+'：清理完成，但 ADB 已变化或当前不可启动；未自动连接手机。',true);
+   return false;
+  }
+  this.open(d,previous.quality,null,previous.lowLatency,previous.experiment,previous.screenOff);
+  this.status(previous.name+'：已按原画质和显示源重新建立一次视频会话。');
+  return true;
+ }
  stop(card,keepSelected=false){
   if(card.closed||card.state==='stopping')return;
   // A single stopped/failed card is no longer a pending append candidate
@@ -651,6 +795,21 @@ class MultiView{
   if(card.touch){card.touch.disable();}
   card.enabled=false;card.pending=false;card.lastInput=false;
   card.state='stopping';card.refresh();this.updatePicker();
+  if(card.engine==='webrtc'){
+   // Hide controls immediately while the server is cleaning this media peer.
+   // A timeout is NOT cleanup confirmation: never auto-reconnect on it.
+   card.collapseMenu();card.fab.hidden=true;card.logPanel.hidden=true;
+   card.stopTimer=root.setTimeout(()=>{
+    card.stopTimer=null;
+    if(card.closed||card.state!=='stopping')return;
+    card.reconnectRequested=false;
+    card.lastFailure='WebRTC 停止确认超时；服务端资源未确认释放，请检查 NAS 日志';
+    card.stateEl.textContent=card.lastFailure;
+    card.stateEl.className='status error';
+    this.status(card.name+'：停止确认超时，页面已移除旧画面；不代表服务端资源已释放，不会自动重连。',true);
+    this.end(card,false);
+   },40000);
+  }
   if(card.ws&&card.ws.readyState===WebSocket.OPEN){
    try{card.ws.send('stop');card.stateEl.textContent='正在请求服务端停止并清理…';}
    catch{this.end(card,false);}
@@ -668,31 +827,36 @@ class MultiView{
   this.updatePicker();return true;
  }
  stopSelected(){
-  // Only the selected rows are stopped/cancelled. Unselected sessions and
-  // their player/control sockets remain untouched.
+  // Dispatch stop over ALL selected live sessions in this event-loop turn.
+  // Every WS independently reports cleanup; no phone waits for another.
   if(!this.getBatchSelection){this.stopAll();return;}
+  if(this.stopBatch)return;
   const picked=new Set(this.getBatchSelection());
-  if(!picked.size)return;
-  const canceled=this.launchQueue.filter(item=>picked.has(item.device.id));
-  this.launchQueue=this.launchQueue.filter(item=>!picked.has(item.device.id));
-  for(const item of canceled)this.lastLiveStatus.set(item.device.id,'已取消排队');
-  for(const [id,card] of [...this.cards])
-   if(picked.has(id))this.stop(card,true);
+  const targets=[...this.cards.values()].filter(c=>picked.has(c.id)&&
+   !c.closed&&c.state!=='stopping');
+  if(!targets.length)return;
+  this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
+  for(const card of targets)this.stop(card,true);
+  this.status('已并发发送 '+targets.length+' 路停止请求；各设备独立清理，不互相等待。');
   this.updatePicker();
  }
  stopAll(){
   this.opening=false;this.launchQueue=[];
-  for(const card of [...this.cards.values()])this.stop(card,true);
+  const targets=[...this.cards.values()].filter(c=>!c.closed&&c.state!=='stopping');
+  if(targets.length&&!this.stopBatch)
+   this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
+  for(const card of targets)this.stop(card,true);
   this.updatePicker();
  }
  closeAll(){
-  this.opening=false;this.launchQueue=[];
+  this.opening=false;this.launchQueue=[];this.stopBatch=null;
   for(const card of [...this.cards.values()])this.end(card,false);
   this.updatePicker();
  }
  end(card,clean){
   if(card.closed)return;
   card.closed=true;
+  if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
   card.menuOpen=false;card.textOpen=false;
   if(card.touch){card.touch.destroy();card.touch=null;}
@@ -719,6 +883,14 @@ class MultiView{
   // Remove the terminal DOM node NOW: deleting only the registry entry left a
   // stale video card behind, so a second Start visually duplicated streams.
   card.box.remove();
+  if(this.stopBatch?.pending.has(card.id)){
+   const batch=this.stopBatch;
+   batch.pending.delete(card.id);
+   if(clean)batch.clean++;else batch.failed++;
+   this.status('批量停止进度：'+(batch.total-batch.pending.size)+' / '+batch.total+
+    ' 台；已确认清理 '+batch.clean+' 台，未确认 '+batch.failed+' 台。',batch.failed>0);
+   if(!batch.pending.size)this.stopBatch=null;
+  }
   this.lastLiveStatus.set(card.id,clean?'已停止':
    (card.lastFailure?'异常结束':'已结束 · 清理未确认'));
   if(!card.keepSelected&&this.cards.size>1)this.dropBatchSelection(card.id);

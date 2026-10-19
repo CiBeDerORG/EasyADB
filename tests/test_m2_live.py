@@ -266,6 +266,21 @@ def test_js_adapter_is_served_as_javascript_without_auth(monkeypatch, tmp_path):
         assert response.headers["cache-control"] == "no-store"
 
 
+def test_web_rtc_adapter_route_matches_page_script_and_is_not_cached(monkeypatch, tmp_path):
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    with TestClient(mod.app) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert '<script src="/m2-webrtc.js"></script>' in page.text
+        response = client.get("/m2-webrtc.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/javascript")
+        assert response.headers["cache-control"] == "no-store"
+        assert "EasyADBWebRTC" in response.text
+        assert "RTCPeerConnection" in response.text
+
+
 def test_session_traffic_meter_script_is_served_without_auth(monkeypatch, tmp_path):
     monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
     mod = importlib.import_module("server.app")

@@ -2,6 +2,7 @@
 import asyncio
 import ipaddress
 import json
+import logging
 import queue
 from urllib.parse import urlsplit
 import os
@@ -26,6 +27,11 @@ from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
 from .m2_quality import resolve_live_quality
 from .m2_touch import InvalidTouch
+from .display_lab import DisplayLab, LabError
+
+VIDEO_ENGINE = os.getenv("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
+if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
+    raise RuntimeError("EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs")
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -48,6 +54,7 @@ def adb(*args, timeout=15, input_text=None):
 
 manager = DeviceManager(store, adb)
 live_registry = LiveRegistry()
+display_lab = DisplayLab(adb, DB_PATH + '.display-lab.json')
 
 # Only active, user-started WebSocket sessions have a watchdog. The client
 # acknowledges existing diagnostic events rather than running a hidden timer.
@@ -194,6 +201,12 @@ def m2_player_script():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/m2-webrtc.js")
+def m2_webrtc_script():
+    return FileResponse(ROOT / "web" / "m2-webrtc.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/m2-traffic.js")
 def m2_traffic_script():
     return FileResponse(ROOT / "web" / "m2-traffic.js", media_type="application/javascript",
@@ -209,6 +222,12 @@ def m2_touch_script():
 @app.get("/m2-metrics.js")
 def m2_metrics_script():
     return FileResponse(ROOT / "web" / "m2-metrics.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/display-lab.js")
+def display_lab_script():
+    return FileResponse(ROOT / "web" / "display-lab.js", media_type="application/javascript",
                         headers={"Cache-Control": "no-store"})
 
 
@@ -275,6 +294,8 @@ def create_group(payload: GroupInput):
 def update_group(group_name: str, payload: GroupInput):
     name, prefix = clean_group(payload)
     old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
+    if any(display_lab.has_pending(id) for id in old_members):
+        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
     try:
         result = store.update_group(group_name, name, prefix)
     except sqlite3.IntegrityError:
@@ -293,6 +314,9 @@ def update_group(group_name: str, payload: GroupInput):
 def delete_group(group_name: str):
     # Clear the cached route after the DB transaction has safely moved all
     # members to the ungrouped category; never disconnect or delete a device.
+    if any(display_lab.has_pending(d["id"]) for d in store.list()
+           if d["group_name"] == group_name):
+        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
     result = store.delete_group(group_name)
     if result is None:
         raise HTTPException(404, "找不到该分组")
@@ -322,6 +346,8 @@ def refresh_devices():
 
 @app.put("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def update_device(device_id: str, payload: DeviceInput):
+    if display_lab.has_pending(device_id):
+        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
     original = get_device(device_id)
     data = clean_input(payload)
     try:
@@ -340,6 +366,8 @@ def update_device(device_id: str, payload: DeviceInput):
 
 @app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
+    if display_lab.has_pending(device_id):
+        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
     get_device(device_id)
     if not store.delete(device_id):
         raise HTTPException(404, "找不到该设备")
@@ -354,6 +382,8 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
     # Reject while a server-side live slot is owned (including cleanup).
     with manager._device_lock(device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "请先恢复该设备的副屏实验，再修改线路")
         original = get_device(device_id)
         with live_registry.lock:
             session = live_registry.sessions.get(device_id)
@@ -384,6 +414,8 @@ def select_device_route(device_id: str, payload: RouteInput):
     # Use the same lock as connect, refresh and screenshot. Switching changes
     # persisted preference only; no hidden adb connect or automatic fallback.
     with manager._device_lock(device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "请先恢复该设备的副屏实验，再切换线路")
         if payload.route not in ("mesh", "lan", "temp"):
             raise HTTPException(400, "请选择组网 IP、内网 IP 或临时 IP")
         try:
@@ -442,6 +474,73 @@ def m2_video_probe(device_id: str, payload: VideoProbeInput):
             raise HTTPException(502, str(exc)) from None
 
 
+
+def lab_connected_serial(device_id):
+    device = get_device(device_id)
+    serial = selected_address(device)
+    if not serial or manager.serial_for(device) != serial or not is_connected(serial):
+        raise HTTPException(409, "请先手动连接当前选定的 ADB 地址")
+    return serial
+
+
+@app.get("/api/devices/{device_id}/display-lab/state", dependencies=[Depends(authorize)])
+def display_lab_state(device_id: str):
+    get_device(device_id)
+    return display_lab.state(device_id)
+
+
+@app.post("/api/devices/{device_id}/display-lab/environment", dependencies=[Depends(authorize)])
+def display_lab_environment(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        try:
+            result = display_lab.environment(device_id, serial)
+            display_lab._log(device_id, "环境检测", serial, "检测到显示器 " + str(result["display_ids"]))
+            return result
+        except LabError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/scan", dependencies=[Depends(authorize)])
+def display_lab_scan(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        try:
+            result = display_lab.scan(serial)
+            display_lab._log(device_id, "B2", serial, "检测到显示器 " + str(result["display_ids"]))
+            return result
+        except LabError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/overlay", dependencies=[Depends(authorize)])
+def display_lab_overlay(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        with live_registry.lock:
+            running = live_registry.sessions.get(device_id)
+            if running is not None and not live_registry.is_cleaned(running):
+                raise HTTPException(409, "先停止此设备已有的实时画面，再模拟副屏")
+        try:
+            return display_lab.enable_overlay(device_id, serial)
+        except LabError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
+@app.post("/api/devices/{device_id}/display-lab/restore", dependencies=[Depends(authorize)])
+def display_lab_restore(device_id: str):
+    with manager._device_lock(device_id):
+        serial = lab_connected_serial(device_id)
+        with live_registry.lock:
+            running = live_registry.sessions.get(device_id)
+            if running is not None and not live_registry.is_cleaned(running):
+                raise HTTPException(409, "请先停止当前副屏预览，再恢复设置")
+        try:
+            return display_lab.restore(device_id, serial)
+        except LabError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+
 async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
     """One event-triggered check after a running stream fails, NEVER polling.
 
@@ -466,6 +565,32 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
     return True
 
 
+@app.get("/api/m2/video-engine")
+def m2_video_engine():
+    # Public capability metadata contains no token, serial, network or device data.
+    return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
+
+
+async def _close_webrtc_peer(pc, stream, device_id, registry):
+    """Keep the original aiortc close alive beyond the WS wait deadline.
+
+    Cancelling pc.close() halfway can leave aiortc internally marked closed
+    without finishing its transport teardown. Reuse this slot only when both
+    peer and scrcpy/ADB worker cleanup have been confirmed.
+    """
+    try:
+        await pc.close()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "WebRTC peer close failed for device %s session %s; keeping slot",
+            device_id, stream.session_id)
+        return False
+    stream.peer_cleanup_complete = True
+    if registry.is_cleaned(stream):
+        registry.release(device_id, stream)
+    return True
+
+
 @app.websocket("/api/devices/{device_id}/m2/live")
 async def m2_live_video(websocket: WebSocket, device_id: str):
     """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
@@ -479,6 +604,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         return
     await websocket.accept()
     stream = None
+    pc = None  # one WebRTC peer per authenticated, explicitly started WS
     receiver = None
     watchdog = None
     requested_stop = asyncio.Event()
@@ -494,10 +620,14 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         if not isinstance(supplied, str) or not secrets.compare_digest(supplied, TOKEN):
             await websocket.close(code=1008, reason="访问密钥错误")
             return
-        # Reserve a future raw H264/WebCodecs path without advertising a
-        # nonfunctional decoder or passing fMP4 bytes into VideoDecoder.
-        if initial.get("player", "mse") != "mse":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现；当前只支持 MSE。"})
+        if VIDEO_ENGINE == "webcodecs":
+            await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 mse 或 webrtc"})
+            return
+        if initial.get("player") == "webcodecs":
+            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现，请在 .env 选择 mse 或 webrtc"})
+            return
+        if initial.get("player", "mse") != VIDEO_ENGINE:
+            await websocket.send_json({"type": "error", "message": "播放器与服务器 EASYADB_VIDEO_ENGINE 配置不一致，请刷新网页"})
             return
         profile = initial.get("profile")
         try:
@@ -508,6 +638,29 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             # Reject malformed, oversized/unsupported or arbitrary options
             # BEFORE any ADB call, device lookup or new scrcpy worker.
             await websocket.send_json({"type": "error", "message": str(exc)})
+            return
+        # This is a per-session physical-panel option, never a persisted ADB
+        # device mutation. Reject truthy strings/numbers instead of coercing.
+        screen_off = initial.get("screen_off", False)
+        if type(screen_off) is not bool:
+            await websocket.send_json({"type": "error", "message": "息屏选项必须为布尔值"})
+            return
+        experiment = initial.get("display_experiment")
+        if experiment is not None:
+            if not isinstance(experiment, dict) or set(experiment) not in (
+                {"mode"}, {"mode", "display_id"}
+            ):
+                await websocket.send_json({"type": "error", "message": "显示源实验参数无效"})
+                return
+            mode = experiment.get("mode")
+            target = experiment.get("display_id")
+            if (mode not in ("new", "new_settings", "display")
+                    or (mode == "display" and (type(target) is not int or not 1 <= target <= 255))
+                    or (mode != "display" and target is not None)):
+                await websocket.send_json({"type": "error", "message": "不支持的实验显示源"})
+                return
+        if experiment is not None and screen_off:
+            await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
             return
         device = store.get(device_id)
         serial = selected_address(device) if device else None
@@ -527,33 +680,65 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 error = "当前选择的 IP 已改变，请重新开启投屏"
             else:
-                # Keep the original two-argument constructor path for legacy
-                # presets, while custom parameters are explicit and validated.
-                candidate = (LiveVideo(serial, profile=profile, quality=quality_settings)
-                             if profile == "custom" else LiveVideo(serial, profile=profile))
-                if not live_registry.reserve(device_id, candidate):
+                if experiment and experiment["mode"] in ("new", "new_settings") and display_lab.has_pending(device_id):
+                    error = "请先恢复系统副屏模拟设置，再创建 scrcpy 虚拟屏幕"
+                elif experiment and experiment["mode"] == "display":
+                    try:
+                        found = display_lab.scan(serial)["display_ids"]
+                        if experiment["display_id"] not in found:
+                            error = "指定 Display ID 不存在，请重新扫描显示器"
+                    except LabError as exc:
+                        error = str(exc)
+                # Preserve legacy constructor paths when screen-off is not selected
+                # (existing M2 tests and clients still use the original shape).
+                candidate = None
+                if not error:
+                    options = {}
+                    if profile == "custom":
+                        options["quality"] = quality_settings
+                    if experiment:
+                        options["display_source"] = experiment
+                    if screen_off:
+                        options["screen_off"] = True
+                    if VIDEO_ENGINE == "webrtc":
+                        options["video_engine"] = "webrtc"
+                    candidate = LiveVideo(serial, profile=profile, **options)
+                if candidate is None:
+                    pass
+                elif not live_registry.reserve(device_id, candidate):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
-                    try:
-                        stream.start()
-                    except (RuntimeError, OSError):
-                        # An unstarted candidate must not pin the device slot.
-                        live_registry.release(device_id, candidate)
-                        stream = None
-                        error = "视频会话未能启动，请稍后重试"
+                    if VIDEO_ENGINE == "webrtc":
+                        # Do not start capture until the offer is authenticated
+                        # and an SDP answer has been sent to this same WS.
+                        from .m2_webrtc import ScrcpyH264Track
+                        stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
+                    else:
+                        try:
+                            stream.start()
+                        except (RuntimeError, OSError):
+                            live_registry.release(device_id, candidate)
+                            stream = None
+                            error = "视频会话未能启动，请稍后重试"
+
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
+        if experiment:
+            display_lab._log(device_id, "A1" if experiment["mode"] == "new" else
+                             "A2" if experiment["mode"] == "new_settings" else "B3",
+                             serial, "启动实验视频：" + str(experiment))
         await asyncio.wait_for(websocket.send_json({
             "type": "starting", "session_id": stream.session_id,
-            "selected_serial": serial, "adb_check_ms": adb_check_ms
+            "selected_serial": serial, "adb_check_ms": adb_check_ms,
+            "player": VIDEO_ENGINE
         }), LIVE_WS_SEND_TIMEOUT)
 
         last_browser_ack = time.monotonic()
 
         async def receive_commands():
-            nonlocal manual_stop, last_browser_ack
+            nonlocal manual_stop, last_browser_ack, pc
             control_enabled = False
             last_move = 0.0
             last_input = 0.0
@@ -563,15 +748,15 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     if raw == "stop":
                         manual_stop = True
                         break
-                    if len(raw) > 1024:
-                        break  # fail closed for oversized/unrecognized control traffic
+                    if len(raw) > (32768 if VIDEO_ENGINE == "webrtc" else 1024):
+                        break  # allow one bounded WebRTC SDP offer, not arbitrary commands
                     try:
                         message = json.loads(raw)
                     except ValueError:
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
                         "control_enable", "control_disable", "touch", "input_text", "nav_key",
-                        "heartbeat"
+                        "wake", "heartbeat", "webrtc_offer"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -581,12 +766,81 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             or manager.serial_for(current) != serial or requested_stop.is_set()):
                         break  # no implicit connect, IP fallback or stale-target injection
                     kind = message["type"]
+                    if kind == "webrtc_offer":
+                        if (VIDEO_ENGINE != "webrtc" or pc is not None or
+                                set(message) != {"type", "session_id", "sdp"} or
+                                not isinstance(message["sdp"], str) or
+                                not 100 <= len(message["sdp"]) <= 24000 or
+                                "m=video " not in message["sdp"] or
+                                "a=recvonly" not in message["sdp"]):
+                            break
+                        try:
+                            from aiortc import (RTCPeerConnection, RTCConfiguration,
+                                                RTCSessionDescription, RTCRtpSender)
+                            pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+                            stream.peer_cleanup_complete = False
+                            sender = pc.addTrack(stream.webrtc_track)
+                            transceiver = next(t for t in pc.getTransceivers() if t.sender is sender)
+                            h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
+                                    if c.mimeType.lower() == "video/h264"]
+                            if not h264:
+                                raise RuntimeError("服务器 WebRTC 不支持 H.264")
+                            transceiver.setCodecPreferences(h264)
+                            @pc.on("connectionstatechange")
+                            async def on_peer_state():
+                                # Closing our own PC is an expected part of a
+                                # manual stop, never a second teardown trigger.
+                                if not requested_stop.is_set() and pc.connectionState in ("failed", "closed"):
+                                    requested_stop.set()
+                                    await asyncio.to_thread(stream.stop)
+                            await asyncio.wait_for(pc.setRemoteDescription(
+                                RTCSessionDescription(sdp=message["sdp"], type="offer")), timeout=12)
+                            answer = await asyncio.wait_for(pc.createAnswer(), timeout=12)
+                            await asyncio.wait_for(pc.setLocalDescription(answer), timeout=15)
+                            await asyncio.wait_for(websocket.send_json({
+                                "type": "webrtc_answer", "session_id": stream.session_id,
+                                "sdp": pc.localDescription.sdp
+                            }), LIVE_WS_SEND_TIMEOUT)
+                            stream.start()
+                            last_browser_ack = time.monotonic()
+                        except Exception:
+                            await websocket.send_json({"type": "error", "session_id": stream.session_id,
+                                "message": "WebRTC SDP/ICE 协商失败，请检查浏览器 H.264 支持及 NAS UDP 网络"})
+                            break
+                        continue
                     if kind == "heartbeat":
                         # Diagnostic receipt proof for THIS session, not a
                         # phone keepalive. Malformed/stale heartbeat fails closed.
                         if set(message) != {"type", "session_id"}:
                             break
                         last_browser_ack = time.monotonic()
+                        continue
+                    if kind == "wake":
+                        if set(message) != {"type", "session_id"}:
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": "唤醒请求字段无效"})
+                            continue
+                        if experiment:
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": "副屏实验不支持此主屏唤醒指令"})
+                            continue
+                        try:
+                            await asyncio.to_thread(stream.wake_display)
+                            await websocket.send_json({"type": "wake_accepted",
+                                                       "session_id": stream.session_id,
+                                                       "message": "已发送物理屏幕开启及 Android WAKEUP；请以设备状态为准"})
+                        except InvalidTouch as exc:
+                            await websocket.send_json({"type": "wake_error", "session_id": stream.session_id,
+                                                       "message": str(exc)})
+                        except VideoProbeError as exc:
+                            offline = await confirm_live_adb_loss(device_id, serial)
+                            await websocket.send_json({
+                                "type": "wake_error", "session_id": stream.session_id,
+                                "code": "adb_disconnected" if offline else "wake_failed",
+                                "message": ("ADB 已断开，请手动连接" if offline else str(exc))
+                            })
+                            if offline or stream.stop_event.is_set():
+                                break
                         continue
                     if kind == "control_enable":
                         if set(message) != {"type", "session_id"} or not touch_ready.is_set():
@@ -674,6 +928,10 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
                 if requested_stop.is_set():
                     return
+                if VIDEO_ENGINE == "webrtc" and stream.thread is None and time.monotonic() - stream._born > 25:
+                    requested_stop.set()
+                    await asyncio.to_thread(stream.stop)
+                    return
                 if time.monotonic() - last_browser_ack >= LIVE_HEARTBEAT_TIMEOUT:
                     requested_stop.set()
                     await asyncio.to_thread(stream.stop)
@@ -701,7 +959,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "diagnostic", "session_id": stream.session_id,
                     **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
-                    "ws_video_chunks": ws_video_chunks
+                    "ws_video_chunks": ws_video_chunks,
+                    "webrtc_sent_frames": (stream.webrtc_track.sent_frames
+                        if getattr(stream, "webrtc_track", None) is not None else None),
+                    "webrtc_dropped_frames": (stream.webrtc_track.dropped_frames
+                        if getattr(stream, "webrtc_track", None) is not None else None)
                 }), LIVE_WS_SEND_TIMEOUT)
                 next_diagnostic = now + 1.0
             if stream.finished.is_set() and stream.events.empty():
@@ -727,11 +989,21 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if kind == "init":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
-                    "player": "mse", "format": "fmp4",
+                    "player": VIDEO_ENGINE,
+                    **({"format": "fmp4"} if VIDEO_ENGINE == "mse" else {}),
                     "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
+            elif kind == "screen_power_notice":
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "screen_power_notice", "session_id": stream.session_id, **payload
+                }), LIVE_WS_SEND_TIMEOUT)
+            elif kind == "lab_notice":
+                display_lab._log(device_id, "虚拟屏幕结果", serial, payload.get("message", "无"))
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "lab_notice", "session_id": stream.session_id, **payload
+                }), LIVE_WS_SEND_TIMEOUT)
             elif kind == "bytes":
                 await asyncio.wait_for(websocket.send_bytes(payload), LIVE_WS_SEND_TIMEOUT)
                 ws_video_bytes += len(payload)
@@ -753,14 +1025,37 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
+        # Also suppress pc.close() connectionstatechange callbacks from trying
+        # to initiate a second teardown while the first cleanup is in progress.
+        requested_stop.set()
         if watchdog:
             watchdog.cancel()
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             await asyncio.to_thread(stream.stop)
+            # SDP/ICE negotiation runs in the receiver task. Stop it before
+            # closing the peer; otherwise it can race against pc.close().
             if receiver:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
+            if pc is not None:
+                # Keep a strong reference on this registry-owned session.
+                # Timeout only bounds the WS wait, never cancels peer teardown.
+                stream.peer_close_task = asyncio.create_task(
+                    _close_webrtc_peer(pc, stream, device_id, live_registry))
+                try:
+                    await asyncio.wait_for(asyncio.shield(stream.peer_close_task), 10)
+                except asyncio.TimeoutError:
+                    logging.getLogger(__name__).warning(
+                        "WebRTC peer close still pending for device %s session %s; "
+                        "will release only after verified late cleanup",
+                        device_id, stream.session_id)
+            if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
+                # SDP failure never launched ADB or allocated a worker resource.
+                stream.cleanup_complete = True
+                stream.finished.set()
+                if stream.webrtc_track is not None:
+                    stream.webrtc_track.stop()
             await asyncio.to_thread(stream.join, 20)
             if live_registry.is_cleaned(stream):
                 # Ended(cleanup_complete=true) only after all session-owned

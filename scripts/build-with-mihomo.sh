@@ -29,6 +29,22 @@ if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
   exec sh scripts/build-with-mihomo.sh "$@"
 fi
 
+# Docker Compose reads .env automatically, but the build helper must also
+# select the matching runtime topology BEFORE invoking compose.
+VIDEO_ENGINE="${EASYADB_VIDEO_ENGINE:-}"
+if [ -z "$VIDEO_ENGINE" ] && [ -f .env ]; then
+  VIDEO_ENGINE="$(sed -n 's/^[[:space:]]*EASYADB_VIDEO_ENGINE[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | tr -d '\r' | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//;s/^"//;s/"$//')"
+fi
+VIDEO_ENGINE="${VIDEO_ENGINE:-mse}"
+case "$VIDEO_ENGINE" in
+  mse|webcodecs) WEBRTC_RUNTIME=0 ;;
+  webrtc) WEBRTC_RUNTIME=1 ;;
+  *) echo "ERROR: EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs." >&2; exit 2 ;;
+esac
+if [ "$WEBRTC_RUNTIME" = 1 ]; then
+  echo "WebRTC: Linux host networking; allow NAS ICE dynamic UDP ports over EasyTier."
+fi
+
 if [ "$MODE" = direct ]; then
   # This compose file is self-contained: it does NOT mention proxy-net, Mihomo
   # or proxy build args. It retains the same Compose project, image, volumes
@@ -41,7 +57,11 @@ if [ "$MODE" = direct ]; then
   # No Mihomo bridge IP, --add-host, BuildKit proxy builder or custom proxy args.
   # External Docker daemon/network settings remain under the host's control.
   docker build --progress=plain --tag easyadb:local .
-  docker compose -f compose.no-proxy.yaml up -d --no-build
+  if [ "$WEBRTC_RUNTIME" = 1 ]; then
+    docker compose -f compose.webrtc.yaml up -d --no-build
+  else
+    docker compose -f compose.no-proxy.yaml up -d --no-build
+  fi
   exit 0
 fi
 
@@ -140,4 +160,8 @@ docker buildx build --builder "$BUILDER" --load --progress=plain \
   --build-arg 'NO_PROXY=localhost,127.0.0.1' \
   --build-arg 'no_proxy=localhost,127.0.0.1' \
   .
-docker compose up -d --no-build
+if [ "$WEBRTC_RUNTIME" = 1 ]; then
+  docker compose -f compose.webrtc.yaml up -d --no-build
+else
+  docker compose up -d --no-build
+fi

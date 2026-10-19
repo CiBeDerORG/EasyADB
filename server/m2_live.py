@@ -19,6 +19,7 @@ from .m2_touch import InvalidTouch, encode_touch
 from .m2_keys import encode_text, encode_key
 from .m2_quality import resolve_live_quality
 from .m2_resources import ProcessMeter
+from .display_lab import display_ids
 from .m2_control_diag import classify_control_log
 from .m2_video_probe import (
     DEVICE_NAME_BYTES, HEADER_BYTES, MAX_PACKET_BYTES, SERVER_FILE,
@@ -179,10 +180,17 @@ def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
 
 
 class LiveVideo:
-    def __init__(self, serial, profile, server_file=None, quality=None):
+    def __init__(self, serial, profile, server_file=None, quality=None, display_source=None, screen_off=False, video_engine="mse"):
         self.settings = resolve_live_quality(profile, quality)
+        if video_engine not in ("mse", "webrtc"):
+            raise ValueError("尚未实现的视频引擎")
+        self.video_engine = video_engine
+        self.webrtc_track = None  # assigned by owning WS before starting worker
         self.serial = serial
         self.profile = profile
+        self.display_source = display_source  # None keeps the original primary screen.
+        self.screen_off = screen_off is True and display_source is None
+        self._wake_requested = False  # a wake during startup cancels deferred off
         # Opaque ID for this user-started session. Used for lifecycle messages
         # and future control-channel binding; it never selects an ADB target.
         self.session_id = secrets.token_hex(12)
@@ -190,6 +198,8 @@ class LiveVideo:
         self.stop_event = threading.Event()
         self.finished = threading.Event()  # worker terminated, not necessarily fully cleaned
         self.cleanup_complete = False  # only true after all owned resources are released
+        self.peer_cleanup_complete = True  # false while a WebRTC peer is allocated
+        self.peer_close_task = None  # retain late close beyond the browser WS lifetime
         self._close_failed = False
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
@@ -262,6 +272,7 @@ class LiveVideo:
                 **resources,
                 "control_warning": self._control_warning,
                 "stage": self._phase,
+                "video_engine": self.video_engine,
                 "elapsed_ms": round((now - self._born) * 1000),
                 "phone_packets": self._phone_packets,
                 "phone_idle_ms": (round((now - self._phone_last) * 1000)
@@ -282,6 +293,12 @@ class LiveVideo:
 
     def stop(self):
         self.stop_event.set()
+        # The WebRTC sender may be awaiting track.recv() even when the phone
+        # stopped producing packets. Unblock it BEFORE pc.close() awaits sender
+        # shutdown; waiting until _run.finally (after ADB cleanup) can deadlock
+        # the manual stop path and leave a black card saying "stopping".
+        if self.webrtc_track is not None:
+            self.webrtc_track.stop()
         with self._resource_lock:
             sock = self.video_sock
             adb_proc = self.adb_proc
@@ -363,6 +380,47 @@ class LiveVideo:
                 self.stop_event.set()
                 raise VideoProbeError("scrcpy 控制通道已断开，本轮投屏必须重新开始") from exc
 
+    def set_display_power(self, on, skip_if_wake=False):
+        """scrcpy v5 control type 10 + boolean: affects physical panel, not encoding.
+
+        No implicit ADB connect, no POWER toggle and no new media/control session.
+        A successful socket write is not proof the OEM accepted display power.
+        """
+        if type(on) is not bool:
+            raise InvalidTouch("无效的屏幕电源参数")
+        with self._touch_lock:
+            if skip_if_wake and self._wake_requested:
+                return False
+            if (self.stop_event.is_set() or self.finished.is_set()
+                    or not self.control_sock or not self.touch_size or self.display_source):
+                raise InvalidTouch("当前主屏投屏控制通道不可用")
+            self._control_attempted = True
+            try:
+                self.control_sock.sendall(bytes((10, 1 if on else 0)))
+            except (OSError, socket.timeout) as exc:
+                self.stop_event.set()
+                raise VideoProbeError("屏幕电源指令发送失败，本轮投屏需重新开始") from exc
+            return True
+
+    def wake_display(self):
+        """One user-clicked wake, including startup before first encoded frame.
+
+        WAKEUP (224) is idempotent; POWER would inadvertently sleep an already
+        awake phone. The wake flag suppresses deferred startup screen-off.
+        """
+        with self._touch_lock:
+            if self.stop_event.is_set() or self.finished.is_set() or self.display_source:
+                raise InvalidTouch("当前主屏会话不可唤醒")
+            self._wake_requested = True
+            if self.control_sock and self.touch_size:
+                try:
+                    self.control_sock.sendall(bytes((10, 1)))
+                    self._control_attempted = True
+                except (OSError, socket.timeout) as exc:
+                    self.stop_event.set()
+                    raise VideoProbeError("物理屏幕开启指令发送失败") from exc
+        _run_adb(self.serial, "shell", "input", "keyevent", "224", timeout=7)
+
     def send_text(self, payload):
         self._send_input(payload, encode_text)
 
@@ -436,6 +494,41 @@ class LiveVideo:
             header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
         raise StreamStopped()
 
+    def _stream_to_webrtc(self, video, first_header, width, height, name):
+        """Forward scrcpy's complete encoded access units, without FFmpeg/MSE."""
+        if self.webrtc_track is None:
+            raise VideoProbeError("WebRTC 视频轨道尚未绑定")
+        header = first_header
+        initialized = False
+        while not self.stop_event.is_set():
+            pts, length = struct.unpack(">QI", header)
+            if pts & (1 << 63):
+                raise VideoProbeError("手机画面尺寸发生变化；请停止后重新开始投屏")
+            if not 0 < length <= MAX_FRAME_BYTES:
+                raise VideoProbeError("scrcpy H.264 媒体包大小异常")
+            payload = _socket_read(video, length, self.stop_event, adb_proc=self.adb_proc)
+            is_config = bool(pts & (1 << 62))
+            is_keyframe = bool(pts & (1 << 61))
+            if not is_config:
+                self._record_phone_packet()
+            self.webrtc_track.submit(pts & ((1 << 61) - 1), payload,
+                                     config=is_config, keyframe=is_keyframe)
+            if is_keyframe and not initialized:
+                with self._metric_lock:
+                    self._ready_at = time.monotonic()
+                if self.screen_off:
+                    if self.set_display_power(False, skip_if_wake=True):
+                        self._emit(("screen_power_notice", {"on": False,
+                            "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
+                self._emit(("init", {"width": width, "height": height,
+                                    "profile": self.profile, "requested": dict(self.settings),
+                                    "codec": "h264", "control_available": True,
+                                    "device": name.decode("utf-8", "replace")}))
+                initialized = True
+                self._phase_set("持续传输 · WebRTC H.264")
+            header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
+        raise StreamStopped()
+
     def _run(self):
         scid = f"{secrets.randbelow(0x7FFFFFFE) + 1:08x}"
         remote = f"/data/local/tmp/easyadb-live-{scid}.jar"
@@ -449,6 +542,12 @@ class LiveVideo:
                 raise StreamStopped()
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
+            before_ids = None
+            if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+                try:
+                    before_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
+                except VideoProbeError:
+                    before_ids = [0]
             with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
                 with self._resource_lock:
                     self._adb_log_fd = os.dup(adb_log.fileno())
@@ -474,6 +573,12 @@ class LiveVideo:
                     f"video_bit_rate={settings['video_bit_rate']}",
                     f"max_fps={settings['max_fps']}",
                 ]
+                if self.display_source:
+                    mode = self.display_source["mode"]
+                    if mode in ("new", "new_settings"):
+                        cmd.append("new_display=1920x1080/240")
+                    elif mode == "display":
+                        cmd.append("display_id=" + str(self.display_source["display_id"]))
                 adb_proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                                             stdout=adb_log, stderr=subprocess.STDOUT)
                 with self._resource_lock:
@@ -497,6 +602,34 @@ class LiveVideo:
                         control.close()
                         raise StreamStopped()
                     self.control_sock = control
+                if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+                    # Bounded discovery during user-started session startup only.
+                    created = None
+                    for _ in range(8):
+                        if self.stop_event.is_set():
+                            raise StreamStopped()
+                        try:
+                            current_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
+                            added = sorted(set(current_ids) - set(before_ids or [0]))
+                            if added:
+                                created = added[-1]
+                                break
+                        except VideoProbeError:
+                            pass
+                        time.sleep(0.35)
+                    notice = {"mode": self.display_source["mode"], "display_id": created}
+                    if created is None:
+                        notice["message"] = "已请求创建虚拟屏幕，但未识别新增 Display ID；请检查画面"
+                    elif self.display_source["mode"] == "new_settings":
+                        try:
+                            _run_adb(self.serial, "shell", "am", "start", "--display", str(created),
+                                     "-a", "android.settings.SETTINGS")
+                            notice["message"] = "已尝试在新增屏幕打开设置，请查看画面确认"
+                        except VideoProbeError:
+                            notice["message"] = "新增屏幕已创建，系统拒绝在该屏幕启动设置"
+                    else:
+                        notice["message"] = "检测到新增 Display ID，请查看是否出现桌面"
+                    self._emit(("lab_notice", notice))
                 name = _socket_read(video, DEVICE_NAME_BYTES, self.stop_event, adb_proc=self.adb_proc).split(b"\0", 1)[0]
                 codec = _socket_read(video, 4, self.stop_event, adb_proc=self.adb_proc)
                 if codec != b"h264":
@@ -508,6 +641,10 @@ class LiveVideo:
                 first_header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
                 with self._touch_lock:
                     self.touch_size = (width, height)
+                if self.video_engine == "webrtc":
+                    self._phase_set("等待 WebRTC H.264 关键帧")
+                    self._stream_to_webrtc(video, first_header, width, height, name)
+                    return
                 self._phase_set("等待 FFmpeg 初始化段")
 
                 # No transcoding; only repack existing H264 bytes into fMP4.
@@ -580,6 +717,11 @@ class LiveVideo:
                         with self._metric_lock:
                             self._ready_at = time.monotonic()
                             self._phase = "已生成 MP4 初始化段"
+                        if self.screen_off:
+                            # Wake clicked before first frame wins over deferred off.
+                            if self.set_display_power(False, skip_if_wake=True):
+                                self._emit(("screen_power_notice", {"on": False,
+                                    "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
                         self._emit(("init", {"mime": mime, "width": width, "height": height,
                                              "profile": self.profile, "requested": dict(self.settings),
                                              "codec": "h264", "control_available": True,
@@ -615,6 +757,8 @@ class LiveVideo:
                         os.close(fd)
                     except OSError:
                         pass
+            if self.webrtc_track is not None:
+                self.webrtc_track.stop()
             self._phase_set("结束并清理视频会话")
             # finished means the worker is terminal; cleanup_complete is the
             # stronger promise required before the device slot can be reused.
@@ -687,7 +831,7 @@ class LiveRegistry:
                 # If a bounded WS cleanup timed out but the worker eventually
                 # finished, retire it only AFTER its resources have gone.
                 finished = getattr(old, "finished", None)
-                if finished is None or not finished.is_set() or not getattr(old, "cleanup_complete", True):
+                if not self.is_cleaned(old):
                     return False
                 self.sessions.pop(device_id, None)
             # Also bound directly-authenticated WS requests, not only UI.
@@ -701,7 +845,8 @@ class LiveRegistry:
     def is_cleaned(session):
         finished = getattr(session, "finished", None)
         return bool(finished is not None and finished.is_set()
-                    and getattr(session, "cleanup_complete", True))
+                    and getattr(session, "cleanup_complete", True)
+                    and getattr(session, "peer_cleanup_complete", True))
 
     def release(self, device_id, session):
         with self.lock:

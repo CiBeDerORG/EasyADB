@@ -25,7 +25,9 @@ ENV EASYADB_SCRCPY_SERVER=/opt/easyadb/scrcpy/server
 ENV PATH="/opt/platform-tools:$PATH"
 WORKDIR /app
 COPY server/requirements.txt /app/server/requirements.txt
-RUN pip install --no-cache-dir --retries 5 --timeout 30 -r /app/server/requirements.txt
+COPY server/requirements-webrtc.txt /app/server/requirements-webrtc.txt
+RUN pip install --no-cache-dir --retries 5 --timeout 30 -r /app/server/requirements.txt \
+    && pip install --no-cache-dir --retries 5 --timeout 90 -r /app/server/requirements-webrtc.txt
 COPY server/ /app/server/
 COPY web/ /app/web/
 RUN mkdir -p /root/.android
