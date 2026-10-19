@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-avahi-web
-PKG_VERSION:=0.4.0
+PKG_VERSION:=0.5.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=CiBeDerORG
@@ -16,13 +16,13 @@ define Package/luci-app-avahi-web
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Avahi/EasyADB NAS-triggered LAN discovery agent
-  DEPENDS:=+luci-base +rpcd-mod-file +libubox +uhttpd-mod-ubus
+  DEPENDS:=+luci-base +rpcd-mod-file +libubox +uhttpd-mod-ubus +openssl-util
   PKGARCH:=all
 endef
 
 define Package/luci-app-avahi-web/description
  LuCI app for a narrowly authenticated NAS-triggered ADB mDNS scan,
- last volatile snapshot, and optional Avahi/D-Bus/umdns APK management.
+ last volatile snapshot, restricted RPCD credential management, and optional Avahi/D-Bus/umdns APK management.
 endef
 
 define Build/Prepare
