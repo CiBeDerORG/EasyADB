@@ -47,9 +47,11 @@ controller=pathlib.Path("root/usr/libexec/luci-avahi-web").read_text()
 assert "\n    browse) " not in controller and "\n    config-set) " not in controller
 assert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller
 assert '"$unit" "$(unit_flag "$unit")"' in controller
-assert "function drawRuntime(" in code and "function packageState(" in code
-assert "部分安装" in code and "缺少软件包" in code and "可能发生 mDNS" in code
-assert "poll.add(" in code and "cbi-button-positive" in code and "cbi-button-negative" in code
+assert "function drawComponents(" in code and "function packageState(" in code
+assert "组件与服务管理" in code and "缺少软件包" in code and "可能存在 mDNS" in code
+assert "手动刷新组件状态" in code and "grid-template-columns" in code
+assert "poll.add(" not in code and "'require poll'" not in code
+assert "cbi-button-positive" in code and "cbi-button-negative" in code
 assert "Only authenticated EasyADB requests" not in code
 make=pathlib.Path("Makefile").read_text()
 assert "+avahi-dbus-daemon" not in make and "+avahi-utils" not in make
