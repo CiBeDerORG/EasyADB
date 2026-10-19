@@ -71,7 +71,9 @@ printf '%s\n' "$*" >> "$MOCK_APK_LOG"
 case "$1" in
     info)
         case "$2" in
-            -e) [ "$3" = dbus ] || [ "$3" = umdns ] ;;
+            -e) [ "$3" = dbus ] || [ "$3" = umdns ] || {
+                [ "${MOCK_AVAHI_DAEMON:-0}" = 1 ] && [ "$3" = avahi-dbus-daemon ]
+            } ;;
             -v) echo "$3-1.0-r1" ;;
             *) exit 1 ;;
         esac ;;
@@ -101,6 +103,20 @@ grep -qx -- 'add avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'upgrade umdns' "$TEMP/apk.log"
 grep -qx -- 'del avahi-dbus-daemon avahi-utils' "$TEMP/apk.log"
 grep -qx -- 'update' "$TEMP/apk.log"
+# Missing avahi-utils may be installed alone, even when umdns is running.
+sed 's@^umdns_running() { pidof umdns >/dev/null 2>\&1; }$@umdns_running() { return 0; }@' "$TEMP/helper" > "$TEMP/helper-umdns"
+chmod +x "$TEMP/helper-umdns"
+MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package plan install avahi | grep -q Simulation
+MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package apply install avahi | grep -q Applied
+grep -qx -- '--simulate add avahi-utils' "$TEMP/apk.log"
+grep -qx -- 'add avahi-utils' "$TEMP/apk.log"
+if "$TEMP/helper-umdns" package plan install avahi >/dev/null 2>&1; then
+    echo 'New Avahi daemon installed while umdns was active' >&2; exit 1
+fi
+if MOCK_AVAHI_DAEMON=1 "$TEMP/helper-umdns" package plan upgrade avahi >/dev/null 2>&1; then
+    echo 'Avahi daemon upgrade allowed while umdns was active' >&2; exit 1
+fi
+
 if "$TEMP/helper" package apply install 'umdns;reboot' >/dev/null 2>&1; then
     echo 'Arbitrary package name accepted' >&2; exit 1
 fi
