@@ -1,7 +1,7 @@
-name: M2 tests
+name: EasyADB M2 and OpenWrt discovery tests
 on:
   push:
-    branches: [feat/m2-web-control, feat/display-mode-lab]
+    branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery]
 permissions:
   contents: read
 jobs:
