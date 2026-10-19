@@ -93,10 +93,19 @@ package_operation() {
     set -- $names
     IFS=$oldIFS
     set +f
+    # If only avahi-utils is missing, install that tool without touching the
+    # already installed daemon. This does not start or reconfigure an mDNS server.
+    utility_only=no
+    if [ "$action" = install ] && [ "$target" = avahi ] &&
+       "$APK" info -e avahi-dbus-daemon >/dev/null 2>&1 &&
+       ! "$APK" info -e avahi-utils >/dev/null 2>&1; then
+        set -- avahi-utils
+        utility_only=yes
+    fi
     if [ "$action" != remove ]; then
-        # Package install/upgrade scripts may start their service themselves.
-        # Require the conflicting daemon stopped before applying either.
-        if [ "$target" = avahi ] && umdns_running; then
+        # New daemon installs/upgrades can activate services through maintainer
+        # scripts; only the isolated utility repair is exempt.
+        if [ "$target" = avahi ] && [ "$utility_only" != yes ] && umdns_running; then
             fail '检测到 umdns 正在运行：安装或更新 Avahi 前请先停止 umdns'
         fi
         if [ "$target" = umdns ] && running; then
