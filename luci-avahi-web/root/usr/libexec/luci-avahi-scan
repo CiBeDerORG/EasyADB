@@ -7,19 +7,13 @@ LC_ALL=C
 export PATH LC_ALL
 STATE=/tmp/luci-avahi-web
 SNAPSHOT=$STATE/last-scan.json
-EVENTS=$STATE/events.log
 LOCK=$STATE/scan.lock
 SERVICE=_adb-tls-connect._tcp
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-log_event() {
-    printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" >> "$EVENTS"
-    tail -n 100 "$EVENTS" > "$STATE/.events.$$" && mv "$STATE/.events.$$" "$EVENTS"
-    logger -t luci-avahi-web -- "$1" 2>/dev/null || true
-}
 [ "$#" -eq 1 ] || fail 'Expected one fixed action'
 case "$1" in
-    scan|last|log) action=$1 ;;
+    scan|last) action=$1 ;;
     *) fail 'Unsupported scan action' ;;
 esac
 umask 077
@@ -35,10 +29,6 @@ case "$action" in
         [ -r "$SNAPSHOT" ] || fail 'No scan snapshot yet'
         cat "$SNAPSHOT"
         exit 0 ;;
-    log)
-        [ -r "$EVENTS" ] || exit 0
-        tail -n 100 "$EVENTS"
-        exit 0 ;;
 esac
 [ -x /usr/bin/avahi-browse ] || fail 'avahi-utils not installed'
 pidof avahi-daemon >/dev/null 2>&1 || fail 'Avahi is not running'
@@ -53,7 +43,6 @@ trap 'rm -f "$RAW" "$TABLE" "$OUT"; rmdir "$LOCK" 2>/dev/null || true' EXIT HUP 
 rc=0
 timeout 8 avahi-browse -rpt "$SERVICE" > "$RAW" 2>/dev/null || rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-    log_event "scan failed (avahi-browse exit $rc)"
     fail 'Avahi browse failed'
 fi
 # Parse Avahi's parseable semicolon format, retaining escaped \; within fields.
@@ -112,5 +101,4 @@ json_add_string storage volatile
 json_dump > "$OUT"
 chmod 0600 "$OUT"
 mv "$OUT" "$SNAPSHOT"
-log_event "scan completed: $count resolved endpoint(s)"
 cat "$SNAPSHOT"
