@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 
 from .m2_video_probe import VERSION
+from .castplus_lab import CastPlusMixin
 
 OVERLAY = "1920x1080/240"
 _ALLOWED_SETTING = re.compile(r"[A-Za-z0-9_.,;/x+-]{1,256}\Z")
@@ -32,7 +33,7 @@ def display_ids(output):
     return sorted(found)
 
 
-class DisplayLab:
+class DisplayLab(CastPlusMixin):
     def __init__(self, adb, recovery_path):
         self.adb = adb
         self.path = Path(recovery_path)
@@ -51,6 +52,7 @@ class DisplayLab:
                             self.pending[key] = value
             except (ValueError, OSError):
                 raise RuntimeError("电脑模式实验恢复记录损坏；请检查 " + str(self.path))
+        self.init_castplus()
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,16 +86,19 @@ class DisplayLab:
             result = self.scan(serial)
             result.update({"serial": serial, "android_version": version, "api_level": api,
                            "scrcpy_server_version": VERSION, "overlay_setting": setting,
-                           "pending_restore": self.pending.get(device_id)})
+                           "pending_restore": self.pending.get(device_id),
+                           "pending_castplus": self.cast_pending.get(device_id),
+                           "castplus_capabilities": self.cast_capabilities(serial)})
             return result
 
     def has_pending(self, device_id):
         with self.lock:
-            return device_id in self.pending
+            return device_id in self.pending or device_id in self.cast_pending
 
     def state(self, device_id):
         with self.lock:
             return {"pending_restore": self.pending.get(device_id),
+                    "pending_castplus": self.cast_pending.get(device_id),
                     "logs": [v for v in self.history if v["device_id"] == device_id][-40:]}
 
     def _log(self, device_id, action, serial, detail):
@@ -105,8 +110,8 @@ class DisplayLab:
 
     def enable_overlay(self, device_id, serial):
         with self.lock:
-            if device_id in self.pending:
-                raise LabError("已有待恢复的副屏模拟；请先恢复原始设置")
+            if device_id in self.pending or device_id in self.cast_pending:
+                raise LabError("已有待恢复的副屏或 Cast+ 实验；请先恢复原始设置")
             previous = self._setting(serial)
             if not _ALLOWED_SETTING.fullmatch(previous):
                 raise LabError("原始副屏配置无法安全保存，本次不执行修改")
