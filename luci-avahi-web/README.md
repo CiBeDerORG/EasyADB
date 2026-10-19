@@ -1,4 +1,4 @@
-# luci-avahi-web v0.6.0
+# luci-avahi-web v0.6.1
 
 ImmortalWrt/OpenWrt 上的轻量 EasyADB 局域网发现代理。仅管理 **Avahi、D-Bus** 两组组件，支持 LuCI 管理员手动发现 Android 无线 ADB 服务，以及 NAS 通过专用 RPCD 会话按需触发扫描。
 
@@ -21,7 +21,7 @@ ImmortalWrt/OpenWrt 上的轻量 EasyADB 局域网发现代理。仅管理 **Ava
 
 管理员在页面中创建、轮换或撤销固定用户名 `easyadb` 的 RPCD 专用登录。密钥以 OpenSSL 安全随机数生成，只在创建/轮换成功时展示一次；`/etc/config/rpcd` 仅保存密码哈希。安装 APK 不会生成默认密码，已有重名或其他设置冲突不会被覆盖。
 
-- NAS 专用 `luci-avahi-easyadb` ACL **仅**授权 `/usr/libexec/luci-avahi-scan scan`；无软件包管理、服务控制及读取其他系统文件权限。
+- NAS 专用 `luci-avahi-easyadb` ACL 同时包含 HTTP `/ubus` 入口所需的 `ubus.file.exec` 方法权限，以及下游 `file` 范围内 **仅** `/usr/libexec/luci-avahi-scan scan` 的精确命令权限；无软件包管理、服务控制及读取其他系统文件权限。
 - 已授权 LuCI 管理员拥有单独的手动 `scan` 和只读 `last` 权限。
 - 调用已有 HTTP(S) `/ubus`，经标准 RPCD `session.login` 认证，不开新端口，不提供匿名 API、Webhook 或主动上报。建议仅通过 EasyTier 内网访问并配合管理端口来源限制。
 - 每次扫描使用 `avahi-browse -rpt _adb-tls-connect._tcp`，最长 8 秒，最多 32 条已解析端点；并发扫描由锁拒绝。成功 JSON 原子覆盖唯一的 `/tmp/luci-avahi-web/last-scan.json`，重启自动清空，扫描失败保留上次成功快照并返回错误。设备的长期档案由 NAS 的 EasyADB 管理。
@@ -79,3 +79,7 @@ OpenWrt libubox 的 `jshn.sh` 初始化及 JSON 构造会暂时读取未定义�
 - NAS 授权状态仅展示当前可执行操作：未创建显示创建按钮；已授权显示重新生成密钥与撤销授权按钮。已授权账号不再保留没有意义的灰色创建按钮。
 - 密钥只在本次创建或轮换成功返回的页面中展示，不写入 Flash、浏览器存储、操作日志，也不会通过状态接口再次回显。刷新页面后无法恢复旧明文；若未保存必须轮换并同步修改 EasyADB 端的凭据。
 - 轮换失败保留当前仍显示的一次性密钥，轮换成功以新密钥替换旧展示，撤销成功清空密钥显示。没有更改 RPCD ACL、后端随机密码生成及已有扫描业务逻辑。
+
+## v0.6.1：NAS 专用账户 HTTP ubus 权限修复
+
+原 v0.6.0 的专用角色仅授予了 `read.file["/usr/libexec/luci-avahi-scan scan"]=["exec"]`，遗漏 `uhttpd-mod-ubus` 在调用 `file.exec` 前要求的 `read.ubus.file=["exec"]` 方法许可；这可能使 LuCI 管理员本地扫描成功、NAS 专用账户远程调用却收到 JSON-RPC `-32002 Access denied`。v0.6.1 补齐后者，同时继续由 rpcd-mod-file 对固定命令和参数进行二次授权，绝不授予其他任意文件执行权限，也不改变账号密码及扫描缓存。
