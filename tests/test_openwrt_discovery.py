@@ -76,6 +76,41 @@ def test_rpcd_login_scoped_scan_session_retry_and_error():
         RpcdDiscovery(denied).scan(URL, "easyadb", SECRET)
 
 
+def test_rpcd_http_jsonrpc_errors_identify_gate_and_never_echo_tokens():
+    session = "a" * 32
+    def denied_file(url, payload):
+        if payload["params"][2] == "login":
+            return {"jsonrpc": "2.0", "id": 1, "result": [0, {"ubus_rpc_session": session}]}
+        return {"jsonrpc": "2.0", "id": 1,
+                "error": {"code": -32002, "message": "Access denied"}}
+    with pytest.raises(DiscoveryError, match=r"file\\.exec.*-32002") as error:
+        RpcdDiscovery(denied_file).scan(URL, "easyadb", SECRET)
+    assert "read.ubus.file.exec" in str(error.value)
+    assert SECRET not in str(error.value) and session not in str(error.value)
+
+    def denied_login(url, payload):
+        return {"jsonrpc": "2.0", "id": 1,
+                "error": {"code": -32002, "message": "Access denied; " + SECRET}}
+    with pytest.raises(DiscoveryError, match=r"session\\.login.*-32002") as error:
+        RpcdDiscovery(denied_login).scan(URL, "easyadb", SECRET)
+    assert SECRET not in str(error.value)
+
+    def wrong_params(url, payload):
+        return {"jsonrpc": "2.0", "id": 1,
+                "error": {"code": -32602, "message": "Invalid parameters"}}
+    with pytest.raises(DiscoveryError, match=r"-32602"):
+        RpcdDiscovery(wrong_params).scan(URL, "easyadb", SECRET)
+
+    # LuCI uses JSON-RPC batching. Support a one-element response without
+    # accepting arbitrary multi-item responses or exposing the raw body.
+    def single_batch(url, payload):
+        if payload["params"][2] == "login":
+            return [{"result": [0, {"ubus_rpc_session": session}]}]
+        return [{"result": [0, {"code": 0, "stdout": json.dumps(devices(
+            ("192.168.10.206", 37819))), "stderr": ""}]}]
+    assert len(RpcdDiscovery(single_batch).scan(URL, "easyadb", SECRET)["devices"]) == 1
+
+
 def test_group_config_private_and_rename_cleanup(monkeypatch, tmp_path):
     mod = make_module(monkeypatch, tmp_path)
     with TestClient(mod.app) as client:
