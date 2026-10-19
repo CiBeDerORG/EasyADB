@@ -50,6 +50,9 @@ return view.extend({
 		var lastNode = E('div'), noticeNode = E('div');
 		var authStateNode = E('div'), authCredentialNode = E('div');
 		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
+		var operationDetails = E('details', { style: 'margin-top:12px;' }, [
+			E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]), operationOutput
+		]);
 		var busy = false, runtimeBusy = false, refreshing = false;
 		var manualButton;
 		var currentStatus = {}, currentPackages = {};
@@ -168,8 +171,10 @@ return view.extend({
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少运行文件：' + missingBins.join('、') ]));
 				if (pkg.state === 'complete' && !init)
 					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '缺少服务启动脚本：' + group.init ]));
-				if (otherRunning && !running && group.stop)
-					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '需先停止另一项 mDNS 服务才能启动。' ]));
+				if (otherRunning && group.stop)
+					missing.push(E('p', { style: 'margin:6px 0;color:#976000;' }, [ '启动、安装或更新该 mDNS 组件前，请先停止另一项 mDNS 服务。' ]));
+				if (group.id === 'dbus' && running)
+					missing.push(E('p', { style: 'margin:6px 0;opacity:.8;' }, [ 'D-Bus 正在运行，为保护依赖它的进程，禁止直接卸载。' ]));
 				return E('div', { 'class': 'cbi-section', style: 'min-width:0;margin:0;padding:15px;border:1px solid var(--border-color-medium, #d5d9dc);border-radius:8px;' }, [
 					E('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:start;flex-wrap:wrap;' }, [
 						E('div', [
@@ -196,9 +201,9 @@ return view.extend({
 						E('div', missing),
 						E('div', { style: 'display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;' }, [
 							pkgButton(pkg.state === 'partial' ? '补齐安装' : '安装',
-								group, 'install', pkg.state === 'complete' || pkg.state === 'unknown'), 
-							pkgButton('更新', group, 'upgrade', pkg.state !== 'complete'),
-							pkgButton('卸载', group, 'remove', pkg.state === 'absent' || pkg.state === 'unknown')
+								group, 'install', pkg.state === 'complete' || pkg.state === 'unknown' || otherRunning), 
+							pkgButton('更新', group, 'upgrade', pkg.state !== 'complete' || otherRunning),
+							pkgButton('卸载', group, 'remove', pkg.state === 'absent' || pkg.state === 'unknown' || running)
 						])
 					])
 				]);
@@ -238,6 +243,7 @@ return view.extend({
 		}
 		function execute(operation, group) {
 			setBusy(true);
+			operationDetails.open = true;
 			operationOutput.textContent = _('正在执行软件包操作……');
 			return control('package', [ 'apply', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
@@ -254,6 +260,7 @@ return view.extend({
 		function preview(operation, group) {
 			if (busy || runtimeBusy || refreshing) return;
 			setBusy(true);
+			operationDetails.open = true;
 			operationOutput.textContent = _('正在模拟并检查软件包依赖变更……');
 			return control('package', [ 'plan', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
@@ -285,6 +292,7 @@ return view.extend({
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
 						ui.hideModal();
 						setBusy(true);
+						operationDetails.open = true;
 						return control('package', [ 'refresh' ]).then(function(out) {
 							operationOutput.textContent = out;
 						}).catch(function(e) {
@@ -431,10 +439,7 @@ return view.extend({
 					E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex },
 						[ '刷新 APK 软件源索引' ])
 				]),
-				E('details', { style: 'margin-top:12px;' }, [
-					E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]),
-					operationOutput
-				])
+				operationDetails
 			]),
 			E('div', { 'class': 'cbi-section', style: 'margin-bottom:14px;' }, [
 				E('h3', [ 'NAS 接口授权' ]),
