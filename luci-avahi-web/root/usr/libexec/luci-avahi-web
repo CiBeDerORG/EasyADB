@@ -139,19 +139,29 @@ browse() {
 
 service_action() {
     [ "$#" -eq 1 ] || fail 'Expected one service action'
-    [ -x "$INIT" ] || fail 'Avahi init script not installed'
     case "$1" in
-        start|restart)
-            # Do not silently change the router existing mDNS service.
-            if umdns_running; then
-                fail 'umdns is running. Stop umdns manually before starting Avahi.'
-            fi
-            "$INIT" "$1" ;;
-        stop) "$INIT" stop ;;
+        start|restart|stop|enable|disable)
+            unit=avahi; op=$1; init=$INIT ;;
+        umdns-start|umdns-restart|umdns-stop|umdns-enable|umdns-disable)
+            unit=umdns; op=${1#umdns-}; init=/etc/init.d/umdns ;;
+        dbus-start|dbus-restart|dbus-stop|dbus-enable|dbus-disable)
+            unit=dbus; op=${1#dbus-}; init=/etc/init.d/dbus ;;
         *) fail 'Unsupported service action' ;;
     esac
+    [ -x "$init" ] || fail 'Selected service init script not installed'
+    if [ "$op" = start ] || [ "$op" = restart ]; then
+        if [ "$unit" = avahi ] && umdns_running; then
+            fail 'umdns is running. Stop it before starting Avahi.'
+        fi
+        if [ "$unit" = umdns ] && running; then
+            fail 'Avahi is running. Stop it before starting umdns.'
+        fi
+    fi
+    if [ "$unit" = dbus ] && [ "$op" = stop ] && running; then
+        fail 'Stop Avahi before stopping D-Bus'
+    fi
+    "$init" "$op"
 }
-
 
 # Package operations are APK-only and restricted to exactly three managed
 # components. No arguments, URLs, options, shell expressions or force flags
@@ -265,6 +275,15 @@ case "$cmd" in
         installed && printf 'installed=yes\n' || printf 'installed=no\n'
         running && printf 'running=yes\n' || printf 'running=no\n'
         umdns_running && printf 'umdns=yes\n' || printf 'umdns=no\n'
+        pidof dbus-daemon >/dev/null 2>&1 && printf 'dbus=yes\n' || printf 'dbus=no\n'
+        for unit in avahi-daemon umdns dbus; do
+            [ -x "/etc/init.d/$unit" ] || continue
+            if "/etc/init.d/$unit" enabled >/dev/null 2>&1; then
+                printf '%s-enabled=yes\n' "$unit"
+            else
+                printf '%s-enabled=no\n' "$unit"
+            fi
+        done
         [ -r "$CONF" ] && printf 'config=yes\n' || printf 'config=no\n'
         ;;
     config-get) need_no_args "$@"; read_config ;;
