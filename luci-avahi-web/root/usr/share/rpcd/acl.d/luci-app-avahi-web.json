@@ -28,9 +28,6 @@
         "/usr/libexec/luci-avahi-web package apply *": [
           "exec"
         ],
-        "/usr/libexec/luci-avahi-web package refresh": [
-          "exec"
-        ],
         "/usr/libexec/luci-avahi-auth create": [
           "exec"
         ],
