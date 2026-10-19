@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const source = fs.readFileSync('htdocs/luci-static/resources/view/avahi-web/overview.js', 'utf8');
 assert.ok(!source.includes("'require poll'") && !source.includes('poll.add('),
     'The page must not schedule background status polling');
-let scanCalls = 0, modal, applyCalls = 0, authCalls = 0;
+let scanCalls = 0, modal, applyCalls = 0, authCalls = 0, failStatusOnce = false;
 let running = { avahi: true, dbus: true, umdns: true };
 let browseInstalled = false;
 let packageOutput;
@@ -75,7 +75,13 @@ const rpc = { exec: function(program,args) {
         authCalls++;
         return Promise.resolve({code:1,stderr:'Refused by mock'});
     }
-    if (args[0] === 'status') return Promise.resolve({code:0,stdout:status()});
+    if (args[0] === 'status') {
+        if (failStatusOnce) {
+            failStatusOnce = false;
+            return Promise.resolve({code:1,stderr:'模拟状态读取失败'});
+        }
+        return Promise.resolve({code:0,stdout:status()});
+    }
     if (args[0] === 'service') {
         if (args[1] === 'umdns-stop') running.umdns=false;
         else if (args[1] === 'stop') running.avahi=false;
@@ -118,6 +124,13 @@ function modalConfirm() {
     assert.ok(!buttons(page,'补齐安装')[0].disabled,'Installing only the missing avahi-utils must not require stopping umdns');
     assert.equal(buttons(page,'手动刷新组件状态').length,1);
     assert.equal(scanCalls,0);
+    assert.ok(text(page).includes('另一项 mDNS 服务已启用开机自启'),
+        'Conflicting boot enables must be explained rather than silently accepted');
+    // A failed explicit refresh must report its error and release the UI lock.
+    failStatusOnce = true;
+    await buttons(page,'手动刷新组件状态')[0].props.click();
+    assert.ok(text(page).includes('状态刷新失败：模拟状态读取失败'));
+    assert.ok(!buttons(page,'手动刷新组件状态')[0].disabled);
     // There is no timer. Explicit refresh must update displayed process state.
     const before=calls.length;
     running.umdns=false;
