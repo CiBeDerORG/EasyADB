@@ -54,7 +54,7 @@ return view.extend({
 			E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]), operationOutput
 		]);
 		var busy = false, runtimeBusy = false, refreshing = false;
-		var manualButton;
+		var manualButton, indexButton;
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', note: '用于发现 Android 无线调试动态端口', process: 'running', init: 'avahi-daemon', bins: [ ['avahi-daemon-bin','avahi-daemon'], ['avahi-browse-bin','avahi-browse'] ], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
@@ -136,6 +136,7 @@ return view.extend({
 		}
 		function drawComponents() {
 			if (manualButton) manualButton.disabled = busy || runtimeBusy || refreshing;
+			if (indexButton) indexButton.disabled = busy || runtimeBusy || refreshing;
 			var s = currentStatus, conflict = s.running === 'yes' && s.umdns === 'yes';
 			var cards = groups.map(function(group) {
 				var pkg = packageState(group), running = s[group.process] === 'yes';
@@ -414,6 +415,8 @@ return view.extend({
 		}
 		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
 			[ '手动刷新组件状态' ]);
+		indexButton = E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex },
+			[ '刷新 APK 软件源索引' ]);
 		currentPackages = inventory(data[1]);
 		currentStatus = values(data[0]);
 		drawComponents();
@@ -436,8 +439,7 @@ return view.extend({
 				]),
 				componentsNode,
 				E('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;flex-wrap:wrap;' }, [
-					E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex },
-						[ '刷新 APK 软件源索引' ])
+					indexButton
 				]),
 				operationDetails
 			]),
