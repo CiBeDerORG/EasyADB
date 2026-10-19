@@ -1,6 +1,11 @@
 """SQLite device records and group-scoped, derived LAN address mapping."""
 import sqlite3
 import uuid
+import ipaddress
+import json
+from datetime import datetime, timezone
+
+from .discovery_secrets import encrypt, decrypt
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -67,6 +72,13 @@ class DeviceStore:
                     ip_prefix TEXT
                 )
             """)
+            db.execute("""CREATE TABLE IF NOT EXISTS group_openwrt (
+                group_name TEXT PRIMARY KEY, url TEXT NOT NULL, username TEXT NOT NULL,
+                credential TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS group_discovery_results (
+                group_name TEXT PRIMARY KEY, scan_json TEXT NOT NULL, updated_at TEXT NOT NULL
+            )""")
             # Import group names from existing M1 records without changing any device ID.
             db.execute("""INSERT OR IGNORE INTO group_configs(name, ip_prefix)
                           SELECT DISTINCT group_name, NULL FROM devices WHERE group_name <> ''""")
@@ -123,16 +135,157 @@ class DeviceStore:
                 self._query() + " WHERE d.id=?", (device_id,)
             ).fetchone())
 
+    @staticmethod
+    def _public_group(row):
+        if row is None:
+            return None
+        result = dict(row)
+        result["discovery_configured"] = bool(result.pop("openwrt_url", None))
+        result["discovery_url"] = row["openwrt_url"] if result["discovery_configured"] else None
+        result["discovery_username"] = row["openwrt_username"] if result["discovery_configured"] else None
+        result.pop("openwrt_username", None)
+        # Credential and encrypted bytes are NEVER part of an API response.
+        return result
+
     def list_groups(self):
         with self.connection() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT name,ip_prefix FROM group_configs ORDER BY name COLLATE NOCASE"
+            return [self._public_group(row) for row in db.execute(
+                """SELECT g.name,g.ip_prefix,w.url AS openwrt_url,
+                          w.username AS openwrt_username
+                   FROM group_configs g LEFT JOIN group_openwrt w ON w.group_name=g.name
+                   ORDER BY g.name COLLATE NOCASE"""
             )]
 
     def get_group(self, name):
         with self.connection() as db:
-            row = db.execute("SELECT name,ip_prefix FROM group_configs WHERE name=?", (name,)).fetchone()
-            return dict(row) if row else None
+            row = db.execute(
+                """SELECT g.name,g.ip_prefix,w.url AS openwrt_url,
+                          w.username AS openwrt_username
+                   FROM group_configs g LEFT JOIN group_openwrt w ON w.group_name=g.name
+                   WHERE g.name=?""", (name,)
+            ).fetchone()
+            return self._public_group(row)
+
+    def set_group_discovery(self, group_name, url, username, password):
+        from .openwrt_discovery import validate_url
+        url = validate_url(url)
+        username = username.strip()
+        if not username or len(username) > 64 or any(ch.isspace() for ch in username):
+            raise ValueError("专用账号不能为空、不能包含空白字符且不超过 64 字符")
+        with self.connection() as db:
+            if not db.execute("SELECT 1 FROM group_configs WHERE name=?", (group_name,)).fetchone():
+                return None
+            old = db.execute("SELECT url,username,credential FROM group_openwrt WHERE group_name=?",
+                             (group_name,)).fetchone()
+            if password:
+                if not 8 <= len(password) <= 256:
+                    raise ValueError("专用密钥长度应为 8–256 字符")
+                credential = encrypt(self.path, password)
+            elif old and old["url"] == url and old["username"] == username:
+                credential = old["credential"]
+            else:
+                raise ValueError("首次配置或修改接口地址/用户名时，必须重新填写专用密钥")
+            db.execute("""INSERT INTO group_openwrt(group_name,url,username,credential)
+                          VALUES(?,?,?,?)
+                          ON CONFLICT(group_name) DO UPDATE SET url=excluded.url,
+                            username=excluded.username,credential=excluded.credential""",
+                       (group_name, url, username, credential))
+        return self.get_group(group_name)
+
+    def remove_group_discovery(self, group_name):
+        with self.connection() as db:
+            if not db.execute("SELECT 1 FROM group_configs WHERE name=?", (group_name,)).fetchone():
+                return None
+            db.execute("DELETE FROM group_openwrt WHERE group_name=?", (group_name,))
+        return self.get_group(group_name)
+
+    def get_group_discovery_secret(self, group_name):
+        with self.connection() as db:
+            row = db.execute("SELECT url,username,credential FROM group_openwrt WHERE group_name=?",
+                             (group_name,)).fetchone()
+        return (row["url"], row["username"], decrypt(self.path, row["credential"])) if row else None
+
+    def last_group_discovery(self, name):
+        with self.connection() as db:
+            row = db.execute("SELECT scan_json FROM group_discovery_results WHERE group_name=?",
+                             (name,)).fetchone()
+            return json.loads(row["scan_json"]) if row else None
+
+    def apply_group_discovery(self, name, scan, blocked_ids=()):
+        """Atomically update only per-device shared ports on exact group LAN IP matches.
+
+        ADB and display sessions are never stopped. Ambiguous source/target
+        matches and route collisions are skipped, never assigned arbitrarily.
+        """
+        blocked = set(blocked_ids)
+        with self.connection() as db:
+            group = db.execute("SELECT ip_prefix FROM group_configs WHERE name=?", (name,)).fetchone()
+            if not group:
+                raise ValueError("分组已不存在")
+            prefix = group["ip_prefix"]
+            if not prefix:
+                raise ValueError("该分组未配置内网 IP 前缀，无法精确匹配扫描结果")
+            rows = db.execute("SELECT id,name,ip,port FROM devices WHERE group_name=? ORDER BY id",
+                              (name,)).fetchall()
+            owners = {}
+            for row in rows:
+                lan = internal_ip(prefix, row["ip"])
+                owners.setdefault(lan, []).append(row)
+            source = {}
+            ignored = 0
+            for entry in scan["devices"]:
+                if not isinstance(entry, dict):
+                    ignored += 1
+                    continue
+                try:
+                    ip = str(ipaddress.IPv4Address(entry.get("address", "")))
+                    port = entry.get("port")
+                    if type(port) is not int or not 1 <= port <= 65535:
+                        raise ValueError()
+                except (ValueError, ipaddress.AddressValueError):
+                    ignored += 1
+                    continue
+                source.setdefault(ip, set()).add(port)
+            result = {"group": name, "found": len(source), "updated": [], "unchanged": [],
+                      "unmatched": [], "ambiguous": [], "conflicting": [], "busy": [],
+                      "route_conflict": [], "invalid": ignored}
+            for ip, ports in source.items():
+                members = owners.get(ip, [])
+                if not members:
+                    result["unmatched"].append(ip)
+                elif len(members) > 1:
+                    result["ambiguous"].append(ip)
+                elif len(ports) != 1:
+                    result["conflicting"].append(ip)
+                else:
+                    row = members[0]
+                    if row["id"] in blocked:
+                        result["busy"].append({"id": row["id"], "ip": ip})
+                        continue
+                    port = next(iter(ports))
+                    if row["port"] == port:
+                        result["unchanged"].append({"id": row["id"], "ip": ip, "port": port})
+                        continue
+                    db.execute("SAVEPOINT update_port")
+                    db.execute("UPDATE devices SET port=? WHERE id=?", (port, row["id"]))
+                    try:
+                        self._check_routes(db)
+                    except ValueError:
+                        db.execute("ROLLBACK TO update_port")
+                        result["route_conflict"].append(ip)
+                    else:
+                        result["updated"].append({"id": row["id"], "ip": ip,
+                                                  "old_port": row["port"], "port": port})
+                    finally:
+                        db.execute("RELEASE update_port")
+            result["scanned_at"] = scan.get("scanned_at")
+            result["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            db.execute("""INSERT INTO group_discovery_results(group_name,scan_json,updated_at)
+                          VALUES(?,?,?)
+                          ON CONFLICT(group_name) DO UPDATE SET
+                          scan_json=excluded.scan_json,updated_at=excluded.updated_at""",
+                       (name, json.dumps(result, ensure_ascii=False), result["saved_at"]))
+            return result
 
     def create_group(self, name, prefix):
         with self.connection() as db:
@@ -149,6 +302,8 @@ class DeviceStore:
             if old_name != name:
                 db.execute("INSERT INTO group_configs(name,ip_prefix) VALUES (?,?)", (name, prefix))
                 db.execute("UPDATE devices SET group_name=? WHERE group_name=?", (name, old_name))
+                db.execute("UPDATE group_openwrt SET group_name=? WHERE group_name=?", (name, old_name))
+                db.execute("UPDATE group_discovery_results SET group_name=? WHERE group_name=?", (name, old_name))
                 db.execute("DELETE FROM group_configs WHERE name=?", (old_name,))
             else:
                 db.execute("UPDATE group_configs SET ip_prefix=? WHERE name=?", (prefix, name))
@@ -178,6 +333,8 @@ class DeviceStore:
             db.execute("""UPDATE devices SET group_name='',
                           selected_route=CASE WHEN selected_route='lan' THEN 'mesh' ELSE selected_route END
                           WHERE group_name=?""", (name,))
+            db.execute("DELETE FROM group_openwrt WHERE group_name=?", (name,))
+            db.execute("DELETE FROM group_discovery_results WHERE group_name=?", (name,))
             db.execute("DELETE FROM group_configs WHERE name=?", (name,))
             self._check_routes(db)
             return {"deleted": True, "moved_count": len(members), "device_ids": members}
