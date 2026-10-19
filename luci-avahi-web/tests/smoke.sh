@@ -19,6 +19,10 @@ assert menu["admin/services/avahi-web"]["depends"]["acl"] == ["luci-app-avahi-we
 admin=acl["luci-app-avahi-web"]
 nas=acl["luci-avahi-easyadb"]
 assert nas["read"]["file"] == {"/usr/libexec/luci-avahi-scan scan":["exec"]}
+# uhttpd checks ubus object/method access BEFORE rpcd-mod-file checks
+# the exact command/argument ACL. Both narrowly-scoped grants are required.
+assert nas["read"]["ubus"] == {"file":["exec"]}
+assert set(nas["read"]) == {"file", "ubus"}
 assert not nas.get("write")
 assert "/usr/libexec/luci-avahi-scan last" in admin["read"]["file"]
 assert "/usr/libexec/luci-avahi-scan scan" in admin["write"]["file"]
