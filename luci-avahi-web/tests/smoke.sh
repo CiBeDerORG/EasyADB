@@ -74,9 +74,12 @@ case "$1" in
             -e) [ "$3" = dbus ] || [ "$3" = umdns ] || {
                 [ "${MOCK_AVAHI_DAEMON:-0}" = 1 ] && [ "$3" = avahi-dbus-daemon ]
             } ;;
-            -v) echo "$3-1.0-r1" ;;
+            -v) echo "PACKAGE DESCRIPTION SHOULD NEVER BE SHOWN AS A VERSION" ;;
             *) exit 1 ;;
         esac ;;
+    list)
+        [ "$2" = --installed ] && [ "$3" = --manifest ] || exit 1
+        printf '%s %s\\n' "$4" '1.0-r1' ;;
     --simulate)
         case "$2" in add|del|upgrade) printf 'Simulation: %s\n' "$*"; exit 0 ;; *) exit 1 ;; esac ;;
     add|del|upgrade|update) echo "Applied: $*"; exit 0 ;;
@@ -90,6 +93,14 @@ sed 's@^APK=$(command -v apk || true)$@APK=__MOCK_APK__@' root/usr/libexec/luci-
     sed "s@__MOCK_APK__@$TEMP/mock-apk@" > "$TEMP/helper"
 chmod +x "$TEMP/helper"
 "$TEMP/helper" package list | grep -q "$(printf 'dbus\tinstalled\t')"
+"$TEMP/helper" package list | grep -qx "$(printf 'dbus\tinstalled\t1.0-r1')"
+if "$TEMP/helper" package list | grep -q 'PACKAGE DESCRIPTION'; then
+    echo 'Verbose apk info was mistaken for the package version' >&2; exit 1
+fi
+grep -qx -- 'list --installed --manifest dbus' "$TEMP/apk.log"
+if grep -q '^info -v ' "$TEMP/apk.log"; then
+    echo 'Do not use apk info -v to determine package versions' >&2; exit 1
+fi
 "$TEMP/helper" package list | grep -q "$(printf 'avahi-utils\tabsent\t')"
 "$TEMP/helper" package plan install avahi | grep -q Simulation
 "$TEMP/helper" package plan remove dbus | grep -q Simulation
