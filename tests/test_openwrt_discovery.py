@@ -87,7 +87,7 @@ def test_group_config_private_and_rename_cleanup(monkeypatch, tmp_path):
         assert r.status_code == 200
         assert r.json()["discovery_configured"] is True
         assert r.json()["discovery_url"] == URL
-        assert "password" not in json.dumps(r.json())
+        assert "password" not in r.json() and "credential" not in r.json()
         assert SECRET not in json.dumps(client.get("/api/groups", headers=AUTH).json())
         assert mod.store.get_group_discovery_secret("Home") == (URL, "easyadb", SECRET)
         with sqlite3.connect(mod.store.path) as db:
