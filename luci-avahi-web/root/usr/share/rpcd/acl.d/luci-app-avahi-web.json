@@ -17,6 +17,15 @@
         ],
         "/usr/libexec/luci-avahi-web package plan *": [
           "exec"
+        ],
+        "/usr/libexec/luci-avahi-scan scan": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-scan last": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-scan log": [
+          "exec"
         ]
       }
     },
@@ -32,6 +41,19 @@
           "exec"
         ],
         "/usr/libexec/luci-avahi-web package refresh": [
+          "exec"
+        ]
+      }
+    }
+  },
+  "luci-avahi-easyadb": {
+    "description": "Read-only on-demand ADB discovery role for an explicitly provisioned EasyADB RPCD login",
+    "read": {
+      "file": {
+        "/usr/libexec/luci-avahi-scan scan": [
+          "exec"
+        ],
+        "/usr/libexec/luci-avahi-scan last": [
           "exec"
         ]
       }
