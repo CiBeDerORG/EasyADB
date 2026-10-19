@@ -15,6 +15,9 @@ class FakeADB:
         self.permission_denied = False
         self.pc_mode = "false"
         self.installed = True
+        self.stop_missing_returns_error = False
+        self.stop_denied = False
+        self.create_display = True
         self.calls = []
 
     def __call__(self, *args, timeout=12):
@@ -32,7 +35,7 @@ class FakeADB:
             result = ("Logical Displays:\n Display 0: mDisplayId=0\n"
                       + (' Display 3: mDisplayId=3\n'
                          '  DisplayInfo{"CastPlusDisplay", displayId 3, type VIRTUAL}\n'
-                         if self.running else ""))
+                         if self.running and self.create_display else ""))
         elif cmd[:2] == ("install", "-r"):
             result = "Success"
         elif cmd == ("shell", "am", "start-foreground-service", "-n",
@@ -42,6 +45,13 @@ class FakeADB:
             result = "Starting service"
         elif cmd == ("shell", "am", "stopservice", "-n",
                      "com.easyadb.castpluslab/.CastPlusService"):
+            if self.stop_denied:
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr="Permission Denial: stop service")
+            if not self.running and self.stop_missing_returns_error:
+                return SimpleNamespace(returncode=1,
+                                       stdout="Service not stopped: was not running.",
+                                       stderr="")
             self.running = False
             result = "Stopping service"
         elif cmd == ("shell", "am", "broadcast", "-a",
@@ -174,3 +184,47 @@ def test_manual_b2_preserves_foreign_recovery_record_and_serial(tmp_path):
     lab.cast_auto("mate", adb.serial)
     with pytest.raises(CastError, match="原始 ADB"):
         lab.cast_auto("mate", "other:5555")
+
+
+
+def test_b2_accepts_stopservice_was_not_running_with_nonzero_exit(tmp_path):
+    # This is Android's normal response after an APK was installed manually.
+    adb = FakeADB()
+    adb.stop_missing_returns_error = True
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    result = lab.cast_auto("mate", adb.serial)
+    assert result["helper_stop_result"] == "already_stopped"
+    assert result["cast_display"]["verified"]
+    assert adb.running
+    assert lab.cast_switch("mate", adb.serial)["switch_result"] == "broadcast_sent_unverified"
+    # The stop helper is shared with restoration; repeated stop is safe too.
+    adb.running = False
+    assert lab.cast_restore("mate", adb.serial)["restored"] == "0"
+    assert not lab.has_pending("mate")
+
+
+def test_b2_other_stopservice_failures_still_abort_and_preserve_recovery(tmp_path):
+    adb = FakeADB()
+    adb.stop_denied = True
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    with pytest.raises(CastError, match="Permission Denial"):
+        lab.cast_auto("mate", adb.serial)
+    assert adb.mode == "1"  # Restore record was written before the mode change.
+    assert lab.cast_pending["mate"]["previous_mode"] == "0"
+    assert lab.cast_pending["mate"]["applied_mode"] == "1"
+    assert not adb.running
+    assert not any(c[2:5] == ("shell", "am", "start-foreground-service")
+                   for c in adb.calls)
+
+
+def test_b2_missing_display_is_reported_without_claiming_success(tmp_path):
+    adb = FakeADB()
+    adb.create_display = False
+    lab = DisplayLab(adb, tmp_path / "manual.json")
+    outcome = lab.cast_auto("mate", adb.serial)
+    assert not outcome["cast_display"]["verified"]
+    assert "不要直接执行 B3" in outcome["note"]
+    assert lab.has_pending("mate")
+    with pytest.raises(CastError, match="Type 5"):
+        lab.cast_switch("mate", adb.serial)
+    assert not any(c[2:5] == ("shell", "am", "broadcast") for c in adb.calls)

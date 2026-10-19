@@ -110,7 +110,25 @@ class CastPlusMixin:
         return response
 
     def _stop_helper(self, serial):
-        return self._cast_adb(serial, "shell", "am", "stopservice", "-n", COMPONENT)
+        # Android often exits nonzero when stopping a service that was never
+        # started (for example, after manually installing the APK). This ONE
+        # explicit response is idempotent success, not a fatal ADB error.
+        # Permission errors, missing components and transport failures must
+        # still abort the operation.
+        result = self.adb("-s", serial, "shell", "am", "stopservice",
+                          "-n", COMPONENT, timeout=25)
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        output = "\n".join(part for part in (stdout, stderr) if part)
+        lines = output.splitlines()
+        if any(re.fullmatch(r"Service not stopped:\s*was not running\.?",
+                            line.strip(), re.IGNORECASE) for line in lines):
+            return "already_stopped"
+        if result.returncode:
+            raise CastError(("ADB 实验命令失败：" + (stderr or stdout or "未知错误"))[:450])
+        if "Error:" in output or "Exception" in output:
+            raise CastError(("停止 Cast+ 辅助服务失败：" + output)[:450])
+        return stdout
 
     def _observe_helper(self, serial, before=()):
         # A bounded check only while the user explicitly starts/recreates a display.
@@ -190,12 +208,18 @@ class CastPlusMixin:
             self._cmd(serial, "settings", "put", "secure", "selected-proj-mode", "1")
             if self._mode(serial) != "1":
                 raise CastError("设备拒绝 selected-proj-mode=1；保留恢复记录")
-            self._stop_helper(serial)
+            stop_result = self._stop_helper(serial)
             self._start_helper(serial)
             result = self._observe_helper(serial, before)
             result["pending_castplus"] = record
+            result["helper_stop_result"] = stop_result
+            if not result["cast_display"]["verified"]:
+                result["note"] = ("已执行 B2 并请求启动辅助服务，但尚未检测到 Type 5 "
+                                  "CastPlusDisplay；请先检查辅助服务是否成功创建虚拟屏，"
+                                  "不要直接执行 B3。原始模式恢复记录已保留。")
             self._log(device_id, "华为 B2", serial,
-                      "重新创建 Cast+；当前模式 " + result["selected_proj_mode"] +
+                      "重建 Cast+；停止服务结果 " + str(stop_result) +
+                      "；当前模式 " + result["selected_proj_mode"] +
                       "，Display：" + str(result["cast_display"]))
             return result
 
