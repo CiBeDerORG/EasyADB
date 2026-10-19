@@ -1,6 +1,11 @@
 name: Build opt-in CastPlus experiment helper
 on:
   workflow_dispatch:
+  push:
+    branches: [feat/m3-openwrt-discovery]
+    paths:
+      - 'castplus-helper/**'
+      - '.github/workflows/castplus-helper.yml'
 permissions:
   contents: read
 jobs:
