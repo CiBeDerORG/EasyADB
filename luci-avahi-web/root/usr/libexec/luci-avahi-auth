@@ -14,12 +14,12 @@ OPENSSL=/usr/bin/openssl
 RPCD_INIT=/etc/init.d/rpcd
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-[ "$#" -eq 1 ] || fail 'Expected exactly one account action'
+[ "$#" -eq 1 ] || fail '账号操作参数无效'
 case "$1" in
     status|create|rotate|revoke) action=$1 ;;
-    *) fail 'Unsupported account action' ;;
+    *) fail '不支持的账号操作' ;;
 esac
-[ -x "$UCI" ] || fail 'UCI not available'
+[ -x "$UCI" ] || fail '未找到 UCI 配置工具'
 
 get() { "$UCI" -q get "rpcd.$SECTION.$1" 2>/dev/null || true; }
 section_type() { "$UCI" -q get "rpcd.$SECTION" 2>/dev/null || true; }
@@ -51,33 +51,33 @@ if [ "$action" = status ]; then
 fi
 case "$action" in
     create)
-        [ -z "$(section_type)" ] || fail 'Reserved easyadb UCI section already exists'
-        duplicate_login && fail 'An RPCD user named easyadb already exists'
+        [ -z "$(section_type)" ] || fail '系统已存在 easyadb 配置段，拒绝覆盖'
+        duplicate_login && fail 'RPCD 中已有名为 easyadb 的账号，拒绝覆盖'
         ;;
     rotate|revoke)
-        managed || fail 'Refusing to modify an account with unexpected settings'
+        managed || fail '此账号配置与本组件管理的账号不一致，为避免误操作已拒绝更改'
         ;;
 esac
-[ -f /etc/config/rpcd ] && [ ! -L /etc/config/rpcd ] || fail 'Unsafe RPCD configuration'
+[ -f /etc/config/rpcd ] && [ ! -L /etc/config/rpcd ] || fail 'RPCD 配置文件不存在或路径不安全'
 if [ "$action" != revoke ]; then
-    [ -x "$OPENSSL" ] || fail 'openssl-util is required to create secure RPCD credentials'
-    secret=$("$OPENSSL" rand -hex 32) || fail 'Secure random generation failed'
-    [ "${#secret}" -eq 64 ] || fail 'Unexpected random secret length'
-    hash=$(printf '%s\n' "$secret" | "$OPENSSL" passwd -6 -stdin) || fail 'Password hashing failed'
+    [ -x "$OPENSSL" ] || fail '缺少 openssl-util，请先安装对应依赖'
+    secret=$("$OPENSSL" rand -hex 32) || fail '生成随机密码失败'
+    [ "${#secret}" -eq 64 ] || fail '随机密码长度异常'
+    hash=$(printf '%s\n' "$secret" | "$OPENSSL" passwd -6 -stdin) || fail '密码哈希生成失败'
     case "$hash" in
-        '$6$'*) ;; *) fail 'Unexpected password hash format' ;;
+        '$6$'*) ;; *) fail '密码哈希格式不受支持' ;;
     esac
 fi
 # Do not discard another administrator's pending UCI modifications.
-[ -z "$("$UCI" -q changes rpcd 2>/dev/null)" ] || fail 'RPCD has pending UCI changes; commit/revert them separately first'
-[ ! -e /tmp/luci-avahi-auth.lock ] || fail 'Another account operation is in progress'
-mkdir -m 0700 /tmp/luci-avahi-auth.lock || fail 'Cannot lock account operation'
+[ -z "$("$UCI" -q changes rpcd 2>/dev/null)" ] || fail 'RPCD 尚有其他待提交的配置修改，请先单独提交或撤销'
+[ ! -e /tmp/luci-avahi-auth.lock ] || fail '账号管理操作正在进行中，请稍后重试'
+mkdir -m 0700 /tmp/luci-avahi-auth.lock || fail '无法取得账号操作锁'
 backup=$(mktemp /tmp/.luci-avahi-rpcd.XXXXXX) || {
-    rmdir /tmp/luci-avahi-auth.lock; fail 'Cannot create temporary backup'
+    rmdir /tmp/luci-avahi-auth.lock; fail '创建 RPCD 临时备份失败'
 }
 chmod 0600 "$backup"
 cp /etc/config/rpcd "$backup" || {
-    rm -f "$backup"; rmdir /tmp/luci-avahi-auth.lock; fail 'Cannot back up RPCD config'
+    rm -f "$backup"; rmdir /tmp/luci-avahi-auth.lock; fail '备份 RPCD 配置失败'
 }
 cleanup() { rm -f "$backup"; rmdir /tmp/luci-avahi-auth.lock 2>/dev/null || true; }
 restore() {
@@ -92,17 +92,17 @@ if [ "$action" = create ]; then
     "$UCI" set "rpcd.$SECTION.username=$USER" &&
     "$UCI" set "rpcd.$SECTION.password=$hash" &&
     "$UCI" add_list "rpcd.$SECTION.read=$ROLE" ||
-        { restore; fail 'Cannot prepare new restricted login'; }
+        { restore; fail '准备 NAS 专用账号失败'; }
 elif [ "$action" = rotate ]; then
     "$UCI" set "rpcd.$SECTION.password=$hash" ||
-        { restore; fail 'Cannot rotate account credential'; }
+        { restore; fail '更新 NAS 专用凭据失败'; }
 else
     "$UCI" delete "rpcd.$SECTION" ||
-        { restore; fail 'Cannot revoke account'; }
+        { restore; fail '撤销 NAS 专用账号失败'; }
 fi
 if ! "$UCI" commit rpcd; then
     restore
-    fail 'RPCD config commit failed'
+    fail '保存 RPCD 配置失败'
 fi
 cleanup
 trap - EXIT HUP INT TERM
@@ -110,7 +110,7 @@ trap - EXIT HUP INT TERM
 # secret) has been returned. SIGHUP makes rpcd reload and retain sessions.
 ( sleep 2; "$RPCD_INIT" reload >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
 if [ "$action" = revoke ]; then
-    printf 'state=absent\nmessage=Authorization revoked; RPCD reload scheduled\n'
+    printf 'state=absent\nmessage=授权已撤销，RPCD 即将重新加载\n'
 else
-    printf 'state=managed\nusername=%s\nrole=%s\npassword=%s\nmessage=Save the password now; it cannot be viewed again\n' "$USER" "$ROLE" "$secret"
+    printf 'state=managed\nusername=%s\nrole=%s\npassword=%s\nmessage=请立即保存密码，后续无法再次查看\n' "$USER" "$ROLE" "$secret"
 fi
