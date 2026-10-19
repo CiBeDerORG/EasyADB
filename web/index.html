@@ -390,6 +390,11 @@ function render(){
   summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
   section.append(summary);
   const wrapper=elem('div','group-items');
+  if(g.discovery_configured){
+   const last=discoveryResults.get(g.title);
+   if(last){const conflicts=(last.ambiguous||[]).length+(last.conflicting||[]).length+(last.route_conflict||[]).length;
+    const line=elem('div','group-discovery-status'+(last.error?' error':''),last.error||('最近发现：'+last.found+' 个 IP · 更新端口 '+last.updated.length+' 台 · 未匹配 '+last.unmatched.length+' · 忙碌跳过 '+last.busy.length+' · 冲突 '+conflicts));wrapper.append(line);}
+  }
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
    const top=elem('div','item-top'),info=elem('div','item-info');
@@ -410,7 +415,7 @@ function render(){
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row');
-    const target=action(label+'：'+ip+':'+port,()=>switchRoute(d.id,route),'address-target');
+    const target=action(label+'：'+ip+(route==='temp'?':'+port:''),()=>switchRoute(d.id,route),'address-target');
     target.disabled=loading||chosen||Boolean(multiView&&multiView.isBusyFor(d.id));
     target.setAttribute('aria-pressed',String(chosen));
     target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
@@ -428,6 +433,7 @@ function render(){
    if(d.lan_ip)addAddress('内网 IP','lan',d.lan_ip);
    if(d.temp_ip&&d.temp_port)addAddress('临时 IP','temp',d.temp_ip,d.temp_port);
    top.append(managementLabel,info);primary.append(top,...addressRows);
+   primary.append(elem('div','common-adb-port','ADB 共用端口：'+d.port+'（组网 / 内网）'));
    if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
@@ -453,9 +459,16 @@ function render(){
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);shell.append(section);
   if(key!=='ungrouped'){
+   const tools=elem('div','group-tools');
+   if(g.discovery_configured){
+    const discover=action(scanningGroups.has(g.title)?'正在发现…':'立即发现 ADB',()=>scanGroup(g.title),'secondary group-discovery');
+    discover.disabled=loading||scanningGroups.has(g.title);
+    tools.append(discover);
+    summary.style.paddingRight='270px';
+   }
    const config=action('设置',()=>openGroup(g.title),'secondary group-edit');
-   config.disabled=loading||g.items.some(d=>multiView&&multiView.isBusyFor(d.id));
-   shell.append(config);
+   config.disabled=loading||scanningGroups.has(g.title)||g.items.some(d=>multiView&&multiView.isBusyFor(d.id));
+   tools.append(config);shell.append(tools);
   }
   list.append(shell);
  }
@@ -530,7 +543,12 @@ function openGroup(name=null){
  $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
  $('saveGroup').textContent=g?'保存修改':'保存分组';
  $('deleteGroup').hidden=!g;
- if(g){$('groupName').value=g.name;$('groupPrefix').value=g.ip_prefix||'';}
+ if(g){$('groupName').value=g.name;$('groupPrefix').value=g.ip_prefix||'';
+   $('groupOpenWrtUrl').value=g.discovery_url||'';
+   $('groupOpenWrtUser').value=g.discovery_username||'easyadb';
+   $('groupDiscoveryPanel').open=Boolean(g.discovery_configured);
+   $('testGroupDiscovery').hidden=!g.discovery_configured;
+  }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
  $('groupDialog').showModal();$('groupName').focus();
 }
 function closeGroup(){if(!loading)$('groupDialog').close();}
