@@ -1,0 +1,106 @@
+#!/bin/sh
+# Manage exactly one restricted RPCD login. Never accept passwords or UCI paths
+# from HTTP. The random credential is displayed once, after commit succeeds.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LC_ALL=C
+export PATH LC_ALL
+umask 077
+SECTION=easyadb
+USER=easyadb
+ROLE=luci-avahi-easyadb
+UCI=/sbin/uci
+OPENSSL=/usr/bin/openssl
+RPCD_INIT=/etc/init.d/rpcd
+
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+[ "$#" -eq 1 ] || fail 'Expected exactly one account action'
+case "$1" in
+    status|create|rotate|revoke) action=$1 ;;
+    *) fail 'Unsupported account action' ;;
+esac
+[ -x "$UCI" ] || fail 'UCI not available'
+
+get() { "$UCI" -q get "rpcd.$SECTION.$1" 2>/dev/null || true; }
+section_type() { "$UCI" -q get "rpcd.$SECTION" 2>/dev/null || true; }
+managed() {
+    [ "$(section_type)" = login ] &&
+    [ "$(get username)" = "$USER" ] &&
+    [ "$(get read)" = "$ROLE" ] &&
+    [ -z "$(get write)" ] &&
+    [ -n "$(get password)" ]
+}
+duplicate_login() {
+    # Check existing login usernames, without printing password hashes.
+    "$UCI" -q show rpcd | grep -Eq "\.username='$USER'$"
+}
+state() {
+    if managed; then
+        printf 'state=managed\nusername=%s\nrole=%s\n' "$USER" "$ROLE"
+    elif [ -n "$(section_type)" ]; then
+        printf 'state=conflict\n'
+    elif duplicate_login; then
+        printf 'state=conflict\n'
+    else
+        printf 'state=absent\n'
+    fi
+}
+if [ "$action" = status ]; then
+    state
+    exit 0
+fi
+case "$action" in
+    create)
+        [ -z "$(section_type)" ] || fail 'Reserved easyadb UCI section already exists'
+        duplicate_login && fail 'An RPCD user named easyadb already exists'
+        ;;
+    rotate|revoke)
+        managed || fail 'Refusing to modify an account with unexpected settings'
+        ;;
+esac
+[ -f /etc/config/rpcd ] && [ ! -L /etc/config/rpcd ] || fail 'Unsafe RPCD configuration'
+if [ "$action" != revoke ]; then
+    [ -x "$OPENSSL" ] || fail 'openssl-util is required to create secure RPCD credentials'
+    secret=$("$OPENSSL" rand -hex 32) || fail 'Secure random generation failed'
+    [ "${#secret}" -eq 64 ] || fail 'Unexpected random secret length'
+    hash=$(printf '%s\n' "$secret" | "$OPENSSL" passwd -6 -stdin) || fail 'Password hashing failed'
+    case "$hash" in
+        '$6$'*) ;; *) fail 'Unexpected password hash format' ;;
+    esac
+fi
+backup=$(mktemp /tmp/.luci-avahi-rpcd.XXXXXX) || fail 'Cannot create temporary backup'
+chmod 0600 "$backup"
+cp /etc/config/rpcd "$backup" || fail 'Cannot back up RPCD config'
+restore() {
+    cp "$backup" /etc/config/rpcd || true
+    rm -f "$backup"
+}
+trap 'rm -f "$backup"' EXIT
+trap 'restore' HUP INT TERM
+if [ "$action" = create ]; then
+    "$UCI" set "rpcd.$SECTION=login" &&
+    "$UCI" set "rpcd.$SECTION.username=$USER" &&
+    "$UCI" set "rpcd.$SECTION.password=$hash" &&
+    "$UCI" add_list "rpcd.$SECTION.read=$ROLE" ||
+        { restore; fail 'Cannot prepare new restricted login'; }
+elif [ "$action" = rotate ]; then
+    "$UCI" set "rpcd.$SECTION.password=$hash" ||
+        { restore; fail 'Cannot rotate account credential'; }
+else
+    "$UCI" delete "rpcd.$SECTION" ||
+        { restore; fail 'Cannot revoke account'; }
+fi
+if ! "$UCI" commit rpcd; then
+    restore
+    fail 'RPCD config commit failed'
+fi
+rm -f "$backup"
+trap - EXIT HUP INT TERM
+# Delay reload until the current JSON-RPC response (including the one-time
+# secret) has been returned. SIGHUP makes rpcd reload and retain sessions.
+( sleep 2; "$RPCD_INIT" reload >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
+if [ "$action" = revoke ]; then
+    printf 'state=absent\nmessage=Authorization revoked; RPCD reload scheduled\n'
+else
+    printf 'state=managed\nusername=%s\nrole=%s\npassword=%s\nmessage=Save the password now; it cannot be viewed again\n' "$USER" "$ROLE" "$secret"
+fi
