@@ -682,9 +682,12 @@ class MultiView{
      card.ready=m.control_available===true;
      card.size={width:m.width,height:m.height};
      card.fitScreen(m.width,m.height);
-     mark('编码 '+m.width+'×'+m.height+' · 请求上限 '+
-      (m.requested?((m.requested.max_size||'原生')+' / '+
-        m.requested.video_bit_rate/1000000+' Mbps / '+m.requested.max_fps+' FPS'):'—'));
+     mark('实际编码 '+m.width+'×'+m.height+
+      (card.experiment?.mode==='new_resolution'
+       ?' · 请求虚拟屏幕 '+card.experiment.width+'×'+card.experiment.height+
+        '（不额外限制最长边）'
+       :' · 请求上限 '+(m.requested?((m.requested.max_size||'原生')+' / '+
+        m.requested.video_bit_rate/1000000+' Mbps / '+m.requested.max_fps+' FPS'):'—')));
      try{
       card.touch=root.EasyADBTouch.create(video,p=>{
        if(!card.closed&&card.enabled&&card.session&&

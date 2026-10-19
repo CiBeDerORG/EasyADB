@@ -142,7 +142,8 @@ def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_pa
                 assert ws.receive_json()["type"] == "error"
 
 
-def test_custom_quality_uses_current_selected_device_and_reports_actual_size(monkeypatch, tmp_path):
+@pytest.mark.parametrize("virtual", [False, True])
+def test_custom_quality_uses_current_selected_device_and_reports_actual_size(monkeypatch, tmp_path, virtual):
     monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
     mod = importlib.import_module("server.app")
     mod.store = DeviceStore(str(tmp_path / "quality.sqlite3"))
@@ -153,8 +154,9 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
     created = []
 
     class FakeStream:
-        def __init__(self, serial, profile, quality=None):
+        def __init__(self, serial, profile, quality=None, display_source=None):
             self.serial, self.profile, self.settings = serial, profile, quality
+            self.display_source = display_source
             self.session_id = "quality-session"
             self.finished = threading.Event()
             self.cleanup_complete = False
@@ -172,7 +174,8 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
         def join(self, timeout=20): self.finished.wait(timeout)
 
     monkeypatch.setattr(mod, "LiveVideo", FakeStream)
-    quality = {"max_size": 1280, "video_bit_rate": 20_000_000, "max_fps": 60}
+    quality = {"max_size": 0 if virtual else 1280, "video_bit_rate": 20_000_000, "max_fps": 60}
+    display = {"mode": "new_resolution", "width": 1920, "height": 1080} if virtual else None
     with TestClient(mod.app) as client:
         device = client.post("/api/devices", headers=AUTH, json={
             "name": "Phone", "ip": "10.10.30.206", "port": 40455,
@@ -184,7 +187,8 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
             headers={"origin": "http://testserver"},
         ) as ws:
             ws.send_json({"token": "local-test-token-123", "player": "mse",
-                          "profile": "custom", "quality": quality, "selected_serial": serial})
+                          "profile": "custom", "quality": quality, "selected_serial": serial,
+                          **({"display_experiment": display} if virtual else {})})
             for _ in range(12):
                 msg = ws.receive_json()
                 if msg["type"] == "init":
@@ -195,6 +199,7 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
             else:
                 pytest.fail("missing init")
             assert created[0].settings == quality and created[0].serial == serial
+            assert created[0].display_source == display
             ws.send_text("stop")
             for _ in range(12):
                 if ws.receive_json()["type"] == "ended":
