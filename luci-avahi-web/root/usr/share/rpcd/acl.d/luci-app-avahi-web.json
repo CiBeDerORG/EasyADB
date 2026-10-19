@@ -1,6 +1,6 @@
 {
   "luci-app-avahi-web": {
-    "description": "Manage Avahi and browse local Android wireless debugging endpoints",
+    "description": "管理 Avahi、D-Bus、umdns 和 NAS 专用授权，仅读取最近一次发现结果",
     "read": {
       "file": {
         "/usr/libexec/luci-avahi-web status": [
