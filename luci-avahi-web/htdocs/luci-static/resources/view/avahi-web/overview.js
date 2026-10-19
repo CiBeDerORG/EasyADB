@@ -396,6 +396,7 @@ return view.extend({
 					'本次未发现已发布的 ADB TLS 服务。'
 				])
 			);
+			return records.length;
 		}
 		function scanMessage(message, error) {
 			scanFeedback.replaceChildren(
@@ -422,8 +423,8 @@ return view.extend({
 				var result = JSON.parse(output);
 				if (result.status !== 'ok' || !Array.isArray(result.devices))
 					throw new Error('扫描返回数据格式不正确');
-				renderLast(output);
-				scanMessage('发现完成：本次检测到 ' + result.devices.length + ' 个 ADB 端点。', false);
+				var uniqueCount = renderLast(output);
+				scanMessage('发现完成：本次检测到 ' + uniqueCount + ' 个 ADB 端点（已合并重复记录）。', false);
 			}).catch(function(e) {
 				scanMessage('发现失败：' + e.message, true);
 			}).then(function() {
