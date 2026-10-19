@@ -30,7 +30,9 @@ function inventory(output) {
 	String(output || '').split('\n').forEach(function(line) {
 		var fields = line.split('\t');
 		if (fields.length === 3 && /^[a-z0-9-]+$/.test(fields[0]))
-			result[fields[0]] = { installed: fields[1] === 'installed', version: fields[2] };
+			result[fields[0]] = { installed: fields[1] === 'installed',
+				version: /^[0-9A-Za-z][0-9A-Za-z._+~:-]{0,79}$/.test(fields[2]) ?
+					fields[2] : '-' };
 	});
 	return result;
 }
@@ -161,9 +163,10 @@ return view.extend({
 				var installedCount = group.packages.length - pkg.missing.length;
 				var packageRows = group.packages.map(function(name) {
 					var p = currentPackages[name], ok = !!p && p.installed;
-					return E('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-color-low, #eee);flex-wrap:wrap;' }, [
-						E('code', [ name ]),
-						E('span', [ ok ? p.version || '已安装' : '未安装' ])
+					return E('div', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-color-low,#eee);min-width:0;' }, [
+						E('code', { style: 'min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;' }, [ name ]),
+						E('span', { style: 'max-width:100%;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;text-align:right;font-size:.91em;opacity:.85;' },
+							[ ok ? (p.version && p.version !== '-' ? p.version : '版本未知') : '未安装' ])
 					]);
 				});
 				var actions = [
@@ -189,7 +192,8 @@ return view.extend({
 						'启动、安装或更新该 mDNS 组件前，请先停止另一项 mDNS 服务。' ]));
 				if (group.id === 'dbus' && running)
 					missing.push(E('p', { style: 'margin:6px 0;opacity:.8;' }, [ 'D-Bus 正在运行，为保护依赖它的进程，禁止直接卸载。' ]));
-				return E('div', { 'class': 'cbi-section', style: 'min-width:0;margin:0;padding:15px;border:1px solid var(--border-color-medium, #d5d9dc);border-radius:8px;' }, [
+				return E('div', { 'class': 'avahi-component-card',
+					style: 'box-sizing:border-box;min-width:0;width:100%;max-width:100%;overflow:hidden;margin:0;padding:16px;border:1px solid var(--border-color-medium, #d5d9dc);border-radius:8px;background:var(--background-color-high,#fff);' }, [
 					E('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:start;flex-wrap:wrap;' }, [
 						E('div', [
 							E('h3', { style: 'margin:0 0 4px;' }, [ group.label ]),
@@ -228,9 +232,9 @@ return view.extend({
 				E('span', [ '组件完整：' + installedGroups + ' / 3　·　运行中：' + runningGroups + ' / 3' ])
 			);
 			componentsNode.replaceChildren(
-				conflict ? E('div', { 'class': 'alert-message warning', style: 'margin-bottom:12px;' },
-					[ 'Avahi 与 umdns 都检测到运行进程，可能存在 mDNS 5353 端口竞争。请按需选择保留哪一项；不会自动停止服务。' ]) : '',
-				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:12px;' }, cards)
+				conflict ? E('div', { style: 'box-sizing:border-box;max-width:100%;margin-bottom:12px;padding:10px 12px;background:#fff8e5;color:#765400;border:1px solid #e6ca85;border-radius:6px;overflow-wrap:anywhere;' },
+					[ '注意：检测到 Avahi 与 umdns 进程同时运行，仅提示可能存在 mDNS 端口竞争，并不代表端口冲突已发生；本页面不会自动停止任何服务。' ]) : '',
+				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;align-items:start;min-width:0;width:100%;box-sizing:border-box;' }, cards)
 			);
 		}
 		function refreshStatus() {
