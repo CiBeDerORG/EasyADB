@@ -39,8 +39,8 @@ button:disabled{opacity:.5;cursor:not-allowed}.buttons{display:flex;gap:8px;flex
 .device-list{display:grid;gap:12px;overflow:visible;width:100%}
 .group-shell{position:relative}.device-group{border:1px solid #34445e;border-radius:10px;background:#142033;overflow:hidden}
 .device-group>summary{display:flex;align-items:center;gap:9px;cursor:pointer;padding:12px 78px 12px 13px;font-weight:700;list-style:none;min-width:0}
-.group-edit{padding:5px 8px;font-size:12px;position:absolute;right:9px;top:7px}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
-.device-group>summary::-webkit-details-marker{display:none}
+.group-tools{position:absolute;right:9px;top:7px;display:flex;gap:6px;align-items:center}.group-tools button{padding:5px 8px;font-size:12px;white-space:nowrap}.group-edit{position:static}.group-prefix{font-size:11px;color:#91b9fa;font-weight:400}
+.group-discovery-status{margin:0 0 7px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#172940;color:#afc8ed;font-size:12px;overflow-wrap:anywhere}.group-discovery-status.error{border-color:#a35e6d;color:#ffc0c6}.common-adb-port{margin-top:7px;font-size:12px;color:#afcbfa}.group-discovery-config{border:1px solid #415572;border-radius:9px;margin:13px 0 0;padding:10px;background:#111d30}.group-discovery-config summary{padding:0;cursor:pointer}.group-discovery-config .hint{margin:6px 0}.group-discovery-config input{margin-bottom:4px}.device-group>summary::-webkit-details-marker{display:none}
 .device-group>summary:before{content:"▾";color:#9bb9f9;transition:transform .15s}
 .device-group:not([open])>summary:before{transform:rotate(-90deg)}
 .group-count{margin-left:auto;font-size:12px;font-weight:400;color:#a2b4ce}
@@ -230,7 +230,15 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  <div class="modal-body"><form id="groupForm">
   <label for="groupName">分组名称</label><input id="groupName" required maxlength="64" placeholder="家里 OpenWrt">
   <label for="groupPrefix">内网 IP 前缀（可选）</label><input id="groupPrefix" placeholder="192.168.10.*" spellcheck="false" autocomplete="off">
-  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。连接地址由用户手动选择，失败不会自动回退；留空仅使用组网 IP。</p>
+  <p class="hint">例如组网 IP 10.10.30.206 → 内网 IP 192.168.10.206。组网/内网 IP 共用设备的一个 ADB 端口；临时地址保留自己的独立端口。</p>
+  <details class="group-discovery-config" id="groupDiscoveryPanel">
+   <summary>OpenWrt 发现（可选，按分组配置）</summary>
+   <label for="groupOpenWrtUrl">RPCD 地址</label><input id="groupOpenWrtUrl" placeholder="http://10.10.10.2/ubus" autocomplete="off" spellcheck="false">
+   <label for="groupOpenWrtUser">专用用户名</label><input id="groupOpenWrtUser" value="easyadb" maxlength="64" autocomplete="off">
+   <label for="groupOpenWrtPassword">专用密钥</label><input id="groupOpenWrtPassword" type="password" maxlength="256" autocomplete="new-password" placeholder="粘贴 LuCI 中一次性展示的密钥">
+   <p class="hint">密码由 NAS 服务端加密保存；编辑时留空表示保留现有密钥，修改地址/账号时必须重新输入。清空接口地址并保存则移除该分组的发现配置。</p>
+   <button type="button" class="secondary" id="testGroupDiscovery" hidden>测试授权（会执行一次扫描）</button>
+  </details>
   <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
   <div class="modal-actions"><button class="danger" id="deleteGroup" type="button" style="margin-right:auto" hidden>删除分组</button><button class="secondary" id="cancelGroup" type="button">取消</button><button id="saveGroup" type="submit">保存分组</button></div>
  </form></div>
@@ -304,6 +312,7 @@ const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
 const managementSelected=new Set(); // one selection for every batch action
 let multiView=null,displayLabView=null;
+const scanningGroups=new Set(),discoveryResults=new Map();
 const groupOpen=new Map();
 function adbStatusBadge(d){
  // The selected address is not proof of an active ADB connection.
@@ -363,7 +372,7 @@ function render(){
  if(multiView)for(const node of Array.from($('multiPicker').children))
   qualityRows.set(node.getAttribute('data-device-id'),node);
  const list=$('devices');list.replaceChildren();
- const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,items:[]}]));
+ const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,discovery_configured:g.discovery_configured,items:[]}]));
  for(const d of devices){
   const key=d.group_name?'named:'+d.group_name:'ungrouped';
   if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',ip_prefix:null,items:[]});
