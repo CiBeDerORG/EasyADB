@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from .devices import DeviceManager, selected_address
 from .store import DeviceStore
-from .openwrt_discovery import RpcdDiscovery, DiscoveryError
+from .openwrt_discovery import RpcdDiscovery, DiscoveryError, validate_url
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
@@ -340,7 +340,7 @@ def clear_group_discovery(group_name: str):
     return result
 
 
-def _group_scan(group_name, *, persist):
+def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None = None):
     group = store.get_group(group_name)
     if group is None:
         raise HTTPException(404, "找不到该分组")
@@ -354,7 +354,20 @@ def _group_scan(group_name, *, persist):
         raise HTTPException(409, "该分组正在发现 ADB，请勿重复提交")
     try:
         try:
-            url, username, password = store.get_group_discovery_secret(group_name)
+            if test_config is not None:
+                # Test the current (possibly unsaved) form without changing SQLite.
+                url = validate_url(test_config.url)
+                username = test_config.username.strip()
+                if not username:
+                    raise DiscoveryError("请先填写专用用户名")
+                password = test_config.password
+                if not password:
+                    # A saved credential is only valid for its original router/login.
+                    saved_url, saved_user, password = store.get_group_discovery_secret(group_name)
+                    if url != saved_url or username != saved_user:
+                        raise DiscoveryError("RPCD 地址或用户名已修改，请填写专用密钥后再测试")
+            else:
+                url, username, password = store.get_group_discovery_secret(group_name)
             scan_result = discovery_client.scan(url, username, password)
         except DiscoveryError as exc:
             raise HTTPException(502, str(exc)) from None
@@ -389,9 +402,9 @@ def _group_scan(group_name, *, persist):
 
 
 @app.post("/api/groups/{group_name}/discovery/test", dependencies=[Depends(authorize)])
-def test_group_discovery(group_name: str):
-    """Explicitly logs in and executes one scan to verify actual scan ACL."""
-    return _group_scan(group_name, persist=False)
+def test_group_discovery(group_name: str, payload: GroupDiscoveryInput | None = None):
+    """Test unsaved form values first; an empty body preserves the existing API."""
+    return _group_scan(group_name, persist=False, test_config=payload)
 
 
 @app.post("/api/groups/{group_name}/discovery/scan", dependencies=[Depends(authorize)])

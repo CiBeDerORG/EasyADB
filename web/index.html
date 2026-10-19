@@ -236,7 +236,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
    <label for="groupOpenWrtUrl">RPCD 地址</label><input id="groupOpenWrtUrl" placeholder="http://10.10.10.2/ubus" autocomplete="off" spellcheck="false">
    <label for="groupOpenWrtUser">专用用户名</label><input id="groupOpenWrtUser" value="easyadb" maxlength="64" autocomplete="off">
    <label for="groupOpenWrtPassword">专用密钥</label><input id="groupOpenWrtPassword" type="password" maxlength="256" autocomplete="new-password" placeholder="粘贴 LuCI 中一次性展示的密钥">
-   <p class="hint">直接保存 OpenWrt 专用密钥，不额外加密或创建密钥文件；编辑时留空保留已保存的密钥，旧版格式或修改地址/账号时须重新粘贴。清空接口地址并保存可停用此分组发现。</p>
+   <p class="hint">测试授权优先使用当前输入的地址、用户名和密钥；密钥留空且地址/用户名未变时才沿用已保存密钥。测试不会保存配置或更新设备端口。保存修改时留空密钥也会保留同地址/用户名的旧密钥；旧版格式或修改地址/账号时须重新粘贴。</p>
    <button type="button" class="secondary" id="testGroupDiscovery" hidden>测试授权（会执行一次扫描）</button>
   </details>
   <div class="status error modal-status" id="groupMessage" role="alert" hidden></div>
@@ -558,7 +558,7 @@ function openGroup(name=null){
    $('groupOpenWrtUrl').value=g.discovery_url||'';
    $('groupOpenWrtUser').value=g.discovery_username||'easyadb';
    $('groupDiscoveryPanel').open=Boolean(g.discovery_configured);
-   $('testGroupDiscovery').hidden=!g.discovery_configured||g.discovery_needs_password;
+   $('testGroupDiscovery').hidden=!g.discovery_configured;
    if(g.discovery_needs_password)modalMessage('旧版加密凭据不再使用，请重新粘贴 OpenWrt 专用密钥并保存。','error','groupMessage');
   }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
  $('groupDialog').showModal();$('groupName').focus();
@@ -568,7 +568,16 @@ async function scanGroup(name,test=false){
  scanningGroups.add(name);if(test)$('testGroupDiscovery').disabled=true;render();
  try{
   const base='/api/groups/'+encodeURIComponent(name)+'/discovery/';
-  const result=await(await api(base+(test?'test':'scan'),{method:'POST'})).json();
+  const options={method:'POST'};
+  if(test){
+   options.headers={'Content-Type':'application/json'};
+   options.body=JSON.stringify({
+    url:$('groupOpenWrtUrl').value.trim(),
+    username:$('groupOpenWrtUser').value.trim()||'easyadb',
+    password:$('groupOpenWrtPassword').value
+   });
+  }
+  const result=await(await api(base+(test?'test':'scan'),options)).json();
   if(!test)discoveryResults.set(name,result);
   if(test)modalMessage('鉴权及扫描权限正常，本次返回 '+result.found+' 条记录（不会更新设备端口）。','ok','groupMessage');
   else {await load(true);message('「'+name+'」扫描完成：已更新 '+result.updated.length+' 台的共用 ADB 端口；不会自动连接或投屏。','ok');}

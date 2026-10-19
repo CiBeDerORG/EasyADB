@@ -260,6 +260,68 @@ def test_ambiguous_and_active_connections_remain_unchanged(monkeypatch, tmp_path
     assert mod.store.apply_group_discovery("Home", devices(("192.168.20.206", 40001)))["updated"] == []
 
 
+def test_auth_test_prefers_unsaved_form_and_only_falls_back_for_same_router(monkeypatch, tmp_path):
+    mod = make_module(monkeypatch, tmp_path)
+    typed = "9" * 64
+    wrong = "8" * 64
+    logins = []
+
+    def transport(url, payload):
+        if payload["params"][2] == "login":
+            creds = payload["params"][3]
+            logins.append((url, creds["username"], creds["password"]))
+            if creds["username"] == "easyadb" and creds["password"] in (SECRET, typed):
+                return {"result": [0, {"ubus_rpc_session": "c" * 32}]}
+            return {"result": [6]}
+        return {"result": [0, {"code": 0, "stdout": json.dumps(devices(
+            ("192.168.10.206", 37171))), "stderr": ""}]}
+
+    mod.discovery_client = RpcdDiscovery(transport)
+    with TestClient(mod.app) as client:
+        client.post("/api/groups", headers=AUTH,
+                    json={"name": "Home", "ip_prefix": "192.168.10.*"})
+        path = "/api/groups/Home/discovery"
+        client.put(path, headers=AUTH, json={"url": URL, "username": "easyadb", "password": SECRET})
+        d = client.post("/api/devices", headers=AUTH, json={
+            "name": "A", "group_name": "Home", "ip": "10.10.30.206", "port": 5555
+        }).json()
+
+        # Explicit unsaved values take priority, and neither test nor scan cache is persisted.
+        r = client.post(path + "/test", headers=AUTH,
+                        json={"url": URL, "username": "easyadb", "password": typed})
+        assert r.status_code == 200 and r.json() == {"authorized": True, "found": 1}
+        assert logins == [(URL, "easyadb", typed)]
+        assert mod.store.get_group_discovery_secret("Home") == (URL, "easyadb", SECRET)
+        assert mod.store.get(d["id"])["port"] == 5555
+        assert mod.store.last_group_discovery("Home") is None
+
+        # Blank password falls back to the saved secret only for the same source.
+        r = client.post(path + "/test", headers=AUTH,
+                        json={"url": URL, "username": "easyadb", "password": ""})
+        assert r.status_code == 200
+        assert logins[-1] == (URL, "easyadb", SECRET)
+        n = len(logins)
+        for changed in (
+            {"url": "http://10.10.10.4/ubus", "username": "easyadb", "password": ""},
+            {"url": URL, "username": "other", "password": ""},
+        ):
+            r = client.post(path + "/test", headers=AUTH, json=changed)
+            assert r.status_code == 502 and "请填写专用密钥" in r.json()["detail"]
+        assert len(logins) == n
+
+        # A typed but wrong password must NOT silently retry with the saved one.
+        r = client.post(path + "/test", headers=AUTH,
+                        json={"url": URL, "username": "easyadb", "password": wrong})
+        assert r.status_code == 502 and "登录失败" in r.json()["detail"]
+        assert logins[-1] == (URL, "easyadb", wrong)
+        assert wrong not in r.text
+
+        # Original no-body API and formal scan retain their saved-only behavior.
+        assert client.post(path + "/test", headers=AUTH).status_code == 200
+        assert client.post(path + "/scan", headers=AUTH).status_code == 200
+        assert mod.store.get_group_discovery_secret("Home") == (URL, "easyadb", SECRET)
+
+
 def test_authorization_test_without_lan_prefix_never_applies_ports(monkeypatch, tmp_path):
     mod = make_module(monkeypatch, tmp_path)
     calls = []
