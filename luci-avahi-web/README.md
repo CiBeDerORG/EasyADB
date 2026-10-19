@@ -4,9 +4,20 @@ Independent LuCI application source directory for EasyADB's OpenWrt-side
 mDNS experiment. The **source directory** is `luci-avahi-web`; the conventional
 OpenWrt **package name** is `luci-app-avahi-web`.
 
-## What is implemented (v0.1.0)
+## What is implemented (v0.2.0)
 
-- Services → Avahi / ADB Discovery page, daemon and umdns status.
+- Services → Avahi / ADB Discovery page, Avahi/D-Bus/umdns status and
+  independent service start/stop/boot enable/disable controls.
+- Built-in **APK package management** (Avahi daemon + avahi-utils as one group,
+  D-Bus and umdns independently): installed versions, install, uninstall,
+  package-scoped update, separately confirmed repository index refresh.
+- Each package mutation first shows an `apk --simulate` dependency/transaction
+  preview and requires explicit confirmation; package names and operations
+  are allowlisted. No bulk `apk upgrade`, forced dependency removal or
+  untrusted network-feed installation.
+- The LuCI application's required dependencies are only `luci-base` and
+  `rpcd-mod-file`; **Avahi, D-Bus and umdns can be absent** while its package
+  management page is still usable.
 - Start, stop, restart Avahi; refuse start/restart while `umdns` is running.
 - Local browse of `_adb-tls-connect._tcp`, `_adb-tls-pairing._tcp`, or all services.
 - IPv4, IPv6, allow-interfaces, reflector, and reflect-ipv configuration.
@@ -36,6 +47,14 @@ or force-install it as an APK**. A rolling SNAPSHOT feed may have changed since
 the installed firmware image was flashed, so compare the actual repositories
 and package architecture before installing daemon dependencies.
 
+**The page itself no longer requires you to pre-install Avahi or D-Bus.**
+Install this LuCI APK first, then use its package management section. If a
+repository is missing or mismatched, the APK dependency solver will report the
+error; do not force installation. The UI prevents start/install/update of one
+mDNS daemon while the other is running. Stop/disable the old service explicitly
+first. D-Bus removal is blocked while its daemon is active and otherwise still
+subject to APK dependency resolution.
+
 ## APK installation on the actual router (ImmortalWrt SNAPSHOT)
 
 First gather read-only router details:
@@ -48,14 +67,12 @@ cat /etc/apk/repositories.d/*.list
 cat /etc/openwrt_release
 ```
 
-The package is architecture-independent but the *Avahi and D-Bus dependencies*
-are not necessarily interchangeable across snapshots. If matching packages
-are present in the configured trusted repositories, first do:
-
-```sh
-apk update
-apk add avahi-dbus-daemon avahi-utils
-```
+The package itself is architecture-independent and does not require Avahi
+or D-Bus to be installed. **Its optional managed packages** must still come
+from compatible, trusted firmware feeds. After installing this LuCI APK, use
+the page's separate **Refresh package indexes** action, then use **Install**
+on Avahi, D-Bus, or umdns as desired. If SNAPSHOT feeds are incompatible,
+fix the repository/SDK mismatch rather than forcing installation.
 
 Build the LuCI application with an **exactly matching** firmware SDK that
 uses APK. From the SDK root, after installing its matching LuCI feed:
@@ -116,7 +133,7 @@ Requires POSIX shell, `ar`, GNU tar, gzip, Node.js and Python for smoke tests:
 
 ```sh
 sh tests/smoke.sh
-# dist/luci-app-avahi-web_0.1.0-1_all.ipk (opkg-only development build)
+# dist/luci-app-avahi-web_0.2.0-1_all.ipk (opkg-only development build)
 ```
 
 This builds an unsigned **development** IPK with the same root filesystem as
@@ -142,7 +159,10 @@ as running `scripts/build-ipk.sh` on a development computer.
 ## Security and limitations
 
 The LuCI ACL only permits invoking this package's fixed helper commands; the
-helper validates exact actions, option count and interface-list characters.
+helper validates exact actions, option count, the three named components and
+interface-list characters. Package changes use APK's regular dependency solver
+and a simulate-before-confirm flow. Updating an individual SNAPSHOT package is
+still a deliberate risk: back up router configuration before performing it.
 Status/browse require LuCI login, and changes require write permissions.
 Reflector stays disabled by default. The page does not touch firewall rules.
 Only administer your own router and authorized devices.
