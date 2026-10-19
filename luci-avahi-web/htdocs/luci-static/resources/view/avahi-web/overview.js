@@ -5,11 +5,20 @@
 'require poll';
 
 var HELPER = '/usr/libexec/luci-avahi-web';
+var SCANNER = '/usr/libexec/luci-avahi-scan';
 
 function call(action, args) {
 	return fs.exec(HELPER, [ action ].concat(args || [])).then(function(res) {
 		if (res.code !== 0)
 			throw new Error((res.stderr || res.stdout || _('Command failed')).trim());
+		return res.stdout || '';
+	});
+}
+
+function callScan(action) {
+	return fs.exec(SCANNER, [ action ]).then(function(res) {
+		if (res.code !== 0)
+			throw new Error((res.stderr || res.stdout || _('Scan failed')).trim());
 		return res.stdout || '';
 	});
 }
@@ -71,7 +80,7 @@ function checked(value) { return value === 'yes'; }
 
 return view.extend({
 	load: function() {
-		return Promise.all([ call('status'), call('config-get').catch(function() { return ''; }), call('package', [ 'list' ]) ]);
+		return Promise.all([ call('status'), call('config-get').catch(function() { return ''; }), call('package', [ 'list' ]), callScan('last').catch(function() { return ''; }), callScan('log').catch(function() { return ''; }) ]);
 	},
 
 	render: function(data) {
@@ -84,6 +93,9 @@ return view.extend({
 		var packageButtons = [];
 		var status = E('div');
 		var discover = E('div');
+		var lastScan = E('div');
+		var scanLog = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto' });
+		var scanBusy = false;
 		var error = E('div');
 		var mode = E('select', { 'class': 'cbi-input-select' }, [
 			E('option', { value: 'adb' }, [ '_adb-tls-connect._tcp' ]),
@@ -301,6 +313,51 @@ return view.extend({
 			discover.replaceChildren(table);
 		}
 
+		function displayScan(text) {
+			var result;
+			try { result = JSON.parse(text); }
+			catch (e) {
+				lastScan.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('Scan result is not valid JSON.') ]));
+				return;
+			}
+			var list = result.devices || [];
+			var table = E('table', { 'class': 'table' }, [
+				E('tr', { 'class': 'tr table-titles' }, [
+					E('th', [ _('Name') ]), E('th', [ _('Interface') ]),
+					E('th', [ _('Address') ]), E('th', [ _('ADB port') ])
+				])
+			]);
+			list.forEach(function(d) {
+				table.appendChild(E('tr', { 'class': 'tr' }, [
+					cell(d.instance), cell(d.iface), cell(d.address), cell(String(d.port))
+				]));
+			});
+			lastScan.replaceChildren(
+				E('p', [ _('Scan timestamp: ') + (result.scanned_at
+					? new Date(result.scanned_at * 1000).toLocaleString() : '-') +
+					' / ' + _('Resolved endpoints: ') + String(result.count || 0) +
+					' / ' + _('Storage: volatile (/tmp; clears on reboot)') ]),
+				list.length ? table : E('p', [ _('No matching wireless ADB service found on the local LAN.') ])
+			);
+		}
+
+		function refreshScanLog() {
+			return callScan('log').then(function(text) { scanLog.textContent = text || _('No records yet.'); });
+		}
+
+		function scanOnce() {
+			if (scanBusy) return;
+			scanBusy = true;
+			message(_('Scanning local Android wireless debugging services…'));
+			return callScan('scan').then(function(output) {
+				displayScan(output);
+				message(_('Scan completed and snapshot cached.'));
+			}).catch(function(e) {
+				message(_('Scan failed: ') + e.message, true);
+			}).then(refreshScanLog).then(function() { scanBusy = false; },
+				function(e) { scanBusy = false; message(e.message, true); });
+		}
+
 		function refreshStatus() { return call('status').then(showStatus).catch(function(e) { message(e.message, true); }); }
 		function refreshBrowse() {
 			return call('browse', [ mode.value ]).then(function(text) {
@@ -353,6 +410,9 @@ return view.extend({
 
 		showStatus(data[0]);
 		displayPackages(data[2]);
+		if (data[3]) displayScan(data[3]);
+		else lastScan.replaceChildren(E('p', [ _('No on-demand scan has been performed yet.') ]));
+		scanLog.textContent = data[4] || _('No records yet.');
 		var root = E('div', {}, [
 			E('h2', [ _('Avahi / ADB Discovery') ]),
 			E('p', [ _('Discover Android Wireless debugging services on this OpenWrt LAN. The service records remain local; this application does not forward multicast over EasyTier or report anything to NAS.') ]),
@@ -386,6 +446,16 @@ return view.extend({
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
+				E('h3', [ _('EasyADB on-demand discovery') ]),
+				E('p', [ _('Each request triggers one local Avahi scan and returns its result. Last result and bounded event log reside only in /tmp. The authenticated RPCD /ubus endpoint is available to an explicitly provisioned EasyADB role.') ]),
+				E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: scanOnce }, [ _('Scan once and cache result') ]), ' ',
+				E('button', { type: 'button', 'class': 'cbi-button', click: function() {
+					return callScan('last').then(displayScan).catch(function(e) { message(e.message, true); });
+				} }, [ _('Load last result') ]), ' ',
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshScanLog }, [ _('Refresh scan log') ]),
+				lastScan, E('h4', [ _('Recent scan events (last 100; volatile)') ]), scanLog
+			]),
+			E('div', { 'class': 'cbi-section' }, [
 				E('h3', [ _('Service discovery') ]),
 				E('p', [ _('A resolved record shows the advertised IP and current port, but it does not by itself prove that ADB pairing or TCP connectivity succeeds.') ]),
 				mode, ' ',
@@ -404,10 +474,7 @@ return view.extend({
 				save
 			])
 		]);
-		if (configReady)
-			refreshBrowse();
-		else
-			discover.replaceChildren(E('p', [ _('Install Avahi first, then start its daemon to discover services.') ]));
+		discover.replaceChildren(E('p', [ _('Press Discover now for an additional diagnostic browse. No background scans are scheduled.') ]));
 		poll.add(function() { return refreshStatus(); }, 20);
 		return root;
 	},
