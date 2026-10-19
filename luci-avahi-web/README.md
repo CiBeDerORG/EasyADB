@@ -1,4 +1,4 @@
-# luci-avahi-web v0.5.7
+# luci-avahi-web v0.5.8
 
 ImmortalWrt/OpenWrt 上的轻量 EasyADB 局域网发现代理。仅管理 **Avahi、D-Bus** 两组组件，支持 LuCI 管理员手动发现 Android 无线 ADB 服务，以及 NAS 通过专用 RPCD 会话按需触发扫描。
 
@@ -58,3 +58,7 @@ sh /path/to/luci-avahi-web/scripts/build-apk-sdk.sh /path/to/luci-avahi-web
 修复旧版将 `stat -c '%u'` 执行失败误判为“目录不是 root 所有”的错误。在精简 BusyBox 不提供兼容 stat 时，回退读取 `ls -ldn` 数字 UID，并对比扫描进程 UID；继续要求目录属于调用身份、非符号链接、权限 0700，不会使用 chmod 777 或匿名写入。若目录实际归其他 UID 所有，返回可诊断的 UID 差异，仍拒绝不安全操作。
 
 「立即发现 ADB」会在按钮所在区域直接显示运行中、发现端点数量或原始 RPCD 扫描错误，查询失败后自动恢复按钮；不再仅把失败提示放在页面最顶端。没有增加定时轮询、自动扫描、umdns 管理或额外的接口权限。
+
+## v0.5.8：修复 jshn 未定义变量造成的扫描失败
+
+OpenWrt libubox 的 `jshn.sh` 初始化及 JSON 构造会暂时读取未定义的 `JSON_PREFIX`、`JSON_UNSET` 等变量。扫描程序自身通常使用 `set -eu`，此前会使管理员按需扫描在发现阶段之后返回 `JSON_PREFIX: parameter not set`。现只在 JSON 编码段使用 `set +u` 并初始化空 `JSON_PREFIX`，生成 JSON 后立即恢复 `set -u`；`set -e` 与目录安全检查不变。新增模拟测试验证未定义变量条件下成功写入最新快照。
