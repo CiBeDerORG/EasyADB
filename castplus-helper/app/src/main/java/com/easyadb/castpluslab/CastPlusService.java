@@ -5,7 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
-import android.graphics.ImageFormat;
+import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -46,7 +46,7 @@ public final class CastPlusService extends Service {
         try {
             drainThread = new HandlerThread("castplus-frame-drain");
             drainThread.start();
-            reader = ImageReader.newInstance(1920, 1080, ImageFormat.RGBA_8888, 2);
+            reader = ImageReader.newInstance(1920, 1080, PixelFormat.RGBA_8888, 2);
             reader.setOnImageAvailableListener(source -> {
                 Image image = null;
                 try { image = source.acquireLatestImage(); }
