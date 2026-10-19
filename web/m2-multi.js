@@ -417,6 +417,9 @@ class MultiView{
   wakeButton.disabled=true;reconnectButton.disabled=true;
   const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
+  const fullscreenButton=icon('fab-fullscreen','⛶','全屏展示');
+  fullscreenButton.disabled=typeof screen.requestFullscreen!=='function';
+  fullscreenButton.setAttribute('aria-pressed','false');
   const form=make('form','multi-text-panel');form.hidden=true;
   form.setAttribute('aria-label','本设备文字与按键输入');
   const input=make('input'),submit=make('button','','发送');
@@ -447,13 +450,25 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,wakeButton,reconnectButton,toggle,textButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,toggle,textButton,fullscreenButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
-   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,logPanel,logClose,toggle,stop,
+   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,fullscreenButton,
+   logPanel,logClose,toggle,stop,
    textButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
    menuTimer:null});
+  // Browser handles Escape natively; this event keeps the icon synchronized
+  // when Escape, browser UI or another card exits/replaces fullscreen.
+  const syncFullscreen=()=>{
+   const active=root.document.fullscreenElement===screen;
+   fullscreenButton.textContent=active?'↙':'⛶';
+   fullscreenButton.title=active?'退出全屏（Esc）':'全屏展示';
+   fullscreenButton.setAttribute('aria-label',fullscreenButton.title);
+   fullscreenButton.setAttribute('aria-pressed',String(active));
+  };
+  root.document.addEventListener?.('fullscreenchange',syncFullscreen);
+  card.syncFullscreen=syncFullscreen;
   const collapseMenu=()=>{
    if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
    card.menuOpen=false;card.textOpen=false;form.hidden=true;
@@ -498,6 +513,7 @@ class MultiView{
   logButton.addEventListener('pointerdown',resetMenuTimer);
   wakeButton.addEventListener('pointerdown',resetMenuTimer);
   reconnectButton.addEventListener('pointerdown',resetMenuTimer);
+  fullscreenButton.addEventListener('pointerdown',resetMenuTimer);
   card.refreshMenu=()=>{
    fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
     (card.enabled?' is-control-enabled':'');
@@ -784,6 +800,16 @@ class MultiView{
    if(reconnectButton.disabled)return;
    this.reconnectFor(card.id);resetMenuTimer();
   });
+  fullscreenButton.addEventListener('click',()=>{
+   if(fullscreenButton.disabled||card.closed)return;
+   resetMenuTimer();
+   try{
+    const operation=root.document.fullscreenElement===screen
+     ?root.document.exitFullscreen()
+     :screen.requestFullscreen();
+    Promise.resolve(operation).catch(()=>mark('浏览器未允许全屏，请检查全屏权限。',true));
+   }catch(error){mark('浏览器不支持或未允许此画面全屏。',true);}
+  });
   stop.addEventListener('click',()=>this.stop(card));
   form.addEventListener('submit',ev=>{
    ev.preventDefault();resetMenuTimer();
@@ -894,6 +920,10 @@ class MultiView{
  end(card,clean){
   if(card.closed)return;
   card.closed=true;
+  root.document.removeEventListener?.('fullscreenchange',card.syncFullscreen);
+  if(root.document.fullscreenElement===card.screen){
+   try{Promise.resolve(root.document.exitFullscreen()).catch(()=>{});}catch{}
+  }
   if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
   card.menuOpen=false;card.textOpen=false;

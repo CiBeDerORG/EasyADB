@@ -218,7 +218,8 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     assert 'id="multiPicker"' in page and 'id="multiGrid"' in page
     assert 'id="legacySolo"' not in page and 'id="liveProfile"' not in page
     assert 'id="multiProfile"' not in page
-    assert "profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24" in multi
+    assert "profile:'custom',max_size:960,experimental_resolution:null" in multi
+    assert "video_bit_rate:3000000,max_fps:24" in multi
     assert "actions.hidden=true" in multi and "details.hidden=true" in multi
     assert ".multi-choice>.multi-probe-log[hidden]" in page
     assert "choice(CHOICES,value.profile)" not in multi

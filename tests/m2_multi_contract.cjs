@@ -22,6 +22,7 @@ class El{
  fire(name,ev={}){for(const fn of this.events[name]||[])fn({preventDefault(){},...ev});}
 }
 const timers=new Map();let nextTimer=1;
+const fullscreenEvents=new Set();
 function advanceMenuTimers(){
  const due=[...timers.entries()].filter(([,timer])=>timer.ms===5000);
  for(const [id,{fn}] of due){timers.delete(id);fn();}
@@ -60,7 +61,13 @@ const root={
   samples=[];recordBytes(){} sample(){this.samples.push({});return{};}
   summary(profile,device){return{profile,device,avgFps:24,avgReceiveMbps:1,avgCpuPct:3,avgRssMib:8,totalBytes:128};}},
   format:()=>'',fmt:(v)=>Number.isFinite(v)?String(v):'—',advice:()=> ''}
-};root.window=root;
+};
+root.document.addEventListener=(type,fn)=>{if(type==='fullscreenchange')fullscreenEvents.add(fn);};
+root.document.removeEventListener=(type,fn)=>{if(type==='fullscreenchange')fullscreenEvents.delete(fn);};
+const notifyFullscreen=()=>{for(const fn of [...fullscreenEvents])fn();};
+root.document.exitFullscreen=()=>{root.document.fullscreenElement=null;notifyFullscreen();return Promise.resolve();};
+El.prototype.requestFullscreen=function(){root.document.fullscreenElement=this;notifyFullscreen();return Promise.resolve();};
+root.window=root;
 vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
 assert.match(page,/最多四路/);
@@ -278,6 +285,22 @@ assert.equal(quality(0,'max_fps').disabled,true);
 assert.equal(ca.toggle.disabled,false,'control independent of video playing');
 assert.equal(ca.quality.profile,'custom');
 assert.equal(ca.lowLatency,true,'local player setting is pinned to device A only');
+assert.equal(ca.fullscreenButton.title,'全屏展示');
+assert.equal(ca.fullscreenButton.disabled,false);
+assert.equal(fullscreenEvents.size,1,'fullscreen observer is session-owned');
+ca.main.fire('click');ca.fullscreenButton.fire('click');
+assert.equal(root.document.fullscreenElement,ca.screen,'only this card video becomes fullscreen');
+assert.equal(ca.fullscreenButton['aria-pressed'],'true');
+assert.equal(ca.fullscreenButton.title,'退出全屏（Esc）');
+// Browser Esc invokes native exitFullscreen -> fullscreenchange, no global key capture.
+root.document.exitFullscreen();
+assert.equal(root.document.fullscreenElement,null);
+assert.equal(ca.fullscreenButton['aria-pressed'],'false');
+assert.equal(ca.fullscreenButton.title,'全屏展示');
+ca.fullscreenButton.fire('click');
+assert.equal(root.document.fullscreenElement,ca.screen);
+root.document.exitFullscreen();
+ca.main.fire('click');
 assert.match(ca.qualityLine.textContent,/自定义/);
 assert.equal(ca.screen.style.aspectRatio,'720 / 1280');
 assert.equal(ca.screen.style.width,'100%');
@@ -327,6 +350,7 @@ ca.textClose.fire('click');assert.equal(ca.form.hidden,true);
 ca.stop.fire('click');assert.equal(a.sent.at(-1),'stop');
 a.emit('ended',{session_id:'only-one',cleanup_complete:true});
 assert.equal(multi.hasActive(),false);
+assert.equal(fullscreenEvents.size,0,'teardown removes the fullscreen observer');
 assert.equal(timers.size,0,'teardown clears floating menu timer');
 assert.equal(grid.children.length,0,'terminal session must REMOVE its old video DOM card');
 assert.equal(batchSelected.has('id-1'),true,'left-side selection survives clean stop');
@@ -666,9 +690,9 @@ async function waitForCheck(id){
  assert.equal(picker.children[0].children.at(-2).children[0].disabled,true);
  assert.equal(multi.getChoice('id-2').experimental_resolution,null);
  multi.videoEngine='mse';
- const socketCount=sockets.length;
+ const experimentalSocketCount=sockets.length;
  assert.equal(multi.startFor('id-1'),true);
- assert.equal(sockets.length,socketCount+1);
+ assert.equal(sockets.length,experimentalSocketCount+1);
  const virtual=sockets.at(-1);virtual.open();
  const request=JSON.parse(virtual.sent[0]);
  assert.equal(request.profile,'custom');
@@ -678,13 +702,20 @@ async function waitForCheck(id){
  assert.equal(request.display_experiment.height,1080);
  assert.equal(request.screen_off,false);
  assert.match(multi.cards.get('id-1').qualityLine.textContent,/实验性虚拟屏幕 1920×1080/);
+ const virtualCard=multi.cards.get('id-1');
+ virtualCard.fullscreenButton.fire('click');
+ assert.equal(root.document.fullscreenElement,virtualCard.screen);
+ assert.equal(fullscreenEvents.size,1);
  virtual.emit('starting',{session_id:'virtual'});
  virtual.emit('ended',{session_id:'virtual',cleanup_complete:true});
+ assert.equal(root.document.fullscreenElement,null,'stopping a fullscreen stream must exit fullscreen');
+ assert.equal(fullscreenEvents.size,0,'no stale listeners after terminal session');
  assert.equal(multi.cards.size,0);
  const regular=quality(0,'max_size');regular.value='1600';regular.fire('change');
  assert.equal(multi.getChoice('id-1').experimental_resolution,null);
  assert.equal(multi.getChoice('id-1').max_size,1600);
  assert.equal(picker.children[0].children.at(-2).children[0].disabled,false);
+ console.log('M2 fullscreen per-card, browser Esc and teardown: OK');
  console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
   console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
