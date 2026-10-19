@@ -46,6 +46,8 @@ assert "config-set" not in code and "enable-reflector" not in code
 scanner=pathlib.Path("root/usr/libexec/luci-avahi-scan").read_text()
 assert "scan|last)" in scanner and "events.log" not in scanner and "log_event" not in scanner
 assert "ls -ldn" in scanner and "id -u" in scanner
+assert "set +u\nJSON_PREFIX=\n. /usr/share/libubox/jshn.sh" in scanner
+assert 'json_dump > "$OUT"\nset -u' in scanner
 assert "Scan state directory is not root-owned" not in scanner
 controller=pathlib.Path("root/usr/libexec/luci-avahi-web").read_text()
 assert "\n    browse) " not in controller and "\n    config-set) " not in controller
@@ -96,6 +98,46 @@ if "$TEMP/mock-scan" last >/dev/null 2>"$TEMP/scan-owner-error"; then
 fi
 grep -q 'owner UID 999999 differs from scanner UID' "$TEMP/scan-owner-error"
 rm -f "$TEMP/mock-bin/ls"
+
+# Regression: OpenWrt jshn references JSON_PREFIX/JSON_UNSET before setting them.
+# Reproduce this with no predeclared JSON_* variables in a complete scanner run.
+mkdir -m 0700 "$TEMP/scan-json-state" "$TEMP/json-bin"
+cat > "$TEMP/mock-jshn.sh" <<'EOF'
+json_init() {
+    [ -z "$JSON_PREFIX" ] && [ -z "$JSON_UNSET" ]
+    JSON_UNSET=
+}
+json_add_string() { :; }
+json_add_int() { :; }
+json_add_array() { :; }
+json_add_object() { :; }
+json_close_object() { :; }
+json_close_array() { :; }
+json_dump() {
+    [ -z "$JSON_PREFIX" ] && [ -z "$JSON_UNSET" ]
+    printf '{"status":"ok","devices":[],"count":0}\n'
+}
+EOF
+cat > "$TEMP/json-bin/avahi-browse" <<'EOF'
+#!/bin/sh
+printf '%s\n' '=;br-lan;IPv4;adb-test;_adb-tls-connect._tcp;local;phone.local;192.168.1.66;37819;'
+EOF
+cat > "$TEMP/json-bin/pidof" <<'EOF'
+#!/bin/sh
+[ "$1" = avahi-daemon ]
+EOF
+chmod +x "$TEMP/json-bin/avahi-browse" "$TEMP/json-bin/pidof"
+sed -e "s@^STATE=/tmp/luci-avahi-web\$@STATE=$TEMP/scan-json-state@" \
+    -e "s@^PATH=/usr/sbin:/usr/bin:/sbin:/bin\$@PATH=$TEMP/json-bin:/usr/sbin:/usr/bin:/sbin:/bin@" \
+    -e "s@/usr/bin/avahi-browse@$TEMP/json-bin/avahi-browse@g" \
+    -e "s@/usr/share/libubox/jshn.sh@$TEMP/mock-jshn.sh@g" \
+    root/usr/libexec/luci-avahi-scan > "$TEMP/mock-json-scan"
+chmod +x "$TEMP/mock-json-scan"
+env -u JSON_PREFIX -u JSON_UNSET "$TEMP/mock-json-scan" scan > "$TEMP/scan-json-result"
+grep -q '"status":"ok"' "$TEMP/scan-json-result"
+test -f "$TEMP/scan-json-state/last-scan.json"
+env -u JSON_PREFIX -u JSON_UNSET "$TEMP/mock-json-scan" last | grep -q '"status":"ok"'
+test ! -e "$TEMP/scan-json-state/scan.lock"
 
 cat > "$TEMP/mock-apk" <<'EOF'
 #!/bin/sh
