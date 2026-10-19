@@ -4,7 +4,7 @@ Independent LuCI application source directory for EasyADB's OpenWrt-side
 mDNS experiment. The **source directory** is `luci-avahi-web`; the conventional
 OpenWrt **package name** is `luci-app-avahi-web`.
 
-## What is implemented (v0.2.0)
+## What is implemented (v0.3.0)
 
 - Services → Avahi / ADB Discovery page, Avahi/D-Bus/umdns status and
   independent service start/stop/boot enable/disable controls.
@@ -15,8 +15,8 @@ OpenWrt **package name** is `luci-app-avahi-web`.
   preview and requires explicit confirmation; package names and operations
   are allowlisted. No bulk `apk upgrade`, forced dependency removal or
   untrusted network-feed installation.
-- The LuCI application's required dependencies are only `luci-base` and
-  `rpcd-mod-file`; **Avahi, D-Bus and umdns can be absent** while its package
+- The LuCI application's required dependencies are `luci-base`, `rpcd-mod-file`,
+  `libubox` and `uhttpd-mod-ubus`; **Avahi, D-Bus and umdns can be absent** while its package
   management page is still usable.
 - Start, stop, restart Avahi; refuse start/restart while `umdns` is running.
 - Local browse of `_adb-tls-connect._tcp`, `_adb-tls-pairing._tcp`, or all services.
@@ -31,6 +31,78 @@ OpenWrt **package name** is `luci-app-avahi-web`.
 **Scope:** This is a local LuCI discovery dashboard, not yet a NAS registration
 agent. An Avahi record is a discovery hint, not proof of ADB connectivity,
 pairing, or a reliable mapping from phone LAN IP to its EasyTier route.
+
+## EasyADB on-demand discovery API (no webhook)
+
+The router **never sends unsolicited requests to the NAS**. EasyADB calls the
+existing authenticated uhttpd `/ubus` JSON-RPC endpoint to request one scan.
+The package provides a dedicated, fixed-command scanner:
+
+| Command | Effect |
+| --- | --- |
+| `/usr/libexec/luci-avahi-scan scan` | One bounded `_adb-tls-connect._tcp` scan, returning JSON and refreshing the temporary snapshot |
+| `/usr/libexec/luci-avahi-scan last` | Return the last cached JSON, without scanning |
+| `/usr/libexec/luci-avahi-scan log` | Return the last 100 volatile log entries; LuCI admin only |
+
+The `luci-avahi-easyadb` RPCD ACL role grants only `scan` and `last` and is
+**not assigned to anonymous clients**. Explicitly provision a dedicated RPCD
+login with that role before EasyADB uses the API. Never share the LuCI root
+credentials, disable ubus authentication, or publicly expose `/ubus`. Prefer
+the router's EasyTier address with NAS-only firewall access and an
+authenticated encrypted transport.
+
+After normal RPCD `session.login`, EasyADB can POST a request of this shape to
+`http(s)://<router-easytier-address>/ubus`: 
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "call",
+  "params": [
+    "<RPCD_SESSION_ID>",
+    "file",
+    "exec",
+    { "command": "/usr/libexec/luci-avahi-scan", "params": ["scan"] }
+  ]
+}
+```
+
+The standard UBUS response contains a `file.exec` result with `code` and
+`stdout`. If `code` is zero, parse `stdout` as a scan JSON object, such as:
+
+```json
+{
+  "status": "ok",
+  "source": "avahi",
+  "scanned_at": 1792400000,
+  "devices": [
+    { "iface": "br-lan", "protocol": "IPv4", "instance": "adb-example",
+      "service": "_adb-tls-connect._tcp", "host": "android.local",
+      "address": "192.168.1.101", "port": 38711 }
+  ],
+  "count": 1,
+  "storage": "volatile"
+}
+```
+
+The scan is limited to 8 seconds and at most 32 endpoint records. Concurrent
+requests return a busy error; no parallel scanners are created. Neither an
+anonymous HTTP endpoint nor a separate port/listener/webhook is created.
+
+### Storage policy
+
+- **Persistent settings:** use `/etc/config/` (UCI, writable overlay) for
+  low-frequency settings only. The current Avahi daemon settings are still
+  stored in `/etc/avahi/avahi-daemon.conf`, with backup on edits.
+- **Runtime state:** `/tmp/luci-avahi-web/last-scan.json` and
+  `/tmp/luci-avahi-web/events.log` (last 100 entries) are volatile; reboot
+  clears them. Each successful scan atomically replaces the prior snapshot.
+  Summary events also go to `logread` through `logger`.
+- **Durable device registry:** EasyADB on NAS should persist validated device
+  identities, ADB connection data and route mappings. mDNS instances and
+  advertised dynamic ports are only discovery hints, not stable device IDs.
+  Avoid repeated writes to router flash for every scan/port change.
 
 ## Tested development target / matching the user's router
 
@@ -105,7 +177,7 @@ On an OpenWrt system with matching official feeds:
 ```sh
 opkg update
 opkg install luci-base rpcd-mod-file avahi-dbus-daemon avahi-utils
-opkg install /tmp/luci-app-avahi-web_0.1.0-1_all.ipk
+opkg install /tmp/luci-app-avahi-web_0.3.0-1_all.ipk
 /etc/init.d/rpcd restart
 rm -f /tmp/luci-indexcache
 ```
@@ -133,7 +205,7 @@ Requires POSIX shell, `ar`, GNU tar, gzip, Node.js and Python for smoke tests:
 
 ```sh
 sh tests/smoke.sh
-# dist/luci-app-avahi-web_0.2.0-1_all.ipk (opkg-only development build)
+# dist/luci-app-avahi-web_0.3.0-1_all.ipk (opkg-only development build)
 ```
 
 This builds an unsigned **development** IPK with the same root filesystem as
