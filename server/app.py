@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, ExitStack
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from .devices import DeviceManager, selected_address
 from .store import DeviceStore
+from .openwrt_discovery import RpcdDiscovery, DiscoveryError
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
@@ -40,6 +41,9 @@ if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = os.getenv("EASYADB_DB", str(ROOT / "data" / "devices.sqlite3"))
 store = DeviceStore(DB_PATH)
+discovery_client = RpcdDiscovery()
+_discovery_guard = threading.RLock()
+_discovery_locks = {}
 
 
 def adb(*args, timeout=15, input_text=None):
@@ -116,6 +120,12 @@ class VideoProbeInput(BaseModel):
 class GroupInput(BaseModel):
     name: str
     ip_prefix: str | None = None
+
+
+class GroupDiscoveryInput(BaseModel):
+    url: str
+    username: str = "easyadb"
+    password: str = ""
 
 
 def clean_group(payload):
@@ -308,6 +318,93 @@ def update_group(group_name: str, payload: GroupInput):
         live_registry.stop_for(device_id)
         manager.clear(device_id)
     return result
+
+
+@app.put("/api/groups/{group_name}/discovery", dependencies=[Depends(authorize)])
+def configure_group_discovery(group_name: str, payload: GroupDiscoveryInput):
+    """Only authenticated EasyADB admins may set credentials; never echo secrets."""
+    try:
+        result = store.set_group_discovery(group_name, payload.url, payload.username, payload.password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if result is None:
+        raise HTTPException(404, "找不到该分组")
+    return result
+
+
+@app.delete("/api/groups/{group_name}/discovery", dependencies=[Depends(authorize)])
+def clear_group_discovery(group_name: str):
+    result = store.remove_group_discovery(group_name)
+    if result is None:
+        raise HTTPException(404, "找不到该分组")
+    return result
+
+
+def _group_scan(group_name, *, persist):
+    group = store.get_group(group_name)
+    if group is None:
+        raise HTTPException(404, "找不到该分组")
+    if not group["discovery_configured"]:
+        raise HTTPException(409, "该分组尚未配置 OpenWrt 发现接口")
+    if not group["ip_prefix"]:
+        raise HTTPException(409, "请先给当前分组配置内网 IP 前缀，才能匹配扫描结果")
+    with _discovery_guard:
+        mutex = _discovery_locks.setdefault(group_name, threading.Lock())
+    if not mutex.acquire(blocking=False):
+        raise HTTPException(409, "该分组正在发现 ADB，请勿重复提交")
+    try:
+        try:
+            url, username, password = store.get_group_discovery_secret(group_name)
+            scan_result = discovery_client.scan(url, username, password)
+        except DiscoveryError as exc:
+            raise HTTPException(502, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        if not persist:
+            # Explicit test of BOTH login and scan ACL. Does not change device
+            # ports or save a new NAS discovery result.
+            return {"authorized": True, "found": len(scan_result["devices"])}
+        # Lock devices in stable order. Never override an active ADB or live
+        # screen session: next explicit scan can update it when idle.
+        group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
+                               key=lambda d: d["id"])
+        with ExitStack() as held:
+            for device in group_devices:
+                held.enter_context(manager._device_lock(device["id"]))
+            blocked = set()
+            for device in group_devices:
+                if manager.snapshot(device)["status"] == "connected" or display_lab.has_pending(device["id"]):
+                    blocked.add(device["id"])
+                    continue
+                with live_registry.lock:
+                    live = live_registry.sessions.get(device["id"])
+                    if live is not None and not live_registry.is_cleaned(live):
+                        blocked.add(device["id"])
+            try:
+                return store.apply_group_discovery(group_name, scan_result, blocked)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+    finally:
+        mutex.release()
+
+
+@app.post("/api/groups/{group_name}/discovery/test", dependencies=[Depends(authorize)])
+def test_group_discovery(group_name: str):
+    """Explicitly logs in and executes one scan to verify actual scan ACL."""
+    return _group_scan(group_name, persist=False)
+
+
+@app.post("/api/groups/{group_name}/discovery/scan", dependencies=[Depends(authorize)])
+def scan_group_discovery(group_name: str):
+    """Only a user click issues a remote scan; never connect ADB here."""
+    return _group_scan(group_name, persist=True)
+
+
+@app.get("/api/groups/{group_name}/discovery/last", dependencies=[Depends(authorize)])
+def group_discovery_last(group_name: str):
+    if store.get_group(group_name) is None:
+        raise HTTPException(404, "找不到该分组")
+    return {"last": store.last_group_discovery(group_name)}
 
 
 @app.delete("/api/groups/{group_name}", dependencies=[Depends(authorize)])
