@@ -23,11 +23,18 @@ service_action() {
             op=$1; init=$INIT; unit=avahi ;;
         umdns-start|umdns-stop|umdns-enable|umdns-disable)
             op=${1#umdns-}; init=/etc/init.d/umdns; unit=umdns ;;
-        dbus-start)
-            op=start; init=/etc/init.d/dbus; unit=dbus ;;
+        dbus-start|dbus-stop|dbus-enable|dbus-disable)
+            op=${1#dbus-}; init=/etc/init.d/dbus; unit=dbus ;;
         *) fail '不支持的服务操作' ;;
     esac
     [ -x "$init" ] || fail '缺少对应服务的启动脚本，请先确认软件包已安装完整'
+    if [ "$unit" = dbus ] && [ "$op" = stop ] && running; then
+        fail 'Avahi 正在依赖 D-Bus，请先停止 Avahi 后再考虑停止 D-Bus'
+    fi
+    if [ "$unit" = dbus ] && [ "$op" = disable ] &&
+       [ -x "$INIT" ] && "$INIT" enabled >/dev/null 2>&1; then
+        fail 'Avahi 已启用开机自启，请先关闭 Avahi 自启再关闭 D-Bus 自启'
+    fi
     if [ "$op" = enable ]; then
         if [ "$unit" = avahi ] && [ -x /etc/init.d/umdns ] &&
             /etc/init.d/umdns enabled >/dev/null 2>&1; then
