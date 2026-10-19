@@ -28,3 +28,24 @@ done
 printf '%s\n' '== Package architecture =='
 if command -v apk >/dev/null 2>&1; then apk --print-arch 2>/dev/null || true; fi
 if command -v opkg >/dev/null 2>&1; then opkg print-architecture 2>/dev/null || true; fi
+printf '%s\n' '== APK repositories (read only) =='
+if [ -d /etc/apk/repositories.d ]; then
+  ls -la /etc/apk/repositories.d
+  for file in /etc/apk/repositories.d/*.list; do
+    [ -f "$file" ] || continue
+    printf '%s\n' "-- $file --"
+    cat "$file"
+  done
+else
+  echo 'No /etc/apk/repositories.d directory found'
+fi
+printf '%s\n' '== Installed dependencies =='
+if command -v apk >/dev/null 2>&1; then
+  for pkg in luci-base rpcd-mod-file avahi-dbus-daemon avahi-utils dbus umdns; do
+    if apk info -e "$pkg" >/dev/null 2>&1; then
+      printf '%s: installed\n' "$pkg"
+    else
+      printf '%s: not installed\n' "$pkg"
+    fi
+  done
+fi
