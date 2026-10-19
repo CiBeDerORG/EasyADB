@@ -91,7 +91,7 @@ class CastPlusMixin:
 
     def cast_scan(self, serial):
         scan = self.scan(serial)
-        scan["cast_display"] = self._cast_info(scan["display_excerpt"])
+        scan["cast_display"] = scan.get("cast_display") or self._cast_info(scan["display_excerpt"])
         scan["cast_mode"] = self._cmd(serial, "getprop", "hw.pc.cast.mode")
         scan["selected_proj_mode"] = self._mode(serial)
         return scan
