@@ -1,6 +1,6 @@
 {
   "admin/services/avahi-web": {
-    "title": "Avahi / ADB Discovery",
+    "title": "Avahi / EasyADB 发现代理",
     "order": 65,
     "action": { "type": "view", "path": "avahi-web/overview" },
     "depends": { "acl": [ "luci-app-avahi-web" ] }
