@@ -171,7 +171,7 @@ return view.extend({
 			}
 			statusNode.replaceChildren(
 				E('p', [ '页面会检测软件包、运行文件、进程和开机自启状态。安装软件包不等于服务一定已经启动。' ]),
-				items,
+				E('div', items),
 				E('div', { style: 'margin-top:12px;' }, [
 					E('button', { type: 'button', 'class': 'cbi-button cbi-button-action',
 						disabled: runtimeBusy || busy, click: refreshStatus }, [ '重新检测全部状态' ])
@@ -194,9 +194,11 @@ return view.extend({
 			packageButtons.forEach(function(button) {
 				button.disabled = on || button._notAvailable;
 			});
+			drawRuntime();
 		}
 		function pkgButton(label, group, action, disabled) {
-			var button = E('button', { type: 'button', 'class': 'cbi-button',
+			var button = E('button', { type: 'button', 'class': 'cbi-button ' + (action === 'install' ? 'cbi-button-positive' :
+					action === 'remove' ? 'cbi-button-negative' : 'cbi-button-action'),
 				disabled: disabled, click: function() { return preview(action, group); }
 			}, [ label ]);
 			button._notAvailable = disabled;
@@ -204,33 +206,47 @@ return view.extend({
 			return button;
 		}
 		function renderPackages(output) {
-			var installed = inventory(output);
+			currentPackages = inventory(output);
 			packageButtons = [];
 			var table = E('table', { 'class': 'table' }, [
 				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('Component') ]), E('th', [ _('Packages / version') ]), E('th', [ _('Actions') ])
+					E('th', [ '组件' ]), E('th', [ '安装状态' ]),
+					E('th', [ '软件包 / 版本' ]), E('th', [ '操作' ])
 				])
 			]);
 			groups.forEach(function(group) {
-				var count = group.packages.filter(function(pkg) {
-					return installed[pkg] && installed[pkg].installed;
-				}).length;
+				var state = packageState(group);
+				var count = group.packages.length - state.missing.length;
 				var details = group.packages.map(function(pkg) {
-					var v = installed[pkg];
-					return E('div', [ pkg + ': ' + (v && v.installed ? v.version || _('Installed') : _('Not installed')) ]);
+					var v = currentPackages[pkg];
+					return E('div', [
+						statusMark(v && v.installed ? '已安装' : '缺失', v && v.installed ? 'ok' : 'bad'),
+						pkg + '：' + (v && v.installed ? v.version || '版本未知' : '未安装')
+					]);
 				});
+				var label = state.state === 'complete' ? '全部已安装' :
+					state.state === 'partial' ? '部分安装（' + count + '/' + group.packages.length + '）' :
+					state.state === 'absent' ? '未安装' : '未知';
 				table.appendChild(E('tr', { 'class': 'tr' }, [
 					cell(group.label),
+					E('td', [
+						statusMark(label, state.state === 'complete' ? 'ok' :
+							state.state === 'partial' ? 'warn' : state.state === 'absent' ? 'bad' : 'idle'),
+						state.missing.length && state.state !== 'unknown' ? E('div', [ '缺少：' + state.missing.join('、') ]) : ''
+					]),
 					E('td', details),
 					E('td', [
-						pkgButton(_('Install'), group.id, 'install', count === group.packages.length), ' ',
-						pkgButton(_('Update'), group.id, 'upgrade', count !== group.packages.length), ' ',
-						pkgButton(_('Uninstall'), group.id, 'remove', count === 0)
+						pkgButton(state.state === 'partial' ? '补齐安装' : '安装',
+							group.id, 'install', state.state === 'complete' || state.state === 'unknown'), ' ',
+						pkgButton('更新', group.id, 'upgrade', state.state !== 'complete'), ' ',
+						pkgButton('卸载', group.id, 'remove',
+							state.state === 'absent' || state.state === 'unknown')
 					])
 				]));
 			});
 			packagesNode.replaceChildren(table);
 			if (busy) setBusy(true);
+			else drawRuntime();
 		}
 		function refreshPackages() {
 			return control('package', [ 'list' ]).then(renderPackages).catch(function(e) { alert(e.message, true); });
@@ -245,7 +261,7 @@ return view.extend({
 				operationOutput.textContent = e.message;
 				alert(_('Package operation failed; no force flags were used.'), true);
 			}).then(function() {
-				return Promise.all([ refreshPackages(), refreshStatus() ]);
+				return refreshStatus();
 			}).then(function() { setBusy(false); }, function(e) {
 				setBusy(false); alert(e.message, true);
 			});
@@ -289,7 +305,7 @@ return view.extend({
 						}).catch(function(e) {
 							operationOutput.textContent = e.message;
 							alert(e.message, true);
-						}).then(refreshPackages).then(function() { setBusy(false); },
+						}).then(refreshStatus).then(function() { setBusy(false); },
 							function(e) { setBusy(false); alert(e.message, true); });
 					} }, [ _('Confirm') ])
 				])
@@ -403,6 +419,7 @@ return view.extend({
 		function reloadLast() {
 			return snapshot().then(renderLast).catch(function() { renderLast(''); });
 		}
+		currentPackages = inventory(data[1]);
 		renderStatus(data[0]);
 		renderPackages(data[1]);
 		renderLast(data[2]);
@@ -412,16 +429,7 @@ return view.extend({
 			E('p', [ _('Only authenticated EasyADB requests trigger mDNS discovery. This page never starts a scan.') ]),
 			noticeNode,
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Runtime') ]), statusNode,
-				E('h4', [ _('Avahi') ]),
-				serviceButton(_('Start'), 'start'), ' ', serviceButton(_('Stop'), 'stop'), ' ',
-				serviceButton(_('Enable at boot'), 'enable'), ' ', serviceButton(_('Disable at boot'), 'disable'),
-				E('h4', [ _('umdns') ]),
-				serviceButton(_('Start'), 'umdns-start'), ' ', serviceButton(_('Stop'), 'umdns-stop'), ' ',
-				serviceButton(_('Enable at boot'), 'umdns-enable'), ' ', serviceButton(_('Disable at boot'), 'umdns-disable'),
-				E('h4', [ _('D-Bus') ]),
-				serviceButton(_('Start D-Bus'), 'dbus-start'), ' ',
-				E('button', { type: 'button', 'class': 'cbi-button', click: refreshStatus }, [ _('Refresh status') ])
+				E('h3', [ '运行状态与服务控制' ]), statusNode
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', [ _('Latest NAS-triggered scan') ]),
