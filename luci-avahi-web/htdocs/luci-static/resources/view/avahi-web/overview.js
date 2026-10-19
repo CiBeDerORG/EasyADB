@@ -2,6 +2,7 @@
 'require view';
 'require fs';
 'require ui';
+'require poll';
 
 var HELPER = '/usr/libexec/luci-avahi-web';
 var SCANNER = '/usr/libexec/luci-avahi-scan';
@@ -10,7 +11,7 @@ var AUTH = '/usr/libexec/luci-avahi-auth';
 function command(program, args) {
 	return fs.exec(program, args).then(function(result) {
 		if (result.code !== 0)
-			throw new Error((result.stderr || result.stdout || _('Operation failed')).trim());
+			throw new Error((result.stderr || result.stdout || _('操作失败')).trim());
 		return result.stdout || '';
 	});
 }
@@ -253,13 +254,13 @@ return view.extend({
 		}
 		function execute(operation, group) {
 			setBusy(true);
-			operationOutput.textContent = _('Executing operation…');
+			operationOutput.textContent = _('正在执行软件包操作……');
 			return control('package', [ 'apply', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
-				alert(_('Package operation completed. See output below.'));
+				alert(_('软件包操作已完成，请查看下方输出。'));
 			}).catch(function(e) {
 				operationOutput.textContent = e.message;
-				alert(_('Package operation failed; no force flags were used.'), true);
+				alert(_('软件包操作失败；未执行强制安装或卸载。'), true);
 			}).then(function() {
 				return refreshStatus();
 			}).then(function() { setBusy(false); }, function(e) {
@@ -269,34 +270,34 @@ return view.extend({
 		function preview(operation, group) {
 			if (busy) return;
 			setBusy(true);
-			operationOutput.textContent = _('Checking APK dependency transaction…');
+			operationOutput.textContent = _('正在模拟并检查软件包依赖变更……');
 			return control('package', [ 'plan', operation, group ]).then(function(result) {
 				operationOutput.textContent = result;
-				ui.showModal(_('Confirm APK transaction'), [
-					E('p', [ _('SNAPSHOT repositories may have changed. Inspect every proposed dependency change; no full-system upgrade is performed.') ]),
-					E('p', [ _('Target: ') + group + ' / ' + operation ]),
+				ui.showModal(_('确认软件包操作'), [
+					E('p', [ _('SNAPSHOT 软件源可能已经变化，请核对模拟操作中的全部依赖变更；不会执行系统整体升级。') ]),
+					E('p', [ _('目标：') + group + ' / ' + operation ]),
 					E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto' },
-						[ result || _('No changes proposed') ]),
+						[ result || _('模拟结果未提出变更') ]),
 					E('div', { 'class': 'right' }, [
-						E('button', { 'class': 'btn', click: function() { ui.hideModal(); setBusy(false); } }, [ _('Cancel') ]), ' ',
+						E('button', { 'class': 'btn', click: function() { ui.hideModal(); setBusy(false); } }, [ _('取消') ]), ' ',
 						E('button', { 'class': 'btn cbi-button-apply', click: function() {
 							ui.hideModal();
 							return execute(operation, group);
-						} }, [ _('Confirm') ])
+						} }, [ _('确认执行') ])
 					])
 				]);
 			}).catch(function(e) {
 				operationOutput.textContent = e.message;
-				alert(_('Transaction simulation failed; nothing changed.'), true);
+				alert(_('软件包模拟操作失败，未修改任何已安装软件。'), true);
 				setBusy(false);
 			});
 		}
 		function refreshIndex() {
 			if (busy) return;
-			ui.showModal(_('Refresh APK indexes'), [
-				E('p', [ _('This only refreshes repository indexes; it does not upgrade installed packages.') ]),
+			ui.showModal(_('更新 APK 软件源索引'), [
+				E('p', [ _('仅刷新软件源索引，不升级已安装的软件包。') ]),
 				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('取消') ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
 						ui.hideModal();
 						setBusy(true);
@@ -307,7 +308,7 @@ return view.extend({
 							alert(e.message, true);
 						}).then(refreshStatus).then(function() { setBusy(false); },
 							function(e) { setBusy(false); alert(e.message, true); });
-					} }, [ _('Confirm') ])
+					} }, [ _('确认执行') ])
 				])
 			]);
 		}
@@ -315,19 +316,19 @@ return view.extend({
 			var current = values(output);
 			var state = current.state || 'error';
 			var text = state === 'managed'
-				? _('Enabled: easyadb (scan only)')
+				? _('已授权：easyadb（仅允许发起一次扫描）')
 				: state === 'absent'
-				? _('Not created')
+				? _('未创建')
 				: state === 'conflict'
-				? _('Conflict: an existing RPCD entry uses the reserved account or section; no changes will be made.')
-				: _('Unable to read authorization status.');
+				? _('账号冲突：系统已有相同名称的 RPCD 账户或配置段，组件不会覆盖。')
+				: _('无法读取账号授权状态。');
 			authStateNode.replaceChildren(
-				E('p', [ _('Current status: ') + text ]),
-				E('p', [ _('Role: ') + 'luci-avahi-easyadb' ]),
+				E('p', [ _('当前状态：') + text ]),
+				E('p', [ _('授权角色：') + 'luci-avahi-easyadb' ]),
 				E('div', [
-					authButton(_('Create account'), 'create', state !== 'absent'), ' ',
-					authButton(_('Rotate credential'), 'rotate', state !== 'managed'), ' ',
-					authButton(_('Revoke authorization'), 'revoke', state !== 'managed')
+					authButton(_('创建专用账号'), 'create', state !== 'absent'), ' ',
+					authButton(_('重新生成凭据'), 'rotate', state !== 'managed'), ' ',
+					authButton(_('撤销授权'), 'revoke', state !== 'managed')
 				])
 			);
 		}
@@ -350,58 +351,58 @@ return view.extend({
 				var info = values(out);
 				if (action !== 'revoke') {
 					if (!/^[0-9a-f]{64}$/.test(info.password || ''))
-						throw new Error(_('Account changed but no valid one-time credential was returned. Review RPCD state.'));
+						throw new Error(_('账号已操作，但没有收到有效的一次性凭据，请检查 RPCD 状态。'));
 					authCredentialNode.replaceChildren(
 						E('p', { 'class': 'alert-message warning' }, [
-							_('Copy this password now. The application cannot display it again; reload clears this view.')
+							_('请立即复制并妥善保存密码！页面刷新后无法再次查看。')
 						]),
-						E('p', [ _('NAS username: '), E('strong', [ info.username || 'easyadb' ]) ]),
+						E('p', [ _('NAS 专用用户名：'), E('strong', [ info.username || 'easyadb' ]) ]),
 						E('textarea', { readonly: '', rows: 2, 'class': 'cbi-input-textarea',
 							style: 'max-width:100%;width:560px', value: info.password }),
-						E('p', [ _('RPCD will reload shortly. Configure EasyADB with this dedicated credential, not your router admin password.') ])
+						E('p', [ _('RPCD 即将重新加载。请在 EasyADB 中配置此凭据，不要使用路由器管理员密码。') ])
 					);
 				}
 				else
-					alert(_('NAS RPCD authorization revoked; existing sessions will be refreshed.'), false);
+					alert(_('NAS 专用授权已撤销，RPCD 会话将重新加载。'), false);
 				return refreshAuth();
 			}).catch(function(e) {
-				alert(_('Authorization operation: ') + e.message, true);
+				alert(_('授权操作：') + e.message, true);
 				return refreshAuth();
 			});
 		}
 		function confirmAuth(action) {
 			var warning = action === 'create'
-				? _('Create a restricted RPCD account named easyadb with a randomly generated password. The password will be shown only once.')
+				? _('创建名为 easyadb 的最小权限 RPCD 账户，随机密码仅显示一次。')
 				: action === 'rotate'
-				? _('Generate a new credential. EasyADB must be updated; the old password will stop working after RPCD reload.')
-				: _('Remove only the dedicated easyadb RPCD login. EasyADB requests will no longer be authorized after RPCD reload.');
-			ui.showModal(_('Confirm NAS authorization change'), [
+				? _('将生成新的随机密码，必须同步更新 EasyADB 配置；重新加载 RPCD 后，旧密码不能用于再次登录。')
+				: _('仅撤销本组件管理的 easyadb 专用账号，RPCD 重新加载后不再授权新的 NAS 扫描请求。');
+			ui.showModal(_('确认 NAS 授权操作'), [
 				E('p', [ warning ]),
 				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+					E('button', { 'class': 'btn', click: ui.hideModal }, [ _('取消') ]), ' ',
 					E('button', { 'class': 'btn cbi-button-apply', click: function() {
 						ui.hideModal();
 						return applyAuth(action);
-					} }, [ _('Confirm') ])
+					} }, [ _('确认执行') ])
 				])
 			]);
 		}
 		function renderLast(output) {
 			if (!output) {
-				lastNode.replaceChildren(E('p', [ _('No successful NAS-triggered scan is cached.') ]));
+				lastNode.replaceChildren(E('p', [ _('暂无 NAS 成功触发的扫描结果。') ]));
 				return;
 			}
 			var result;
 			try { result = JSON.parse(output); }
 			catch (e) {
-				lastNode.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('The last snapshot is invalid.') ]));
+				lastNode.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('最近一次扫描快照格式无效。') ]));
 				return;
 			}
 			var records = Array.isArray(result.devices) ? result.devices : [];
 			var table = E('table', { 'class': 'table' }, [
 				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('Service instance') ]), E('th', [ _('Interface') ]),
-					E('th', [ _('IP') ]), E('th', [ _('Port') ])
+					E('th', [ _('服务实例') ]), E('th', [ _('网络接口') ]),
+					E('th', [ _('IP 地址') ]), E('th', [ _('端口') ])
 				])
 			]);
 			records.forEach(function(d) {
@@ -410,10 +411,10 @@ return view.extend({
 				]));
 			});
 			lastNode.replaceChildren(
-				E('p', [ _('Last successful scan: ') + (result.scanned_at ?
+				E('p', [ _('最近成功扫描：') + (result.scanned_at ?
 					new Date(result.scanned_at * 1000).toLocaleString() : '-') + ' | ' +
-					_('Endpoints: ') + String(records.length) ]),
-				records.length ? table : E('p', [ _('No advertised ADB TLS service was resolved.') ])
+					_('发现端点：') + String(records.length) ]),
+				records.length ? table : E('p', [ _('本次未发现已发布的 ADB TLS 服务。') ])
 			);
 		}
 		function reloadLast() {
@@ -424,32 +425,36 @@ return view.extend({
 		renderPackages(data[1]);
 		renderLast(data[2]);
 		renderAuth(data[3]);
+		poll.add(function() {
+			if (runtimeBusy || busy) return Promise.resolve();
+			return refreshStatus();
+		}, 20);
 		return E('div', [
-			E('h2', [ _('Avahi / EasyADB Agent') ]),
-			E('p', [ _('Only authenticated EasyADB requests trigger mDNS discovery. This page never starts a scan.') ]),
+			E('h2', [ _('Avahi / EasyADB 局域网发现代理') ]),
+			E('p', [ _('只有通过接口身份及权限校验的 EasyADB 请求才能触发 mDNS 扫描；本页面只展示结果，不会主动扫描。') ]),
 			noticeNode,
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', [ '运行状态与服务控制' ]), statusNode
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('Latest NAS-triggered scan') ]),
-				E('p', [ _('One volatile snapshot is stored in /tmp. This page can only read it; EasyADB owns the durable device registry.') ]),
-				E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ _('Refresh displayed result') ]),
+				E('h3', [ _('最近一次 NAS 扫描') ]),
+				E('p', [ _('路由器仅在 /tmp 保存最近一次扫描快照，重启自动清空；正式设备列表由 EasyADB 持久化管理。') ]),
+				E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ _('刷新最近结果') ]),
 				lastNode
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('APK package management') ]),
-				E('p', [ _('Avahi (daemon + utilities), D-Bus and umdns are managed separately. APK resolves transitive dependencies; review simulations before changes.') ]),
-				E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex }, [ _('Refresh repository index') ]), ' ',
-				E('button', { type: 'button', 'class': 'cbi-button', click: refreshPackages }, [ _('Refresh package status') ]),
+				E('h3', [ _('三大组件安装与管理') ]),
+				E('p', [ _('独立管理 Avahi（守护进程与发现工具）、D-Bus、umdns。传递依赖交给 APK 自动解析，变更前请确认模拟安装结果。') ]),
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex }, [ _('刷新软件源索引') ]), ' ',
+				E('button', { type: 'button', 'class': 'cbi-button', click: refreshPackages }, [ _('重新检查安装状态') ]),
 				packagesNode,
-				E('h4', [ _('Last package command output') ]), operationOutput
+				E('h4', [ _('最近一次软件包操作输出') ]), operationOutput
 			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', [ _('NAS API authorization') ]),
-				E('p', [ _('Create, rotate or revoke the dedicated RPCD login here. The NAS role allows only one scan command; no package or service-management privileges. Existing /ubus RPCD authentication is required.') ]),
+				E('h3', [ _('NAS 接口授权') ]),
+				E('p', [ _('在此创建、轮换或撤销专用 RPCD 账号。NAS 仅允许执行 scan，不具备安装软件包或管理服务的权限；接口沿用系统 /ubus 鉴权。') ]),
 				authStateNode, authCredentialNode,
-				E('p', [ _('The generated credential is shown only once. This page never reveals a stored password hash or automatically exposes /ubus to the Internet.') ])
+				E('p', [ _('随机凭据仅展示一次，本页面不会回显已保存的密码哈希，也不会自动将 /ubus 暴露到互联网。') ])
 			])
 		]);
 	},
