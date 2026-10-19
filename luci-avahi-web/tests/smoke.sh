@@ -43,7 +43,13 @@ assert "config-set" not in code and "enable-reflector" not in code
 scanner=pathlib.Path("root/usr/libexec/luci-avahi-scan").read_text()
 assert "scan|last)" in scanner and "events.log" not in scanner and "log_event" not in scanner
 controller=pathlib.Path("root/usr/libexec/luci-avahi-web").read_text()
-assert "\\n    browse) " not in controller and "\\n    config-set) " not in controller\nassert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller\nassert "umdns-init=" in controller or '"$unit" "$(unit_flag "$unit")"' in controller\nassert "function drawRuntime(" in code and "function packageState(" in code\nassert "部分安装" in code and "缺少软件包" in code and "可能发生 mDNS" in code\nassert "poll.add(" in code and "cbi-button-positive" in code and "cbi-button-negative" in code\nassert "Only authenticated EasyADB requests" not in code
+assert "\n    browse) " not in controller and "\n    config-set) " not in controller
+assert "avahi-daemon-bin=" in controller and "avahi-browse-bin=" in controller
+assert '"$unit" "$(unit_flag "$unit")"' in controller
+assert "function drawRuntime(" in code and "function packageState(" in code
+assert "部分安装" in code and "缺少软件包" in code and "可能发生 mDNS" in code
+assert "poll.add(" in code and "cbi-button-positive" in code and "cbi-button-negative" in code
+assert "Only authenticated EasyADB requests" not in code
 make=pathlib.Path("Makefile").read_text()
 assert "+avahi-dbus-daemon" not in make and "+avahi-utils" not in make
 assert "+rpcd-mod-file" in make and "+uhttpd-mod-ubus" in make and "+openssl-util" in make
