@@ -10,8 +10,10 @@ for(const id of ['groupDiscoveryPanel','groupOpenWrtUrl','groupOpenWrtUser','gro
 assert.ok(html.includes('type="password" maxlength="256" autocomplete="new-password"'));
 assert.match(js,/if\(g\.discovery_configured\)\{\s*const discover=action/);
 assert.match(js,/\/api\/groups\/'\+encodeURIComponent\(name\)\+'\/discovery\/'/);
-assert.match(js,/if\(!test\)discoveryResults\.set\(name,result\)/);
-assert.match(js,/configs\.filter\(g=>g\.discovery_configured\)/);
+assert.ok(js.includes("showToast(panel,{key:'discovery:'+name,kind:'ok'})"));
+assert.ok(js.includes("showToast('「'+name+'」发现失败：'+e.message,{key:'discovery:'+name,kind:'error'})"));
+assert.ok(!js.includes('discoveryResults'),'scan histories must not replay into group rows');
+assert.ok(!js.includes("'/discovery/last'"),'loading devices must not replay old toasts');
 assert.ok(!js.includes("route==='temp'?':' +port"));
 assert.match(js,/action\(label\+'：'\+ip,\(\)=>switchRoute/);
 assert.ok(js.includes("ADB 共用端口：'+d.port+'（组网 / 内网 / 临时 IP）"));
@@ -19,6 +21,11 @@ assert.ok(js.includes("port.value=String(d.port)"));
 assert.ok(!js.includes("临时 ADB 端口："));
 assert.ok(store.includes('"endpoints": []'));
 assert.ok(js.includes("function renderDiscoveryResult(last)"));
+assert.ok(html.includes('id="toastHost" class="toast-host"'));
+assert.ok(!html.includes('id="message"'),'old fixed in-drawer status strip is removed');
+assert.ok(html.includes('.toast-host{position:fixed;'));
+assert.ok(js.includes('function showToast(content,'));
+assert.ok(js.includes("function message(text,kind=''){showToast(text,{key:'status',kind});"));
 for(const state of ['updated','unchanged','unmatched','busy','ambiguous','conflicting','route_conflict'])
   assert.ok(js.includes(state+':'));
 assert.ok(js.includes("endpoint.ip+':'+endpoint.port"));

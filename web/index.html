@@ -31,7 +31,15 @@ body.video-fullscreen-active .inventory-drawer{display:none!important}
 .inventory-auth{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .inventory-auth input{width:min(245px,60vw);height:36px}
 .inventory-auth button{white-space:nowrap}
-.inventory-panel>#message{margin:0 0 12px}
+.toast-host{position:fixed;right:16px;top:16px;z-index:100;width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 32px);display:grid;gap:10px;pointer-events:none}
+.global-toast{position:relative;pointer-events:auto;min-width:0;border:1px solid #5a718e;border-radius:12px;background:#172940f5;box-shadow:0 12px 38px #000b;color:#d9e8ff;padding:12px 42px 12px 13px;overflow-wrap:anywhere;user-select:text;backdrop-filter:blur(10px)}
+.global-toast.ok{border-color:#387c5b;background:#173d33f5;color:#b8f3d8}
+.global-toast.error{border-color:#a35e6d;background:#472832f5;color:#ffd5dd}
+.global-toast .toast-close{position:absolute;right:7px;top:7px;border-radius:7px;padding:3px 8px;background:transparent;border:1px solid #768ba7;color:inherit;font-size:18px}
+.toast-body{max-height:min(52dvh,430px);overflow-y:auto;overscroll-behavior:contain}
+.toast-body .group-discovery-status{margin:0;padding:0;border:0;background:transparent;color:inherit}
+.discovery-group-name{font-size:13px;font-weight:700;margin-bottom:8px}
+@media(max-width:480px){.toast-host{left:10px;right:10px;top:10px;width:auto}}
 .temp-editor{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:8px;padding:9px;border:1px solid #40536f;border-radius:8px;background:#142033}
 .temp-editor label{margin:0;min-width:130px;flex:1}
 .temp-editor input{height:36px;margin-top:5px}
@@ -227,7 +235,6 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
     <button id="newDevice" type="button" disabled>＋ 添加设备</button>
    </div>
   </div>
-  <div id="message" role="status" aria-live="polite" class="status">请先输入访问密钥并加载设备</div>
   <div class="muted" id="count">尚未加载</div>
   <div class="management-bar" aria-label="批量设备管理">
    <label><input type="checkbox" id="bulkSelectAll" disabled>选择全部设备</label>
@@ -344,6 +351,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  </div>
 </dialog>
 </main>
+<div id="toastHost" class="toast-host" aria-label="全局消息"></div>
 <script src="/m2-player.js"></script>
 <script src="/m2-webrtc.js"></script>
 <script src="/m2-traffic.js"></script>
@@ -356,7 +364,7 @@ const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
 const managementSelected=new Set(); // one selection for every batch action
 let multiView=null,displayLabView=null;
-const scanningGroups=new Set(),discoveryResults=new Map();
+const scanningGroups=new Set();
 const groupOpen=new Map();
 const inventoryDrawer=$('inventoryDrawer'),inventoryPanel=$('inventoryPanel');
 const inventoryToggle=$('inventoryToggle'),inventoryOpacity=$('inventoryOpacity');
@@ -446,7 +454,66 @@ function adbStatusBadge(d){
  if(serial)badge.append(elem('span','adb-address',serial));
  return badge;
 }
-function message(text,kind=''){$('message').textContent=text;$('message').className='status '+kind;}
+const toastHost=$('toastHost'),toastItems=new Map();
+function toastSelected(card){
+ const selection=typeof window.getSelection==='function'?window.getSelection():null;
+ return Boolean(selection&&!selection.isCollapsed&&
+  (card.contains(selection.anchorNode)||card.contains(selection.focusNode)));
+}
+function dismissToast(key){
+ const state=toastItems.get(key);
+ if(!state)return;
+ if(state.timer!==null)clearTimeout(state.timer);
+ toastItems.delete(key);state.card.remove();
+}
+function pauseToast(state){
+ if(state.timer===null)return;
+ clearTimeout(state.timer);state.timer=null;
+ state.remaining=Math.max(0,state.remaining-(Date.now()-state.startedAt));
+}
+function resumeToast(state){
+ if(toastItems.get(state.key)!==state||state.timer!==null||
+    state.hovered||state.focused||state.selected)return;
+ if(state.remaining<=0){dismissToast(state.key);return;}
+ state.startedAt=Date.now();
+ state.timer=setTimeout(()=>dismissToast(state.key),state.remaining);
+}
+function showToast(content,{key='status',kind=''}={}){
+ // Repeated batch progress replaces one toast instead of flooding the screen.
+ dismissToast(key);
+ const card=document.createElement('section');
+ card.className='global-toast'+(kind?' '+kind:'');
+ card.setAttribute('role',kind==='error'?'alert':'status');
+ const body=document.createElement('div');body.className='toast-body';
+ if(typeof content==='string')body.textContent=content;
+ else body.append(content);
+ const close=document.createElement('button');
+ close.type='button';close.className='toast-close';close.textContent='×';
+ close.setAttribute('aria-label','关闭此条提示');
+ card.append(body,close);toastHost.append(card);
+ const state={key,card,remaining:10000,startedAt:0,timer:null,
+  hovered:false,focused:false,selected:false};
+ toastItems.set(key,state);
+ const syncSelection=()=>{
+  state.selected=toastSelected(card);
+  if(state.selected)pauseToast(state);else resumeToast(state);
+ };
+ card.addEventListener('pointerenter',()=>{state.hovered=true;pauseToast(state);});
+ card.addEventListener('pointerleave',()=>{state.hovered=false;syncSelection();});
+ card.addEventListener('focusin',()=>{state.focused=true;pauseToast(state);});
+ card.addEventListener('focusout',()=>{state.focused=false;syncSelection();});
+ close.addEventListener('click',()=>dismissToast(key));
+ resumeToast(state);
+ // A stale selection from elsewhere does not pin new notifications.
+ return card;
+}
+document.addEventListener('selectionchange',()=>{
+ for(const state of toastItems.values()){
+  state.selected=toastSelected(state.card);
+  if(state.selected)pauseToast(state);else resumeToast(state);
+ }
+});
+function message(text,kind=''){showToast(text,{key:'status',kind});}
 async function api(path,options={}){
  const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
  if(!r.ok){let e={};try{e=await r.json();}catch{}throw Error(typeof e.detail==='string'?e.detail:'请求失败：HTTP '+r.status);}
@@ -503,10 +570,6 @@ function render(){
   summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
   section.append(summary);
   const wrapper=elem('div','group-items');
-  if(g.discovery_configured){
-   const last=discoveryResults.get(g.title);
-   if(last)wrapper.append(renderDiscoveryResult(last));
-  }
   for(const d of g.items){
    const item=elem('div','item'+(d.id===selected?' active':''));
    const top=elem('div','item-top'),info=elem('div','item-info');
@@ -613,12 +676,7 @@ async function load(quiet=false){
  try{
   const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
   devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected))selected=null;
-  // Only read NAS persistence. Page load never triggers OpenWrt scan.
-  await Promise.all(configs.filter(g=>g.discovery_configured).map(async g=>{
-   try{const data=await(await api('/api/groups/'+encodeURIComponent(g.name)+'/discovery/last')).json();
-    if(data.last)discoveryResults.set(g.name,data.last);
-   }catch{/* A missing history must not break device management. */}
-  }));
+  // Scan history remains on the NAS, but does not replay as a persistent UI panel.
   const availableIds=new Set(data.map(d=>d.id));
   for(const id of managementSelected)if(!availableIds.has(id))managementSelected.delete(id);
   render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
@@ -679,7 +737,7 @@ function renderDiscoveryResult(last){
  const panel=elem('div','group-discovery-status'+(last.error?' error':''));
  if(last.error){panel.textContent=last.error;return panel;}
  const conflicts=(last.ambiguous||[]).length+(last.conflicting||[]).length+(last.route_conflict||[]).length;
- panel.append(elem('div','discovery-head','最近发现：'+last.found+' 个 IP · 更新端口 '+(last.updated||[]).length+' 台 · 未匹配 '+(last.unmatched||[]).length+' · 忙碌跳过 '+(last.busy||[]).length+' · 冲突 '+conflicts));
+ panel.append(elem('div','discovery-head','本次发现：'+last.found+' 个 IP · 更新端口 '+(last.updated||[]).length+' 台 · 未匹配 '+(last.unmatched||[]).length+' · 忙碌跳过 '+(last.busy||[]).length+' · 冲突 '+conflicts));
  if(!Array.isArray(last.endpoints)){
   panel.append(elem('div','muted','历史扫描尚无 IP:端口明细，点击「立即发现 ADB」可获取。'));
   return panel;
@@ -713,12 +771,16 @@ async function scanGroup(name,test=false){
    });
   }
   const result=await(await api(base+(test?'test':'scan'),options)).json();
-  if(!test)discoveryResults.set(name,result);
   if(test)modalMessage('鉴权及扫描权限正常，本次返回 '+result.found+' 条记录（不会更新设备端口）。','ok','groupMessage');
-  else {await load(true);message('「'+name+'」扫描完成：已更新 '+result.updated.length+' 台的共用 ADB 端口；不会自动连接或投屏。','ok');}
+  else {
+   await load(true);
+   const panel=renderDiscoveryResult(result);
+   panel.prepend(elem('div','discovery-group-name','「'+name+'」ADB 扫描结果 · 不自动连接或投屏'));
+   showToast(panel,{key:'discovery:'+name,kind:'ok'});
+  }
  }catch(e){
   if(test)modalMessage(e.message,'error','groupMessage');
-  else{discoveryResults.set(name,{error:'发现失败：'+e.message});message('「'+name+'」发现失败：'+e.message,'error');}
+  else showToast('「'+name+'」发现失败：'+e.message,{key:'discovery:'+name,kind:'error'});
  }finally{scanningGroups.delete(name);if(test)$('testGroupDiscovery').disabled=false;render();}
 }
 
@@ -910,7 +972,7 @@ $('deleteGroup').addEventListener('click',async()=>{
  loading=true;render();
  try{
   const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
-  $('groupDialog').close();groupOpen.delete('named:'+name);discoveryResults.delete(name);
+  $('groupDialog').close();groupOpen.delete('named:'+name);dismissToast('discovery:'+name);
   await load(true);
   message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
@@ -934,10 +996,7 @@ $('groupForm').addEventListener('submit',async ev=>{
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
   const saved=await(await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
   editingGroup=saved.name; // If discovery config fails, retry PUT rather than duplicate POST.
-  if(previousName&&previousName!==saved.name){
-   const old=discoveryResults.get(previousName);discoveryResults.delete(previousName);
-   if(old)discoveryResults.set(saved.name,old);
-  }
+  if(previousName&&previousName!==saved.name)dismissToast('discovery:'+previousName);
   const routerUrl=$('groupOpenWrtUrl').value.trim(),routerUser=$('groupOpenWrtUser').value.trim();
   const hadDiscovery=Boolean(previous&&previous.discovery_configured);
   if(routerUrl){
@@ -947,7 +1006,7 @@ $('groupForm').addEventListener('submit',async ev=>{
    });
   }else if(hadDiscovery){
    await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{method:'DELETE'});
-   discoveryResults.delete(saved.name);
+   dismissToast('discovery:'+saved.name);
   }
   $('groupOpenWrtPassword').value='';
   $('groupDialog').close();
@@ -1026,6 +1085,7 @@ displayLabView=EasyADBDisplayLab.create({
  api,multiView
 });
 render();
+message('请展开左侧设备管理，输入访问密钥并加载设备');
 </script>
 </body>
 </html>
