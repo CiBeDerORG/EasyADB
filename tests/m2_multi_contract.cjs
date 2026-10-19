@@ -135,7 +135,7 @@ assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-a
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
-assert.match(page,/top\.append\(managementLabel,info\);primary\.append\(top,\.\.\.addressRows\)/);
+assert.match(page,/top\.append\(managementLabel,info\);primary\.append\(top,addressList\)/);
 assert.match(page,/row\.prepend\(adbStatusBadge\(d\)\)/);
 assert.match(page,/\.device-quality \.adb-badge\{justify-self:start;margin-left:0\}/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','ADB 已连接：'/,

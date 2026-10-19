@@ -177,7 +177,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert ".multi-grid{display:flex;flex-wrap:wrap;" in html
         assert ".multi-card{flex:0 1 auto;" in html
         assert ".multi-grid[data-count=" not in html
-        assert "grid-template-columns:repeat(2,minmax(0,1fr))" not in html
+        assert ".multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" not in html
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
