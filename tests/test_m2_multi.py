@@ -228,7 +228,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         # Header indicator uses actual active_serial for successful ADB,
         # selected_serial only to explain an explicit failed attempt.
-        assert "top.append(managementLabel,info);primary.append(top,...addressRows)" in html
+        assert "top.append(managementLabel,info);primary.append(top,addressList)" in html
         assert "row.prepend(adbStatusBadge(d))" in html
         assert "addressRows.push(row)" in html
         assert ".device-quality .adb-badge{justify-self:start;margin-left:0}" in html

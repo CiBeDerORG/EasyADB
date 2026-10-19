@@ -143,7 +143,7 @@ assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','ADB 已连接：
 assert.match(page,/\.adb-badge\.connected\{background:#183e31/,'green successful ADB');
 assert.match(page,/\.adb-badge\.failed\{background:#49252e/,'red failed ADB');
 const badgeStart=page.indexOf('function adbStatusBadge(d){'),
- badgeEnd=page.indexOf('\nfunction message(',badgeStart);
+ badgeEnd=page.indexOf('\nconst toastHost=',badgeStart);
 assert(badgeStart>=0&&badgeEnd>badgeStart,'a standalone session-status renderer exists');
 const make=(tag,cls,value)=>{
  const el=new El(tag);el.className=cls;el.textContent=value===undefined?'':value;return el;
