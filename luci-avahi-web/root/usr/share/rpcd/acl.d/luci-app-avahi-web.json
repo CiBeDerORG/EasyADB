@@ -1,6 +1,6 @@
 {
   "luci-app-avahi-web": {
-    "description": "管理 Avahi、D-Bus、umdns 和 NAS 专用授权，仅读取最近一次发现结果",
+    "description": "管理 Avahi、D-Bus、NAS 授权及按需发现 Android ADB 服务",
     "read": {
       "file": {
         "/usr/libexec/luci-avahi-web status": [
