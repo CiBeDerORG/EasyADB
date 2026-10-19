@@ -30,6 +30,12 @@ class FakeADB:
             value = "29"
         elif command == ("getprop", "ro.build.version.release"):
             value = "10"
+        elif command[:1] == ("getprop",):
+            value = "0"
+        elif command == ("settings", "get", "secure", "selected-proj-mode"):
+            value = "0"
+        elif command == ("pm", "path", "com.easyadb.castpluslab"):
+            value = ""
         else:
             raise AssertionError("Unexpected ADB shell operation: " + repr(command))
         return SimpleNamespace(returncode=0, stdout=value, stderr="")
