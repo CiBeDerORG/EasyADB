@@ -106,7 +106,11 @@ return view.extend({
 			status.replaceChildren(E('p', [
 				_('Avahi installed') + ': ' + (s.installed === 'yes' ? _('Yes') : _('No')) + '  |  ',
 				_('Avahi running') + ': ' + (s.running === 'yes' ? _('Yes') : _('No')) + '  |  ',
-				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped'))
+				'umdns: ' + (s.umdns === 'yes' ? _('Running') : _('Stopped')) + '  |  ',
+				'D-Bus: ' + (s.dbus === 'yes' ? _('Running') : _('Stopped')),
+				E('div', [ _('Auto-start: ') + 'Avahi ' + (s['avahi-daemon-enabled'] === 'yes' ? _('Yes') : _('No')) +
+					' / umdns ' + (s['umdns-enabled'] === 'yes' ? _('Yes') : _('No')) +
+					' / D-Bus ' + (s['dbus-enabled'] === 'yes' ? _('Yes') : _('No')) ])
 			]));
 			if (s.umdns === 'yes')
 				status.appendChild(E('p', { 'class': 'alert-message warning' }, [
@@ -305,12 +309,29 @@ return view.extend({
 				discover.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ e.message ]));
 			});
 		}
-		function action(name) {
+		function runService(name) {
 			message(_('Working…'));
 			return call('service', [ name ]).then(function() {
 				message(_('Service action completed.'));
 				return refreshStatus();
 			}).catch(function(e) { message(e.message, true); });
+		}
+		function action(name) {
+			if ([ 'umdns-stop', 'umdns-disable', 'dbus-stop', 'dbus-disable' ].indexOf(name) !== -1) {
+				ui.showModal(_('Confirm service change'), [
+					E('p', [ _('This action may interrupt network discovery or services that rely on D-Bus. Check active dependencies first.') ]),
+					E('p', [ _('Service action: ') + name ]),
+					E('div', { 'class': 'right' }, [
+						E('button', { 'class': 'btn', click: ui.hideModal }, [ _('Cancel') ]), ' ',
+						E('button', { 'class': 'btn cbi-button-apply', click: function() {
+							ui.hideModal();
+							return runService(name);
+						} }, [ _('Confirm and execute') ])
+					])
+				]);
+				return;
+			}
+			return runService(name);
 		}
 		function actionButton(label, actionName, css) {
 			return E('button', { type: 'button', 'class': css || 'cbi-button',
@@ -349,7 +370,19 @@ return view.extend({
 					actionButton(_('Start'), 'start', 'cbi-button cbi-button-apply'), ' ',
 					actionButton(_('Stop'), 'stop', 'cbi-button cbi-button-reset'), ' ',
 					actionButton(_('Restart'), 'restart'), ' ',
-					E('button', { type: 'button', 'class': 'cbi-button', click: refreshStatus }, [ _('Refresh status') ])
+					actionButton(_('Enable at boot'), 'enable'), ' ',
+					actionButton(_('Disable at boot'), 'disable'), ' ',
+					E('button', { type: 'button', 'class': 'cbi-button', click: refreshStatus }, [ _('Refresh status') ]),
+					E('h4', [ _('umdns service') ]),
+					actionButton(_('Start umdns'), 'umdns-start'), ' ',
+					actionButton(_('Stop umdns'), 'umdns-stop'), ' ',
+					actionButton(_('Enable at boot'), 'umdns-enable'), ' ',
+					actionButton(_('Disable at boot'), 'umdns-disable'),
+					E('h4', [ _('D-Bus service') ]),
+					actionButton(_('Start D-Bus'), 'dbus-start'), ' ',
+					actionButton(_('Stop D-Bus'), 'dbus-stop'), ' ',
+					actionButton(_('Enable at boot'), 'dbus-enable'), ' ',
+					actionButton(_('Disable at boot'), 'dbus-disable')
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
