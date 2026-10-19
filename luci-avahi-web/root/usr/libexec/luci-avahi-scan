@@ -22,7 +22,13 @@ case "$1" in
     scan|last|log) action=$1 ;;
     *) fail 'Unsupported scan action' ;;
 esac
-mkdir -p "$STATE"
+umask 077
+[ ! -L "$STATE" ] || fail 'Unsafe scan state symlink'
+if [ ! -e "$STATE" ]; then
+    mkdir -m 0700 "$STATE" || fail 'Cannot create state directory'
+fi
+[ -d "$STATE" ] && [ ! -L "$STATE" ] || fail 'Unsafe state path'
+[ "$(stat -c '%u' "$STATE" 2>/dev/null)" = 0 ] || fail 'Scan state directory is not root-owned'
 chmod 0700 "$STATE"
 case "$action" in
     last)
