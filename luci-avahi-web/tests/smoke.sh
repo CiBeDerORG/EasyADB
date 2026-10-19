@@ -36,7 +36,7 @@ assert "browse)" not in controller and "config-set)" not in controller
 make=pathlib.Path("Makefile").read_text()
 assert "+avahi-dbus-daemon" not in make and "+avahi-utils" not in make
 assert "+rpcd-mod-file" in make and "+uhttpd-mod-ubus" in make
-assert "include $(INCLUDE_DIR)/package.mk" in make and "feeds/luci/luci.mk" not in make
+assert "include $(INCLUDE_DIR)/package.mk" in make and "include $(TOPDIR)/feeds/luci/luci.mk" not in make
 assert "PKGARCH:=all" in make
 PY
 # Unsupported actions must fail before any filesystem or network change.
