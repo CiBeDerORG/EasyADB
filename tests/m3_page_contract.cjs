@@ -1,0 +1,24 @@
+'use strict';
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const html=fs.readFileSync('web/index.html','utf8');
+const server=fs.readFileSync('server/app.py','utf8');
+const source=fs.readFileSync('server/openwrt_discovery.py','utf8');
+const store=fs.readFileSync('server/store.py','utf8');
+const js=html.split('<script>',2)[1].split('</script>',1)[0];
+for(const id of ['groupDiscoveryPanel','groupOpenWrtUrl','groupOpenWrtUser','groupOpenWrtPassword','testGroupDiscovery'])
+  assert.ok(html.includes('id="'+id+'"'),'Group settings missing '+id);
+assert.ok(html.includes('type="password" maxlength="256" autocomplete="new-password"'));
+assert.match(js,/if\(g\.discovery_configured\)\{\s*const discover=action/);
+assert.match(js,/\/api\/groups\/'\+encodeURIComponent\(name\)\+'\/discovery\/'/);
+assert.match(js,/if\(!test\)discoveryResults\.set\(name,result\)/);
+assert.match(js,/configs\.filter\(g=>g\.discovery_configured\)/);
+assert.match(js,/route==='temp'\?':'\+port:''/);
+assert.ok(html.includes('ADB 共用端口：'));
+assert.ok(!js.includes('setInterval(')&&!js.includes('setTimeout(scanGroup'));
+assert.ok(server.includes('def _group_scan(group_name, *, persist):'));
+assert.ok(server.includes('get_group_discovery_secret(group_name)'));
+assert.ok(server.includes('get_group_discovery_secret(group_name)'));
+assert.ok(!store.includes('password=excluded.password'));
+assert.ok(source.includes('SCANNER = "/usr/libexec/luci-avahi-scan"'));
+assert.ok(!js.includes('luci-avahi-scan'),'Browser must not receive OpenWrt script path or credentials');
+console.log('M3 UI configuration, conditional discovery and shared port contracts passed');
