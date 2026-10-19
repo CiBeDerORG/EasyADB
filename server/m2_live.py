@@ -198,6 +198,8 @@ class LiveVideo:
         self.stop_event = threading.Event()
         self.finished = threading.Event()  # worker terminated, not necessarily fully cleaned
         self.cleanup_complete = False  # only true after all owned resources are released
+        self.peer_cleanup_complete = True  # false while a WebRTC peer is allocated
+        self.peer_close_task = None  # retain late close beyond the browser WS lifetime
         self._close_failed = False
         self.events = queue.Queue(MAX_QUEUE_ITEMS)
         self.thread = None
@@ -829,7 +831,7 @@ class LiveRegistry:
                 # If a bounded WS cleanup timed out but the worker eventually
                 # finished, retire it only AFTER its resources have gone.
                 finished = getattr(old, "finished", None)
-                if finished is None or not finished.is_set() or not getattr(old, "cleanup_complete", True):
+                if not self.is_cleaned(old):
                     return False
                 self.sessions.pop(device_id, None)
             # Also bound directly-authenticated WS requests, not only UI.
@@ -843,7 +845,8 @@ class LiveRegistry:
     def is_cleaned(session):
         finished = getattr(session, "finished", None)
         return bool(finished is not None and finished.is_set()
-                    and getattr(session, "cleanup_complete", True))
+                    and getattr(session, "cleanup_complete", True)
+                    and getattr(session, "peer_cleanup_complete", True))
 
     def release(self, device_id, session):
         with self.lock:
