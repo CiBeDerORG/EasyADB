@@ -1,9 +1,7 @@
 """E-01 through E-06: group-scoped RPCD discovery and safe shared-port migration."""
 import importlib
 import json
-import os
 import sqlite3
-import stat
 import threading
 
 import pytest
@@ -20,7 +18,6 @@ URL = "http://10.10.10.2/ubus"
 
 def make_module(monkeypatch, tmp_path):
     monkeypatch.setenv("EASYADB_TOKEN", AUTH["X-EasyADB-Token"])
-    monkeypatch.delenv("EASYADB_DISCOVERY_KEY", raising=False)
     mod = importlib.import_module("server.app")
     mod.store = DeviceStore(str(tmp_path / "devices.sqlite3"))
     mod.manager = DeviceManager(mod.store, lambda *a, **kw: pytest.fail("scan must not touch adb"))
@@ -92,10 +89,10 @@ def test_group_config_private_and_rename_cleanup(monkeypatch, tmp_path):
         assert r.json()["discovery_url"] == URL
         assert "password" not in json.dumps(r.json())
         assert SECRET not in json.dumps(client.get("/api/groups", headers=AUTH).json())
-        assert SECRET not in mod.store.path.read_bytes().decode("latin1")
         assert mod.store.get_group_discovery_secret("Home") == (URL, "easyadb", SECRET)
-        key = tmp_path / "devices.sqlite3.discovery-key"
-        assert key.exists() and not (stat.S_IMODE(key.stat().st_mode) & 0o077)
+        with sqlite3.connect(mod.store.path) as db:
+            assert db.execute("SELECT credential,credential_format FROM group_openwrt WHERE group_name='Home'").fetchone() == (SECRET, "plain")
+        assert not (tmp_path / "devices.sqlite3.discovery-key").exists()
         assert client.put(path, headers=AUTH,
                           json={"url": URL, "username": "easyadb", "password": ""}).status_code == 200
         assert client.put(path, headers=AUTH, json={
@@ -109,6 +106,36 @@ def test_group_config_private_and_rename_cleanup(monkeypatch, tmp_path):
         assert mod.store.get_group_discovery_secret("Home") is None
         assert client.delete("/api/groups/Renamed", headers=AUTH).status_code == 200
         assert mod.store.get_group_discovery_secret("Renamed") is None
+
+
+def test_legacy_encrypted_rows_require_reentry_without_keyfile_changes(tmp_path):
+    """Old encrypted bytes cannot be treated as the actual router password."""
+    path = tmp_path / "devices.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE group_configs (name TEXT PRIMARY KEY, ip_prefix TEXT)")
+        db.execute("INSERT INTO group_configs VALUES ('Home', '192.168.10.*')")
+        db.execute("""CREATE TABLE group_openwrt (
+            group_name TEXT PRIMARY KEY, url TEXT NOT NULL,
+            username TEXT NOT NULL, credential TEXT NOT NULL
+        )""")
+        db.execute("INSERT INTO group_openwrt VALUES (?,?,?,?)",
+                   ("Home", URL, "easyadb", "gAAAA-legacy-encrypted-token"))
+    # An old file may exist on disk; new code does not read, modify or delete it.
+    old_key = tmp_path / "devices.sqlite3.discovery-key"
+    old_key.write_text("preserve-existing-key")
+    store = DeviceStore(str(path))
+    store.initialize()
+    assert store.get_group("Home")["discovery_needs_password"] is True
+    with pytest.raises(ValueError, match="重新粘贴"):
+        store.get_group_discovery_secret("Home")
+    with pytest.raises(ValueError, match="重新粘贴"):
+        store.set_group_discovery("Home", URL, "easyadb", "")
+    assert old_key.read_text() == "preserve-existing-key"
+    assert store.set_group_discovery("Home", URL, "easyadb", SECRET)["discovery_needs_password"] is False
+    assert store.get_group_discovery_secret("Home") == (URL, "easyadb", SECRET)
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT credential,credential_format FROM group_openwrt").fetchone() == (SECRET, "plain")
+    assert old_key.read_text() == "preserve-existing-key"
 
 
 def test_group_scan_exact_lan_ip_and_persistent_shared_port(monkeypatch, tmp_path):
