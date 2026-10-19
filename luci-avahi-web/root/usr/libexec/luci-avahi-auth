@@ -68,15 +68,25 @@ if [ "$action" != revoke ]; then
         '$6$'*) ;; *) fail 'Unexpected password hash format' ;;
     esac
 fi
-backup=$(mktemp /tmp/.luci-avahi-rpcd.XXXXXX) || fail 'Cannot create temporary backup'
-chmod 0600 "$backup"
-cp /etc/config/rpcd "$backup" || fail 'Cannot back up RPCD config'
-restore() {
-    cp "$backup" /etc/config/rpcd || true
-    rm -f "$backup"
+# Do not discard another administrator's pending UCI modifications.
+[ -z "$("$UCI" -q changes rpcd 2>/dev/null)" ] || fail 'RPCD has pending UCI changes; commit/revert them separately first'
+[ ! -e /tmp/luci-avahi-auth.lock ] || fail 'Another account operation is in progress'
+mkdir -m 0700 /tmp/luci-avahi-auth.lock || fail 'Cannot lock account operation'
+backup=$(mktemp /tmp/.luci-avahi-rpcd.XXXXXX) || {
+    rmdir /tmp/luci-avahi-auth.lock; fail 'Cannot create temporary backup'
 }
-trap 'rm -f "$backup"' EXIT
-trap 'restore' HUP INT TERM
+chmod 0600 "$backup"
+cp /etc/config/rpcd "$backup" || {
+    rm -f "$backup"; rmdir /tmp/luci-avahi-auth.lock; fail 'Cannot back up RPCD config'
+}
+cleanup() { rm -f "$backup"; rmdir /tmp/luci-avahi-auth.lock 2>/dev/null || true; }
+restore() {
+    "$UCI" -q revert rpcd >/dev/null 2>&1 || true
+    cp "$backup" /etc/config/rpcd || true
+    cleanup
+}
+trap 'cleanup' EXIT
+trap 'restore; exit 1' HUP INT TERM
 if [ "$action" = create ]; then
     "$UCI" set "rpcd.$SECTION=login" &&
     "$UCI" set "rpcd.$SECTION.username=$USER" &&
@@ -94,7 +104,7 @@ if ! "$UCI" commit rpcd; then
     restore
     fail 'RPCD config commit failed'
 fi
-rm -f "$backup"
+cleanup
 trap - EXIT HUP INT TERM
 # Delay reload until the current JSON-RPC response (including the one-time
 # secret) has been returned. SIGHUP makes rpcd reload and retain sessions.
