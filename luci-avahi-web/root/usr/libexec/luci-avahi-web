@@ -1,0 +1,169 @@
+#!/bin/sh
+# Fixed-command LuCI backend. Never evaluate or source user-supplied values.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LC_ALL=C
+export PATH LC_ALL
+CONF=/etc/avahi/avahi-daemon.conf
+INIT=/etc/init.d/avahi-daemon
+
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+need_no_args() { [ "$#" -eq 0 ] || fail 'Unexpected arguments'; }
+installed() { [ -x /usr/sbin/avahi-daemon ] && [ -x /usr/bin/avahi-browse ]; }
+running() { pidof avahi-daemon >/dev/null 2>&1; }
+umdns_running() { pidof umdns >/dev/null 2>&1; }
+
+read_config() {
+    [ -r "$CONF" ] || fail 'Avahi configuration is missing'
+    awk '
+        BEGIN { sec=""; }
+        /^[[:space:]]*\[/ {
+            sec=$0; sub(/^[[:space:]]*\[/,"",sec); sub(/\].*$/,"",sec);
+            next
+        }
+        /^[[:space:]]*[#;]/ { next }
+        /^[[:space:]]*$/ { next }
+        {
+            split($0, kv, "="); key=kv[1]; val=substr($0,index($0,"=")+1);
+            gsub(/[[:space:]]/,"",key); gsub(/^[[:space:]]+|[[:space:]]+$/,"",val);
+            if (sec=="server" && (key=="use-ipv4" || key=="use-ipv6" || key=="allow-interfaces"))
+                data[key]=val;
+            if (sec=="reflector" && (key=="enable-reflector" || key=="reflect-ipv"))
+                data[key]=val;
+        }
+        END {
+            print "use-ipv4=" (data["use-ipv4"]=="" ? "yes" : data["use-ipv4"]);
+            print "use-ipv6=" (data["use-ipv6"]=="" ? "yes" : data["use-ipv6"]);
+            print "allow-interfaces=" data["allow-interfaces"];
+            print "enable-reflector=" (data["enable-reflector"]=="" ? "no" : data["enable-reflector"]);
+            print "reflect-ipv=" (data["reflect-ipv"]=="" ? "no" : data["reflect-ipv"]);
+        }
+    ' "$CONF"
+}
+
+save_config() {
+    [ "$#" -eq 5 ] || fail 'Expected five configuration values'
+    ipv4=$1 ipv6=$2 iface=$3 reflector=$4 reflect_ipv=$5
+    for value in "$ipv4" "$ipv6" "$reflector" "$reflect_ipv"; do
+        case "$value" in yes|no) ;; *) fail 'Boolean options must be yes or no' ;; esac
+    done
+    [ "$ipv4" = yes ] || [ "$ipv6" = yes ] || fail 'At least one IP family must be enabled'
+    # Empty = Avahi default (all suitable interfaces). The nonempty value is
+    # deliberately restricted to Linux interface names separated by commas.
+    case "$iface" in
+        *[!a-zA-Z0-9_.:,\-]*|,*|*,|*,,*) fail 'Invalid interface list' ;;
+    esac
+    if [ -n "$iface" ]; then
+        printf '%s\n' "$iface" | grep -Eq '^[A-Za-z0-9_.:-]+(,[A-Za-z0-9_.:-]+)*$' || fail 'Invalid interface list'
+        [ "${#iface}" -le 160 ] || fail 'Interface list too long'
+    fi
+    [ -f "$CONF" ] && [ ! -L "$CONF" ] || fail 'Avahi configuration is missing or unsafe'
+    tmp=$(mktemp "$(dirname "$CONF")/.luci-avahi-web.XXXXXX") || fail 'Cannot create temporary configuration'
+    trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    chmod 0644 "$tmp"
+    # Preserve all Avahi settings not owned by this page, including other
+    # sections and comments; replace only five allowlisted keys atomically.
+    awk -v ipv4="$ipv4" -v ipv6="$ipv6" -v iface="$iface" \
+        -v reflector="$reflector" -v reflect_ipv="$reflect_ipv" '
+        BEGIN {
+            names["server"]="use-ipv4 use-ipv6 allow-interfaces";
+            names["reflector"]="enable-reflector reflect-ipv";
+            val["server", "use-ipv4"]=ipv4; val["server", "use-ipv6"]=ipv6;
+            val["server", "allow-interfaces"]=iface;
+            val["reflector", "enable-reflector"]=reflector;
+            val["reflector", "reflect-ipv"]=reflect_ipv;
+            sec="";
+        }
+        function flush(  parts,n,j,k) {
+            if (sec!="server" && sec!="reflector") return;
+            n=split(names[sec],parts," ");
+            for (j=1;j<=n;j++) {
+                k=parts[j];
+                if (!seen[sec SUBSEP k] && !(sec=="server" && k=="allow-interfaces" && iface==""))
+                    print k "=" val[sec,k];
+            }
+        }
+        /^[[:space:]]*\[[^]]+\]/ {
+            flush(); sec=$0; sub(/^[[:space:]]*\[/,"",sec); sub(/\].*$/,"",sec);
+            found[sec]=1; print; next;
+        }
+        {
+            if (sec=="server" || sec=="reflector") {
+                line=$0;
+                if (line !~ /^[[:space:]]*[#;]/ && index(line,"=")>0) {
+                    k=substr(line,1,index(line,"=")-1); gsub(/[[:space:]]/,"",k);
+                    if ((sec SUBSEP k) in val) {
+                        if (!seen[sec SUBSEP k]++) {
+                            if (!(sec=="server" && k=="allow-interfaces" && iface==""))
+                                print k "=" val[sec,k];
+                        }
+                        next;
+                    }
+                }
+            }
+            print;
+        }
+        END {
+            flush();
+            if (!found["server"]) {
+                print "\n[server]\nuse-ipv4=" ipv4 "\nuse-ipv6=" ipv6;
+                if (iface!="") print "allow-interfaces=" iface;
+            }
+            if (!found["reflector"])
+                print "\n[reflector]\nenable-reflector=" reflector "\nreflect-ipv=" reflect_ipv;
+        }
+    ' "$CONF" > "$tmp" || fail 'Cannot rewrite Avahi configuration'
+    cp -p "$CONF" "$CONF.bak-luci-avahi-web" || fail 'Cannot back up Avahi configuration'
+    mv -f "$tmp" "$CONF" || fail 'Cannot install Avahi configuration'
+    trap - EXIT HUP INT TERM
+    printf 'Saved; backup: %s\n' "$CONF.bak-luci-avahi-web"
+}
+
+browse() {
+    [ "$#" -eq 1 ] || fail 'Expected browse mode'
+    installed || fail 'Please install avahi-dbus-daemon and avahi-utils first'
+    running || fail 'Avahi is not running'
+    case "$1" in
+        adb) service='_adb-tls-connect._tcp' ;;
+        pairing) service='_adb-tls-pairing._tcp' ;;
+        all) service='' ;;
+        *) fail 'Unsupported browse mode' ;;
+    esac
+    if [ -n "$service" ]; then
+        timeout 8 avahi-browse -rpt "$service" || [ "$?" -eq 124 ]
+    else
+        timeout 8 avahi-browse -art || [ "$?" -eq 124 ]
+    fi
+}
+
+service_action() {
+    [ "$#" -eq 1 ] || fail 'Expected one service action'
+    [ -x "$INIT" ] || fail 'Avahi init script not installed'
+    case "$1" in
+        start|restart)
+            # Do not silently change the router existing mDNS service.
+            if umdns_running; then
+                fail 'umdns is running. Stop umdns manually before starting Avahi.'
+            fi
+            "$INIT" "$1" ;;
+        stop) "$INIT" stop ;;
+        *) fail 'Unsupported service action' ;;
+    esac
+}
+
+[ "$#" -gt 0 ] || fail 'Expected a command'
+cmd=$1; shift
+case "$cmd" in
+    status)
+        need_no_args "$@"
+        installed && printf 'installed=yes\n' || printf 'installed=no\n'
+        running && printf 'running=yes\n' || printf 'running=no\n'
+        umdns_running && printf 'umdns=yes\n' || printf 'umdns=no\n'
+        [ -r "$CONF" ] && printf 'config=yes\n' || printf 'config=no\n'
+        ;;
+    config-get) need_no_args "$@"; read_config ;;
+    config-set) save_config "$@" ;;
+    browse) browse "$@" ;;
+    service) service_action "$@" ;;
+    *) fail 'Unsupported action' ;;
+esac
