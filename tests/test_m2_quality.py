@@ -10,10 +10,18 @@ from fastapi.testclient import TestClient
 from server.devices import DeviceManager
 from server.store import DeviceStore
 from server.m2_live import LiveRegistry, LiveVideo
-from server.m2_quality import CUSTOM_CHOICES, LIVE_PROFILES, resolve_live_quality
+from server.m2_quality import CUSTOM_CHOICES, LIVE_PROFILES, EXPERIMENTAL_RESOLUTIONS, resolve_live_quality
 from server.m2_video_probe import PROFILES
 
 AUTH = {"X-EasyADB-Token": "local-test-token-123"}
+
+
+def test_experimental_resolutions_match_the_dropdown():
+    assert EXPERIMENTAL_RESOLUTIONS == (
+        (2560, 1440), (1920, 1440), (1920, 1200), (1920, 1080),
+        (1680, 1050), (1600, 1200), (1600, 1024), (1600, 900),
+        (1440, 1080), (1440, 900), (1366, 768),
+    )
 
 
 def test_original_probe_and_live_presets_are_unchanged():
@@ -104,6 +112,24 @@ def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_pa
         {"profile": "custom", "quality": {
             "max_size": 1600, "video_bit_rate": 4_000_000, "max_fps": 30, "command": "shell",
         }},
+    ]
+    valid_quality = {"max_size": 0, "video_bit_rate": 8_000_000, "max_fps": 30}
+    cases += [
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 9999, "height": 9999}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": True, "height": 1080}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080, "shell": "x"}},
+        {"profile": "custom", "quality": {**valid_quality, "max_size": 1600},
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080}},
+        {"profile": "native",
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": "1920", "height": 1080}},
+        {"profile": "custom", "quality": valid_quality,
+         "display_experiment": {"mode": "new_resolution", "width": 1920, "height": 1080},
+         "screen_off": True},
     ]
     with TestClient(mod.app) as client:
         for case in cases:

@@ -543,7 +543,7 @@ class LiveVideo:
             if not self.server_file.is_file():
                 raise VideoProbeError("缺少官方固定版本 scrcpy-server，需重新构建 M2 镜像")
             before_ids = None
-            if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+            if self.display_source and self.display_source["mode"] in ("new", "new_settings", "new_resolution"):
                 try:
                     before_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
                 except VideoProbeError:
@@ -577,6 +577,8 @@ class LiveVideo:
                     mode = self.display_source["mode"]
                     if mode in ("new", "new_settings"):
                         cmd.append("new_display=1920x1080/240")
+                    elif mode == "new_resolution":
+                        cmd.append(f"new_display={self.display_source['width']}x{self.display_source['height']}/240")
                     elif mode == "display":
                         cmd.append("display_id=" + str(self.display_source["display_id"]))
                 adb_proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
@@ -602,7 +604,7 @@ class LiveVideo:
                         control.close()
                         raise StreamStopped()
                     self.control_sock = control
-                if self.display_source and self.display_source["mode"] in ("new", "new_settings"):
+                if self.display_source and self.display_source["mode"] in ("new", "new_settings", "new_resolution"):
                     # Bounded discovery during user-started session startup only.
                     created = None
                     for _ in range(8):
@@ -620,6 +622,9 @@ class LiveVideo:
                     notice = {"mode": self.display_source["mode"], "display_id": created}
                     if created is None:
                         notice["message"] = "已请求创建虚拟屏幕，但未识别新增 Display ID；请检查画面"
+                    elif self.display_source["mode"] == "new_resolution":
+                        requested = f"{self.display_source['width']}×{self.display_source['height']}"
+                        notice["message"] = "已请求创建实验性虚拟屏幕 " + requested + "；以实际编码尺寸为准"
                     elif self.display_source["mode"] == "new_settings":
                         try:
                             _run_adb(self.serial, "shell", "am", "start", "--display", str(created),

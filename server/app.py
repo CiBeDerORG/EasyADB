@@ -26,7 +26,7 @@ from .openwrt_discovery import RpcdDiscovery, DiscoveryError, validate_url
 from .m2_preflight import inspect_device
 from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
-from .m2_quality import resolve_live_quality
+from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS
 from .m2_touch import InvalidTouch
 from .display_lab import DisplayLab, LabError
 
@@ -757,18 +757,28 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             return
         experiment = initial.get("display_experiment")
         if experiment is not None:
-            if not isinstance(experiment, dict) or set(experiment) not in (
-                {"mode"}, {"mode", "display_id"}
-            ):
+            if not isinstance(experiment, dict):
                 await websocket.send_json({"type": "error", "message": "显示源实验参数无效"})
                 return
             mode = experiment.get("mode")
-            target = experiment.get("display_id")
-            if (mode not in ("new", "new_settings", "display")
-                    or (mode == "display" and (type(target) is not int or not 1 <= target <= 255))
-                    or (mode != "display" and target is not None)):
-                await websocket.send_json({"type": "error", "message": "不支持的实验显示源"})
-                return
+            if mode == "new_resolution":
+                if (set(experiment) != {"mode", "width", "height"}
+                        or type(experiment["width"]) is not int
+                        or type(experiment["height"]) is not int
+                        or (experiment["width"], experiment["height"]) not in EXPERIMENTAL_RESOLUTIONS
+                        or profile != "custom" or quality_settings["max_size"] != 0):
+                    await websocket.send_json({"type": "error", "message": "实验性虚拟屏幕分辨率无效"})
+                    return
+            else:
+                if set(experiment) not in ({"mode"}, {"mode", "display_id"}):
+                    await websocket.send_json({"type": "error", "message": "显示源实验参数无效"})
+                    return
+                target = experiment.get("display_id")
+                if (mode not in ("new", "new_settings", "display")
+                        or (mode == "display" and (type(target) is not int or not 1 <= target <= 255))
+                        or (mode != "display" and target is not None)):
+                    await websocket.send_json({"type": "error", "message": "不支持的实验显示源"})
+                    return
         if experiment is not None and screen_off:
             await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
             return
@@ -790,7 +800,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 error = "当前选择的 IP 已改变，请重新开启投屏"
             else:
-                if experiment and experiment["mode"] in ("new", "new_settings") and display_lab.has_pending(device_id):
+                if experiment and experiment["mode"] in ("new", "new_settings", "new_resolution") and display_lab.has_pending(device_id):
                     error = "请先恢复系统副屏模拟设置，再创建 scrcpy 虚拟屏幕"
                 elif experiment and experiment["mode"] == "display":
                     try:
@@ -836,8 +846,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await websocket.send_json({"type": "error", "message": error})
             return
         if experiment:
-            display_lab._log(device_id, "A1" if experiment["mode"] == "new" else
-                             "A2" if experiment["mode"] == "new_settings" else "B3",
+            display_lab._log(device_id, {"new": "A1", "new_settings": "A2",
+                                "new_resolution": "实验性分辨率", "display": "B3"}[experiment["mode"]],
                              serial, "启动实验视频：" + str(experiment))
         await asyncio.wait_for(websocket.send_json({
             "type": "starting", "session_id": stream.session_id,

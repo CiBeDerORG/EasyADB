@@ -202,6 +202,14 @@ multi.updatePicker();
 assert.match(startButton.textContent,/待新增 1 台/);
 assert.equal(batchSelected.has('id-2'),false);
 assert.equal(multi.getChoice('id-1').profile,'custom');
+const resolutionGroup=quality(0,'max_size').children.at(-1);
+assert.equal(resolutionGroup.tagName,'optgroup');
+assert.equal(resolutionGroup.label,'实验性分辨率');
+assert.deepEqual(resolutionGroup.children.map(x=>x.value),[
+ 'exp:2560x1440','exp:1920x1440','exp:1920x1200','exp:1920x1080',
+ 'exp:1680x1050','exp:1600x1200','exp:1600x1024','exp:1600x900',
+ 'exp:1440x1080','exp:1440x900','exp:1366x768'
+]);
 assert.equal(quality(0,'max_size').value,'960');
 assert.equal(quality(0,'video_bit_rate').value,'3000000');
 assert.equal(quality(0,'max_fps').value,'24');
@@ -650,7 +658,35 @@ async function waitForCheck(id){
   'timeout must NOT report cleanup_complete or falsely mark clean stop');
  assert.match(info.textContent,/资源已释放|资源未释放|资源未确认释放/);
  assert.equal(timers.size,0,'teardown cancels WebRTC stop timeout');
- console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
+ const resolution=quality(0,'max_size');
+ resolution.value='exp:1920x1080';resolution.fire('change');
+ assert.equal(multi.getChoice('id-1').experimental_resolution,'1920x1080');
+ assert.equal(multi.getChoice('id-1').screen_off,false);
+ assert.equal(quality(0,'max_size').value,'exp:1920x1080');
+ assert.equal(picker.children[0].children.at(-2).children[0].disabled,true);
+ assert.equal(multi.getChoice('id-2').experimental_resolution,null);
+ multi.videoEngine='mse';
+ const socketCount=sockets.length;
+ assert.equal(multi.startFor('id-1'),true);
+ assert.equal(sockets.length,socketCount+1);
+ const virtual=sockets.at(-1);virtual.open();
+ const request=JSON.parse(virtual.sent[0]);
+ assert.equal(request.profile,'custom');
+ assert.equal(request.quality.max_size,0);
+ assert.equal(request.display_experiment.mode,'new_resolution');
+ assert.equal(request.display_experiment.width,1920);
+ assert.equal(request.display_experiment.height,1080);
+ assert.equal(request.screen_off,false);
+ assert.match(multi.cards.get('id-1').qualityLine.textContent,/实验性虚拟屏幕 1920×1080/);
+ virtual.emit('starting',{session_id:'virtual'});
+ virtual.emit('ended',{session_id:'virtual',cleanup_complete:true});
+ assert.equal(multi.cards.size,0);
+ const regular=quality(0,'max_size');regular.value='1600';regular.fire('change');
+ assert.equal(multi.getChoice('id-1').experimental_resolution,null);
+ assert.equal(multi.getChoice('id-1').max_size,1600);
+ assert.equal(picker.children[0].children.at(-2).children[0].disabled,false);
+ console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
+  console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
  console.log('M2 panel-off, early wake, explicit reconnect isolation: OK');
  console.log('M2 parallel batch launch and out-of-order stop acknowledgements: OK');
  console.log('M2 selected-only batch stop preserves unselected live/control: OK');

@@ -19,6 +19,14 @@ const CHOICES=[
  ['native','原生 · 不限制尺寸 / 16 Mbps / 30 FPS'],
  ['custom','自定义']
 ];
+const EXPERIMENTAL_RESOLUTIONS=[
+ ['2560x1440','2560 × 1440'],['1920x1440','1920 × 1440'],
+ ['1920x1200','1920 × 1200'],['1920x1080','1920 × 1080'],
+ ['1680x1050','1680 × 1050'],['1600x1200','1600 × 1200'],
+ ['1600x1024','1600 × 1024'],['1600x900','1600 × 900'],
+ ['1440x1080','1440 × 1080'],['1440x900','1440 × 900'],
+ ['1366x768','1366 × 768']
+];
 const CUSTOM={
  max_size:[['960','960'],['1280','1280'],['1600','1600'],['0','原生']],
  video_bit_rate:[['2000000','2 Mbps'],['3000000','3 Mbps'],['4000000','4 Mbps'],['8000000','8 Mbps'],['12000000','12 Mbps'],['16000000','16 Mbps'],['18000000','18 Mbps'],['20000000','20 Mbps']],
@@ -29,13 +37,28 @@ const choice=(options,value)=>{
  for(const [id,label] of options){const opt=make('option','',label);opt.value=id;opt.selected=id===String(value);select.append(opt);}
  select.value=String(value);return select;
 };
-const defaults=()=>({profile:'custom',max_size:960,video_bit_rate:3000000,max_fps:24,
- low_latency:true,screen_off:false});
+const resolutionChoice=value=>{
+ const select=choice(CUSTOM.max_size,value),group=make('optgroup');
+ group.label='实验性分辨率';
+ for(const [id,label] of EXPERIMENTAL_RESOLUTIONS){
+  const option=make('option','',label);option.value='exp:'+id;group.append(option);
+ }
+ select.append(group);select.value=String(value);return select;
+};
+const defaults=()=>({profile:'custom',max_size:960,experimental_resolution:null,
+ video_bit_rate:3000000,max_fps:24,low_latency:true,screen_off:false});
 const qualityPayload=v=>v.profile==='custom'
- ?{profile:'custom',quality:{max_size:v.max_size,video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
+ ?{profile:'custom',quality:{max_size:v.experimental_resolution?0:v.max_size,
+    video_bit_rate:v.video_bit_rate,max_fps:v.max_fps}}
  :{profile:v.profile};
+const resolutionExperiment=v=>{
+ if(!v.experimental_resolution)return null;
+ const [width,height]=v.experimental_resolution.split('x').map(Number);
+ return {mode:'new_resolution',width,height};
+};
 const briefQuality=v=>v.profile==='custom'
- ?'自定义 · '+(v.max_size||'原生')+' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
+ ?'自定义 · '+(v.experimental_resolution?'实验性虚拟屏幕 '+v.experimental_resolution.replace('x','×'):(v.max_size||'原生'))+
+  ' / '+(v.video_bit_rate/1000000)+' Mbps / '+v.max_fps+' FPS'
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
  constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove}){
@@ -122,10 +145,20 @@ class MultiView{
    // Server still validates their complete numeric tuple as custom quality.
    const custom=make('div','multi-custom');
    for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],['max_fps','最高帧率']]){
-    const field=make('label','',label),sel=choice(CUSTOM[key],value[key]);
+    const field=make('label','',label);
+    const sel=key==='max_size'
+     ?resolutionChoice(value.experimental_resolution?'exp:'+value.experimental_resolution:value.max_size)
+     :choice(CUSTOM[key],value[key]);
     sel.setAttribute('aria-label',d.name+' '+label);
     sel.disabled=busy||!connected;
-    sel.addEventListener('change',()=>this.setChoice(d.id,{profile:'custom',[key]:Number(sel.value)}));
+    sel.addEventListener('change',()=>{
+     if(key==='max_size'){
+      const experimental=sel.value.startsWith('exp:')?sel.value.slice(4):null;
+      this.setChoice(d.id,experimental
+       ?{profile:'custom',experimental_resolution:experimental,screen_off:false}
+       :{profile:'custom',max_size:Number(sel.value),experimental_resolution:null});
+     }else this.setChoice(d.id,{profile:'custom',[key]:Number(sel.value)});
+    });
     field.append(sel);custom.append(field);
    }
    item.append(custom);
@@ -152,8 +185,8 @@ class MultiView{
    low.addEventListener('change',()=>this.setChoice(d.id,{low_latency:low.checked}));
    latency.append(low,make('span','','低延迟播放实验（仅浏览器追帧，不改变手机编码）'));
    const panel=make('label','multi-screen-off'),screenOff=make('input');
-   screenOff.type='checkbox';screenOff.checked=value.screen_off===true;
-   screenOff.disabled=busy||!connected;
+   screenOff.type='checkbox';screenOff.checked=value.screen_off===true&&!value.experimental_resolution;
+   screenOff.disabled=busy||!connected||Boolean(value.experimental_resolution);
    screenOff.setAttribute('aria-label',d.name+' 投屏时关闭手机物理屏幕');
    screenOff.addEventListener('change',()=>this.setChoice(d.id,{screen_off:screenOff.checked}));
    panel.append(screenOff,make('span','','投屏时关闭手机物理屏幕（远端画面继续显示）'));
@@ -268,8 +301,9 @@ class MultiView{
   if(!this.engineReady||!this.engineSupported){this.status('当前视频引擎未就绪或尚未实现。',true);return false;}
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return false;}
   const batch=additions.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
+   experiment:resolutionExperiment(this.getChoice(d.id)),
    lowLatency:this.getChoice(d.id).low_latency===true,
-   screenOff:this.getChoice(d.id).screen_off===true}));
+   screenOff:this.getChoice(d.id).screen_off===true&&!this.getChoice(d.id).experimental_resolution}));
   const isAppend=this.cards.size>0;
   for(const d of additions)this.lastLiveStatus.delete(d.id);
   this.opening=true;
@@ -290,7 +324,7 @@ class MultiView{
   const pending=this.launchQueue.splice(0);
   try{
    for(const next of pending){
-    try{this.open(next.device,next.quality,null,next.lowLatency,null,next.screenOff);}
+    try{this.open(next.device,next.quality,null,next.lowLatency,next.experiment,next.screenOff);}
     catch(error){
      this.lastLiveStatus.set(next.device.id,'启动失败');
      this.status(next.device.name+'：'+error.message,true);
@@ -320,7 +354,8 @@ class MultiView{
    permissionWarningShown:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
-  header.append(make('strong','',d.name+(experiment?' · 电脑模式实验':'')),
+  header.append(make('strong','',d.name+(experiment?.mode==='new_resolution'?' · 实验性虚拟屏幕':
+  experiment?' · 电脑模式实验':'')),
    make('span','muted',d.selected_serial+(experiment?.mode==='display'?' · Display '+experiment.display_id:'')));
   const screen=make('div','multi-screen');
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;

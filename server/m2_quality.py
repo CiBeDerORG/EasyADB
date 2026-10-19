@@ -12,6 +12,13 @@ LIVE_PROFILES = {
     "native": dict(PROFILES["native"]),
 }
 
+# Exact allowed session-only virtual-screen dimensions. No arbitrary scrcpy strings.
+EXPERIMENTAL_RESOLUTIONS = (
+    (2560, 1440), (1920, 1440), (1920, 1200), (1920, 1080),
+    (1680, 1050), (1600, 1200), (1600, 1024), (1600, 900),
+    (1440, 1080), (1440, 900), (1366, 768),
+)
+
 CUSTOM_CHOICES = {
     "max_size": (0, 960, 1280, 1600),
     "video_bit_rate": (2_000_000, 3_000_000, 4_000_000, 8_000_000, 12_000_000, 16_000_000, 18_000_000, 20_000_000),
