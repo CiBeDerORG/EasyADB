@@ -346,8 +346,6 @@ def _group_scan(group_name, *, persist):
         raise HTTPException(404, "找不到该分组")
     if not group["discovery_configured"]:
         raise HTTPException(409, "该分组尚未配置 OpenWrt 发现接口")
-    if not group["ip_prefix"]:
-        raise HTTPException(409, "请先给当前分组配置内网 IP 前缀，才能匹配扫描结果")
     with _discovery_guard:
         mutex = _discovery_locks.setdefault(group_name, threading.Lock())
     if not mutex.acquire(blocking=False):
@@ -362,8 +360,10 @@ def _group_scan(group_name, *, persist):
             raise HTTPException(409, str(exc)) from None
         if not persist:
             # Explicit test of BOTH login and scan ACL. Does not change device
-            # ports or save a new NAS discovery result.
+            # ports or save a new NAS discovery result; prefix is not required.
             return {"authorized": True, "found": len(scan_result["devices"])}
+        if not group["ip_prefix"]:
+            raise HTTPException(409, "授权和扫描正常；正式匹配前请先配置本组内网 IP 前缀")
         # Lock devices in stable order. Never override an active ADB or live
         # screen session: next explicit scan can update it when idle.
         group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
