@@ -37,6 +37,7 @@ function inventory(output) {
 	});
 	return result;
 }
+var VIEW_STYLE = ".avahi-web-root .avahi-panel {margin:0 0 12px;padding:16px 18px;background:var(--background-color-high,#fff);border:1px solid rgba(130,145,160,.18);border-radius:11px;box-shadow:0 2px 10px rgba(25,40,60,.035)}\n.avahi-web-root .avahi-panel h3 {margin:0;font-size:1.08em;line-height:1.4}\n.avahi-web-root .avahi-service-grid {display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:12px;align-items:stretch;min-width:0}\n.avahi-web-root .avahi-component-card {box-sizing:border-box;min-width:0;margin:0 !important;padding:13px 15px;border:1px solid rgba(130,145,160,.22);border-radius:9px;background:var(--background-color-high,#fff);box-shadow:0 1px 4px rgba(30,40,65,.025)}\n.avahi-web-root .avahi-action-row {display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:7px}\n.avahi-web-root button.avahi-action {box-sizing:border-box;min-height:34px;padding:6px 12px !important;border:1px solid #aebdcc !important;border-radius:6px !important;background:#fff !important;color:#354659 !important;box-shadow:none !important;opacity:1;white-space:nowrap;cursor:pointer}\n.avahi-web-root button.avahi-action.primary {background:#5168d9 !important;border-color:#5168d9 !important;color:#fff !important}\n.avahi-web-root button.avahi-action.danger {background:#fff !important;border-color:#e4a3a5 !important;color:#bb3641 !important}\n.avahi-web-root button.avahi-action:disabled {opacity:.46 !important;cursor:not-allowed}\n.avahi-web-root button.avahi-action:focus-visible {outline:2px solid #5168d9;outline-offset:2px}\n.avahi-web-root .avahi-panel-head {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px}\n.avahi-web-root .avahi-panel-note {margin:3px 0 0;color:var(--text-color-secondary,#637083);font-size:.93em;line-height:1.45}\n.avahi-web-root .avahi-table-scroll {overflow-x:auto;width:100%;border:1px solid rgba(130,145,160,.22);border-radius:8px;margin-top:10px}\n.avahi-web-root table.avahi-result-table {width:100% !important;min-width:560px;table-layout:fixed !important;border-collapse:collapse !important;border-spacing:0 !important;margin:0;background:transparent}\n.avahi-web-root .avahi-result-table tr {display:table-row !important;background:transparent !important}\n.avahi-web-root .avahi-result-table th,.avahi-web-root .avahi-result-table td {display:table-cell !important;box-sizing:border-box;text-align:left !important;vertical-align:middle;padding:10px 12px !important;border:0 !important;border-bottom:1px solid rgba(130,145,160,.18) !important;overflow-wrap:anywhere;word-break:normal}\n.avahi-web-root .avahi-result-table th {background:rgba(125,145,170,.1) !important;font-weight:600}\n.avahi-web-root .avahi-result-table tbody tr:last-child td {border-bottom:0 !important}\n.avahi-web-root .avahi-result-table tbody tr:nth-child(even) {background:rgba(125,145,170,.035) !important}\n@media (max-width:800px) {.avahi-web-root .avahi-service-grid {grid-template-columns:minmax(0,1fr) !important}.avahi-web-root .avahi-panel {padding:13px}}";
 function cell(value) { return E('td', [ value == null || value === '' ? '-' : String(value) ]); }
 
 return view.extend({
@@ -52,14 +53,10 @@ return view.extend({
 		var componentsNode = E('div'), summaryNode = E('div');
 		var lastNode = E('div'), noticeNode = E('div'), scanFeedback = E('div');
 		var authStateNode = E('div'), authCredentialNode = E('div');
-		var operationOutput = E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto' });
-		var operationDetails = E('details', { style: 'margin-top:12px;' }, [
-			E('summary', { style: 'cursor:pointer;' }, [ '查看最近一次软件包操作输出' ]), operationOutput
-		]);
 		var busy = false, runtimeBusy = false, refreshing = false, authBusy = false, scanBusy = false;
 		var scanButton;
 		var authOutput = 'state=error';
-		var manualButton, indexButton;
+		var manualButton;
 		var currentStatus = {}, currentPackages = {};
 		var groups = [
 			{ id: 'avahi', label: 'Avahi', note: '用于发现 Android 无线调试动态端口', process: 'running', init: 'avahi-daemon', bins: [ ['avahi-daemon-bin','avahi-daemon'], ['avahi-browse-bin','avahi-browse'] ], start: 'start', stop: 'stop', enable: 'enable', disable: 'disable', packages: [ 'avahi-dbus-daemon', 'avahi-utils' ] },
@@ -94,8 +91,7 @@ return view.extend({
 			var blocked = !!disabled || locked();
 			return E('button', {
 				type: 'button',
-				'class': 'cbi-button ' + (kind === 'danger' ? 'cbi-button-negative' :
-					kind === 'positive' ? 'cbi-button-positive' : 'cbi-button-action'),
+				'class': 'avahi-action ' + (kind === 'danger' ? 'danger' : kind === 'positive' ? 'primary' : ''),
 				// LuCI E() must receive null, not false, for an absent boolean attribute.
 				disabled: blocked ? '' : null,
 				click: function() { if (!blocked && !locked()) return action(); }
@@ -136,7 +132,6 @@ return view.extend({
 		}
 		function drawComponents() {
 			if (manualButton) manualButton.disabled = locked();
-			if (indexButton) indexButton.disabled = locked();
 			if (scanButton) scanButton.disabled = scanBusy || locked();
 			renderAuth(authOutput);
 			var st = currentStatus;
@@ -147,7 +142,7 @@ return view.extend({
 				var missingBins = g.bins.filter(function(b) { return st[b[0]] !== 'yes'; }).map(function(b) { return b[1]; });
 				var complete = pkg.state === 'complete' && !missingBins.length && init;
 				var missing = pkg.missing;
-				var packLabel = pkg.state === 'complete' ? (complete ? '安装完整' : '运行条件不完整') :
+				var packLabel = pkg.state === 'complete' ? (complete ? '' : '运行条件不完整') :
 					pkg.state === 'partial' ? '部分安装' : pkg.state === 'absent' ? '未安装' : '状态未知';
 				var runLabel = running ? '停止' : '启动';
 				var runAction = running ? g.stop : g.start;
@@ -164,7 +159,7 @@ return view.extend({
 				if (!init && pkg.state !== 'absent')
 					info.push(E('p', { style: 'margin:5px 0;' }, [ '缺少服务启动脚本：' + g.init ]));
 				var actions = E('div', {
-					style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;'
+					'class': 'avahi-action-row'
 				}, [
 					actionButton(runLabel, function() { return serviceAction(g, runAction, runLabel); },
 						!init || (!running && !daemonBin), running ? 'danger' : 'positive'), ' ',
@@ -175,29 +170,28 @@ return view.extend({
 					actionButton('卸载', function() { return preview('remove', g.id); },
 						pkg.state === 'absent' || pkg.state === 'unknown', 'danger')
 				]);
-				return E('div', { 'class': 'avahi-component-card',
-					style: 'box-sizing:border-box;min-width:0;width:100%;max-width:100%;overflow:hidden;margin:0;padding:15px;border:1px solid var(--border-color-medium,#d5d9dc);border-radius:8px;background:var(--background-color-high,#fff);' }, [
+				return E('div', { 'class': 'avahi-component-card' }, [
 					E('div', { style: 'display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:start;' }, [
 						E('div', [ E('h3', { style: 'margin:0 0 4px;' }, [ g.label ]),
 							E('p', { style: 'margin:0;opacity:.8;' }, [ g.note ]) ]),
-						statusMark(packLabel, complete ? 'ok' : pkg.state === 'absent' ? 'bad' : 'warn')
+						packLabel ? statusMark(packLabel, pkg.state === 'absent' ? 'bad' : 'warn') : ''
 					]),
-					E('div', { style: 'margin:12px 0 8px;' }, [
+					E('div', { style: 'margin:7px 0 8px;' }, [
 						statusMark(running ? '● 运行中' : '○ 已停止', running ? 'ok' : 'idle'),
 						statusMark(!init ? '启动脚本缺失' : enabled ? '已启用自启' : '未启用自启',
 							!init ? 'bad' : enabled ? 'ok' : 'idle')
 					]),
 					E('div', { style: 'min-height:0;overflow-wrap:anywhere;color:var(--text-color-secondary,#826226);font-size:.93em;' }, info),
-					E('div', { style: 'padding-top:9px;border-top:1px solid var(--border-color-medium,#ddd);' }, [
+					E('div', { style: 'padding-top:7px;' }, [
 						E('strong', [ '服务控制' ]), actions
 					])
 				]);
 			});
 			var completeCount = groups.filter(function(g) { return packageState(g).state === 'complete'; }).length;
 			var runningCount = groups.filter(function(g) { return st[g.process] === 'yes'; }).length;
-			summaryNode.replaceChildren(E('span', [ '安装完整 ' + completeCount + '/2　·　运行中 ' + runningCount + '/2' ]));
+			summaryNode.replaceChildren(E('span', [ '已安装 ' + completeCount + '/2　·　运行中 ' + runningCount + '/2' ]));
 			componentsNode.replaceChildren(
-				E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;min-width:0;align-items:start;' }, cards)
+				E('div', { 'class': 'avahi-service-grid' }, cards)
 			);
 		}
 		function refreshStatus() {
@@ -226,27 +220,18 @@ return view.extend({
 		}
 		function execute(operation, group) {
 			setBusy(true);
-			operationDetails.open = true;
-			operationOutput.textContent = '正在执行软件包操作……';
-			return control('package', [ 'apply', operation, group ]).then(function(result) {
-				operationOutput.textContent = result;
-				alert('软件包操作已完成，请查看下方输出。');
+			return control('package', [ 'apply', operation, group ]).then(function() {
+				alert('软件包操作成功，已重新检测状态。');
 			}, function(e) {
-				operationOutput.textContent = e.message;
 				alert('软件包操作失败：' + e.message, true);
-			}).then(function() {
-				return refreshStatus();
-			}).catch(function(e) {
+			}).then(refreshStatus).catch(function(e) {
 				alert('操作后状态刷新失败：' + e.message, true);
 			}).then(function() { setBusy(false); });
 		}
 		function preview(operation, group) {
 			if (busy || runtimeBusy || refreshing || authBusy) return;
 			setBusy(true);
-			operationDetails.open = true;
-			operationOutput.textContent = '正在模拟并检查软件包依赖变更……';
 			return control('package', [ 'plan', operation, group ]).then(function(result) {
-				operationOutput.textContent = result;
 				// Unlock after simulation, BEFORE showing the dialog. LuCI permits
 				// dismissing a modal by Escape or its built-in close control.
 				// No hidden busy state may outlive such a dismissed dialog.
@@ -268,37 +253,9 @@ return view.extend({
 					])
 				]);
 			}).catch(function(e) {
-				operationOutput.textContent = e.message;
 				alert('软件包预览失败，未修改任何软件：' + e.message, true);
 				setBusy(false);
 			});
-		}
-		function refreshIndex() {
-			if (busy || runtimeBusy || refreshing || authBusy) return;
-			var confirmed = false;
-			ui.showModal('更新 APK 软件源索引', [
-				E('p', [ '仅刷新软件源索引，不升级已安装的软件包。' ]),
-				E('div', { 'class': 'right' }, [
-					E('button', { 'class': 'btn', click: ui.hideModal }, [ '取消' ]), ' ',
-					E('button', { 'class': 'btn cbi-button-apply', click: function() {
-						if (confirmed || busy || runtimeBusy || refreshing || authBusy) return;
-						confirmed = true;
-						ui.hideModal();
-						setBusy(true);
-						operationDetails.open = true;
-						operationOutput.textContent = '正在刷新软件源索引……';
-						return control('package', [ 'refresh' ]).then(function(out) {
-							operationOutput.textContent = out;
-							alert('软件源索引刷新完成。');
-						}, function(e) {
-							operationOutput.textContent = e.message;
-							alert('软件源刷新失败：' + e.message, true);
-						}).then(refreshStatus).catch(function(e) {
-							alert('操作后状态刷新失败：' + e.message, true);
-						}).then(function() { setBusy(false); });
-					} }, [ '确认执行' ])
-				])
-			]);
 		}
 		function renderAuth(output) {
 			authOutput = output;
@@ -461,8 +418,6 @@ return view.extend({
 		}
 		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
 			[ '手动刷新组件状态' ]);
-		indexButton = E('button', { type: 'button', 'class': 'cbi-button', click: refreshIndex },
-			[ '刷新 APK 软件源索引' ]);
 		scanButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: scanOnce },
 			[ '立即发现 ADB' ]);
 		currentPackages = inventory(data[1]);
