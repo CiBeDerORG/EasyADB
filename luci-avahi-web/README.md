@@ -1,4 +1,4 @@
-# luci-avahi-web (v0.5.1)
+# luci-avahi-web (v0.5.2)
 
 ImmortalWrt/OpenWrt 的轻量 EasyADB 局域网发现代理。仅保留 **NAS 主动触发扫描**、
 **OpenWrt 最近一次成功扫描快照**、以及 **Avahi / D-Bus / umdns 三组 APK 组件管理**。
@@ -26,7 +26,7 @@ ImmortalWrt/OpenWrt 的轻量 EasyADB 局域网发现代理。仅保留 **NAS �
 ## NAS 接口授权（直接在 LuCI 组件内配置）
 
 LuCI 页面现已内置专用 RPCD 账号管理，无需手工编辑配置文件。
-在 **服务 → Avahi / ADB Discovery → NAS API authorization** 中，
+在 **服务 → Avahi / EasyADB 发现代理 → NAS 接口授权** 中，
 管理员可以创建账号、轮换凭据、撤销授权，并查看状态。
 
 - 固定用户名：`easyadb`，固定权限组：`luci-avahi-easyadb`；
@@ -94,7 +94,7 @@ POST 到路由器现有 `/ubus`，并检查 UBUS 状态和 `file.exec.code`；
 `last` 仅供已授权的 LuCI 管理员读取页面快照，不授予 NAS 专用角色；
 NAS 要获取新的设备端口就执行一次 `scan`。
 
-## LuCI 中文状态检查（v0.5.1）
+## LuCI 中文状态检查（v0.5.2）
 
 管理界面已统一使用中文说明，菜单为「服务 → Avahi / EasyADB 发现代理」。
 运行状态区会检测三大组件中每个必需软件包的已安装状态、守护进程可执行文件、
@@ -102,8 +102,11 @@ NAS 要获取新的设备端口就执行一次 `scan`。
 Avahi 管理组必须同时具备 `avahi-dbus-daemon` 和 `avahi-utils`；仅有
 `avahi-daemon` 进程在运行并不代表已经能用 `avahi-browse` 发现手机端口。
 
-按钮由实时状态决定是否可用，使用有文字说明的状态颜色，20 秒自动刷新一次
-组件/进程状态，同时支持手动「重新检测全部状态」。状态刷新**不执行扫描**。
+页面改为三张响应式组件卡片，集中展示安装、运行、开机自启以及服务和 APK 操作。
+**完全不进行后台定时检测**：首次进入页面读取一次状态，只有点击顶部「手动刷新组件状态」
+或安装、启停等操作结束时才回读状态。NAS 最近一次扫描结果也只能手动刷新，
+刷新页面状态**不会执行 mDNS 扫描**。相关变更按钮会按当前状态禁用；软件包操作日志折叠显示，
+有新操作时自动展开。
 如果 Avahi 与 umdns 同时存在运行进程，页面提示存在潜在 mDNS 竞争，
 不会把进程共存当作已确诊 UDP 5353 端口冲突，也不会自动停止任一服务。
 软件包安装、卸载、更新仍先运行 APK 的模拟事务并由管理员确认。
@@ -131,8 +134,7 @@ APK 原生工具输出（版本字符串、软件源警告等）保留原样，�
 
 - 当前仅有一个瞬时结果：`/tmp/luci-avahi-web/last-scan.json`。
   `/tmp` 是 RAM 文件系统，重启清空，避免每次扫描写入 Flash。
-- 本应用不额外写入 `/etc/config/` 设备配置。唯一持久化的认证配置是管理员手动
-  添加的系统原生 `/etc/config/rpcd` 登录项；Avahi 本身维持其原有配置文件。
+- 本应用不额外写入 `/etc/config/` 设备配置。唯一持久化的认证配置是管理员通过此组件授权界面创建的系统原生 `/etc/config/rpcd` 登录项；Avahi 本身维持其原有配置文件。
 - 主适配对象：ImmortalWrt SNAPSHOT `r0-1f96307`，
   `qualcommax/ipq60xx`，用户设备上 `apk-tools 3.0.5`。
 - `Makefile` 直接使用 `$(INCLUDE_DIR)/package.mk` 封装 LuCI 菜单、静态页面、ACL
