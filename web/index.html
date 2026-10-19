@@ -559,7 +559,7 @@ function openGroup(name=null){
 }
 async function scanGroup(name,test=false){
  if(loading||scanningGroups.has(name))return;
- scanningGroups.add(name);render();
+ scanningGroups.add(name);if(test)$('testGroupDiscovery').disabled=true;render();
  try{
   const base='/api/groups/'+encodeURIComponent(name)+'/discovery/';
   const result=await(await api(base+(test?'test':'scan'),{method:'POST'})).json();
@@ -569,10 +569,10 @@ async function scanGroup(name,test=false){
  }catch(e){
   if(test)modalMessage(e.message,'error','groupMessage');
   else{discoveryResults.set(name,{error:'发现失败：'+e.message});message('「'+name+'」发现失败：'+e.message,'error');}
- }finally{scanningGroups.delete(name);render();}
+ }finally{scanningGroups.delete(name);if(test)$('testGroupDiscovery').disabled=false;render();}
 }
 
-function closeGroup(){if(!loading)$('groupDialog').close();}
+function closeGroup(){if(!loading&&!scanningGroups.has(editingGroup))$('groupDialog').close();}
 function openFirstPair(id){
  if(loading||!loaded)return;
  const d=devices.find(x=>x.id===id);
@@ -748,7 +748,7 @@ $('firstPairForm').addEventListener('submit',async ev=>{
  }finally{loading=false;$('submitFirstPair').disabled=false;render();}
 });
 $('deleteGroup').addEventListener('click',async()=>{
- if(loading||!editingGroup)return;
+ if(loading||!editingGroup||scanningGroups.has(editingGroup))return;
  const name=editingGroup;
  if(devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备，再删除分组。','error','groupMessage');
@@ -768,11 +768,11 @@ $('deleteGroup').addEventListener('click',async()=>{
 $('testGroupDiscovery').addEventListener('click',()=>{if(editingGroup)scanGroup(editingGroup,true);});
 $('closeGroup').addEventListener('click',closeGroup);
 $('cancelGroup').addEventListener('click',closeGroup);
-$('groupDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('groupDialog').addEventListener('cancel',ev=>{if(loading||scanningGroups.has(editingGroup))ev.preventDefault();});
 $('groupDialog').addEventListener('close',()=>{editingGroup=null;});
 $('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
 $('groupForm').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;
+ ev.preventDefault();if(loading||scanningGroups.has(editingGroup))return;
  if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&multiView&&multiView.isBusyFor(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备再修改；新建分组不受限制。','error','groupMessage');
   return;
