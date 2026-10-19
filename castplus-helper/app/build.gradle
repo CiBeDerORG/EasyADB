@@ -1,0 +1,13 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.easyadb.castpluslab'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.easyadb.castpluslab'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '0.1-experiment'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}

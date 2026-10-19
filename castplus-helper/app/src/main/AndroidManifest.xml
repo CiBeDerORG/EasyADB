@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <application android:label="EasyADB Cast+ 实验" android:allowBackup="false">
+        <!-- ADB shell holds android.permission.DUMP. Other ordinary apps cannot trigger this test service. -->
+        <service android:name=".CastPlusService" android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>
