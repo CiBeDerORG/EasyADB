@@ -3,9 +3,12 @@
 # Usage from SDK root: sh /path/to/build-apk-sdk.sh /path/to/luci-avahi-web
 set -eu
 [ "$#" -eq 1 ] || { echo 'Usage: build-apk-sdk.sh /absolute/path/to/luci-avahi-web' >&2; exit 2; }
-[ -r rules.mk ] && [ -d package ] && [ -r .config ] || {
-    echo 'Run from the extracted, configured ImmortalWrt/OpenWrt SDK root.' >&2; exit 1;
+[ -r rules.mk ] && [ -d include ] || {
+    echo 'Run from the extracted ImmortalWrt/OpenWrt SDK root.' >&2; exit 1;
 }
+# Published SDK archives may omit generated directories and .config.
+mkdir -p package
+[ -r .config ] || : > .config
 SRC=$(cd "$1" && pwd -P) || exit 1
 [ -r "$SRC/Makefile" ] && [ -f "$SRC/root/usr/libexec/luci-avahi-web" ] || {
     echo 'Source directory is incomplete.' >&2; exit 1;
