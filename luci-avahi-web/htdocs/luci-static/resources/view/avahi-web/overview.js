@@ -187,9 +187,8 @@ return view.extend({
 					])
 				]);
 			});
-			var completeCount = groups.filter(function(g) { return packageState(g).state === 'complete'; }).length;
 			var runningCount = groups.filter(function(g) { return st[g.process] === 'yes'; }).length;
-			summaryNode.replaceChildren(E('span', [ '已安装 ' + completeCount + '/2　·　运行中 ' + runningCount + '/2' ]));
+			summaryNode.replaceChildren(E('span', [ '运行中 ' + runningCount + '/2' ]));
 			componentsNode.replaceChildren(
 				E('div', { 'class': 'avahi-service-grid' }, cards)
 			);
@@ -271,7 +270,7 @@ return view.extend({
 			authStateNode.replaceChildren(
 				E('p', [ _('当前状态：') + text ]),
 				E('p', [ _('授权角色：') + 'luci-avahi-easyadb' ]),
-				E('div', [
+				E('div', { 'class': 'avahi-action-row' }, [
 					authButton(_('创建专用账号'), 'create', state !== 'absent'), ' ',
 					authButton(_('重新生成凭据'), 'rotate', state !== 'managed'), ' ',
 					authButton(_('撤销授权'), 'revoke', state !== 'managed')
@@ -286,7 +285,7 @@ return view.extend({
 		}
 		function authButton(label, action, disabled) {
 			return E('button', { type: 'button',
-				'class': action === 'revoke' ? 'cbi-button cbi-button-negative' : 'cbi-button',
+				'class': 'avahi-action' + (action === 'revoke' ? ' danger' : action === 'create' ? ' primary' : ''),
 				disabled: (disabled || authBusy || busy || runtimeBusy || refreshing) ? '' : null,
 				click: function() {
 					if (disabled || authBusy || busy || runtimeBusy || refreshing) return;
@@ -353,32 +352,49 @@ return view.extend({
 		}
 		function renderLast(output) {
 			if (!output) {
-				lastNode.replaceChildren(E('p', [ _('暂无已保存的发现结果。') ]));
+				lastNode.replaceChildren(E('p', { 'class': 'avahi-panel-note' }, [ '暂无已保存的发现结果。' ]));
 				return;
 			}
 			var result;
 			try { result = JSON.parse(output); }
 			catch (e) {
-				lastNode.replaceChildren(E('p', { 'class': 'alert-message warning' }, [ _('最近一次扫描快照格式无效。') ]));
+				lastNode.replaceChildren(E('p', { 'class': 'avahi-panel-note' }, [ '最近一次扫描快照格式无效。' ]));
 				return;
 			}
-			var records = Array.isArray(result.devices) ? result.devices : [];
-			var table = E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', [ _('服务实例') ]), E('th', [ _('网络接口') ]),
-					E('th', [ _('IP 地址') ]), E('th', [ _('端口') ])
+			var seen = Object.create(null), records = [];
+			(Array.isArray(result.devices) ? result.devices : []).forEach(function(d) {
+				var key = JSON.stringify([d.instance || '', d.iface || '', d.address || '', d.port || '']);
+				if (seen[key]) return;
+				seen[key] = true;
+				records.push(d);
+			});
+			var rows = records.map(function(d) {
+				return E('tr', [
+					cell(d.instance), cell(d.iface), cell(d.address), cell(d.port)
+				]);
+			});
+			var table = E('div', { 'class': 'avahi-table-scroll' }, [
+				E('table', { 'class': 'avahi-result-table' }, [
+					E('colgroup', [
+						E('col', { style: 'width:37%;' }), E('col', { style: 'width:19%;' }),
+						E('col', { style: 'width:29%;' }), E('col', { style: 'width:15%;' })
+					]),
+					E('thead', [ E('tr', [
+						E('th', [ '服务实例' ]), E('th', [ '网络接口' ]),
+						E('th', [ 'IP 地址' ]), E('th', [ '端口' ])
+					]) ]),
+					E('tbody', rows)
 				])
 			]);
-			records.forEach(function(d) {
-				table.appendChild(E('tr', { 'class': 'tr' }, [
-					cell(d.instance), cell(d.iface), cell(d.address), cell(d.port)
-				]));
-			});
 			lastNode.replaceChildren(
-				E('p', [ _('最近成功扫描：') + (result.scanned_at ?
-					new Date(result.scanned_at * 1000).toLocaleString() : '-') + ' | ' +
-					_('发现端点：') + String(records.length) ]),
-				records.length ? table : E('p', [ _('本次未发现已发布的 ADB TLS 服务。') ])
+				E('p', { 'class': 'avahi-panel-note', style: 'margin:8px 0 2px;' }, [
+					'最近成功扫描：' + (result.scanned_at ?
+						new Date(result.scanned_at * 1000).toLocaleString() : '-') +
+					'　·　发现端点：' + String(records.length)
+				]),
+				records.length ? table : E('p', { 'class': 'avahi-panel-note' }, [
+					'本次未发现已发布的 ADB TLS 服务。'
+				])
 			);
 		}
 		function scanMessage(message, error) {
@@ -416,49 +432,54 @@ return view.extend({
 				scanButton.disabled = locked();
 			});
 		}
-		manualButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: manualRefresh },
+		manualButton = E('button', { type: 'button', 'class': 'avahi-action', click: manualRefresh },
 			[ '手动刷新组件状态' ]);
-		scanButton = E('button', { type: 'button', 'class': 'cbi-button cbi-button-action', click: scanOnce },
+		scanButton = E('button', { type: 'button', 'class': 'avahi-action primary', click: scanOnce },
 			[ '立即发现 ADB' ]);
 		currentPackages = inventory(data[1]);
 		currentStatus = values(data[0]);
 		drawComponents();
 		renderLast(data[2]);
 		renderAuth(data[3]);
-		return E('div', [
-			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;' }, [
+		return E('div', { 'class': 'avahi-web-root' }, [
+			E('style', [ VIEW_STYLE ]),
+			E('div', { 'class': 'avahi-panel-head', style: 'margin:0 0 14px;' }, [
 				E('div', [
-					E('h2', { style: 'margin:0 0 5px;' }, [ 'Avahi / EasyADB 发现代理' ]),
-					E('p', { style: 'margin:0;opacity:.8;' }, [ '可在本页面手动发现 ADB，或由 NAS 通过专用鉴权接口发起；路由器仅保存最近一次结果。' ])
+					E('h2', { style: 'margin:0 0 4px;' }, [ 'Avahi / EasyADB 发现代理' ]),
+					E('p', { 'class': 'avahi-panel-note' }, [ '管理员可手动发现 ADB，NAS 可通过专用授权接口按需扫描。' ])
 				]),
 				manualButton
 			]),
 			noticeNode,
-			E('div', { 'class': 'cbi-section', style: 'margin-bottom:14px;' }, [
-				E('div', { style: 'display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px;' }, [
-					E('div', [ E('h3', { style: 'margin:0 0 4px;' }, [ '组件与服务管理' ]),
-						E('small', [ '页面首次加载与手动操作后才检测状态，不在后台轮询。' ]) ]),
+			E('section', { 'class': 'avahi-panel' }, [
+				E('div', { 'class': 'avahi-panel-head' }, [
+					E('div', [ E('h3', [ '组件与服务管理' ]),
+						E('p', { 'class': 'avahi-panel-note' }, [ '仅在进入页面、主动刷新和操作结束后检测状态。' ]) ]),
 					summaryNode
 				]),
-				componentsNode,
-				E('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;flex-wrap:wrap;' }, [
-					indexButton
-				]),
-				operationDetails
+				componentsNode
 			]),
-			E('div', { 'class': 'cbi-section', style: 'margin-bottom:14px;' }, [
-				E('h3', [ 'NAS 接口授权' ]),
-				E('p', [ '独立的 easyadb 账号仅允许执行一次 scan；创建或轮换后请立即保存只展示一次的凭据。' ]),
-				authStateNode, authCredentialNode
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;' }, [
+			E('section', { 'class': 'avahi-panel' }, [
+				E('div', { 'class': 'avahi-panel-head' }, [
 					E('div', [ E('h3', [ 'ADB 设备发现' ]),
-						E('p', [ '立即发现会主动执行一次 Avahi 查询；刷新结果只读取 /tmp 中的最近快照。设备长期记录由 NAS 保存。' ]) ]),
-					E('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, [ scanButton,
-						E('button', { type: 'button', 'class': 'cbi-button', click: reloadLast }, [ '刷新结果' ]) ])
+						E('p', { 'class': 'avahi-panel-note' }, [
+							'立即发现：重新扫描无线调试端口；刷新结果：只读取最近一次缓存。'
+						]) ]),
+					E('div', { 'class': 'avahi-action-row', style: 'margin:0;' }, [
+						scanButton,
+						E('button', { type: 'button', 'class': 'avahi-action', click: reloadLast }, [ '刷新结果' ])
+					])
 				]),
 				scanFeedback, lastNode
+			]),
+			E('section', { 'class': 'avahi-panel' }, [
+				E('div', { 'class': 'avahi-panel-head' }, [
+					E('div', [ E('h3', [ 'NAS 接口授权' ]),
+						E('p', { 'class': 'avahi-panel-note' }, [
+							'专用 easyadb 账号仅允许执行一次 scan。凭据创建或轮换后仅显示一次。'
+						]) ])
+				]),
+				authStateNode, authCredentialNode
 			])
 		]);
 	},
