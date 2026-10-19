@@ -1,4 +1,4 @@
-# luci-avahi-web v0.5.6
+# luci-avahi-web v0.5.7
 
 ImmortalWrt/OpenWrt 上的轻量 EasyADB 局域网发现代理。仅管理 **Avahi、D-Bus** 两组组件，支持 LuCI 管理员手动发现 Android 无线 ADB 服务，以及 NAS 通过专用 RPCD 会话按需触发扫描。
 
@@ -52,3 +52,9 @@ sh /path/to/luci-avahi-web/scripts/build-apk-sdk.sh /path/to/luci-avahi-web
 ```
 
 源码模拟测试不能代替路由器实机鉴权、APK 依赖和 mDNS 查询验收。自编译 APK 不等于 IPK，不要改名；在旧 SNAPSHOT 上安装前必须检查模拟依赖事务，不执行系统级 `apk upgrade`。
+
+## v0.5.7：临时目录兼容性与扫描反馈
+
+修复旧版将 `stat -c '%u'` 执行失败误判为“目录不是 root 所有”的错误。在精简 BusyBox 不提供兼容 stat 时，回退读取 `ls -ldn` 数字 UID，并对比扫描进程 UID；继续要求目录属于调用身份、非符号链接、权限 0700，不会使用 chmod 777 或匿名写入。若目录实际归其他 UID 所有，返回可诊断的 UID 差异，仍拒绝不安全操作。
+
+「立即发现 ADB」会在按钮所在区域直接显示运行中、发现端点数量或原始 RPCD 扫描错误，查询失败后自动恢复按钮；不再仅把失败提示放在页面最顶端。没有增加定时轮询、自动扫描、umdns 管理或额外的接口权限。
