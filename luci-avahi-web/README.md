@@ -29,12 +29,56 @@ JDCloud RE-CS-02**. This dashboard uses modern LuCI JavaScript views and does
 not contain native binaries, but its dependencies must come from feeds that
 match your exact running firmware.
 
-The overview screenshot does **not** prove whether this SNAPSHOT uses `apk`
-or `opkg`. Run the read-only `scripts/check-router.sh` on the router (or
-`command -v apk; command -v opkg`) to find out. For an `apk` system, use its
-firmware-matched SDK/buildroot to produce a native `.apk`; **do not rename or
-force-install the development `.ipk`**. Keep in mind that SNAPSHOT feed indexes
-and ABI can change independently of an older flashed firmware.
+This router was subsequently confirmed to use **APK**, not opkg. Use an APK
+created by the SDK/buildroot matching its exact ImmortalWrt snapshot. The
+standalone development IPK is only for opkg-based firmware; **never rename it
+or force-install it as an APK**. A rolling SNAPSHOT feed may have changed since
+the installed firmware image was flashed, so compare the actual repositories
+and package architecture before installing daemon dependencies.
+
+## APK installation on the actual router (ImmortalWrt SNAPSHOT)
+
+First gather read-only router details:
+
+```sh
+apk --version
+apk --print-arch
+cat /etc/apk/repositories
+cat /etc/openwrt_release
+```
+
+The package is architecture-independent but the *Avahi and D-Bus dependencies*
+are not necessarily interchangeable across snapshots. If matching packages
+are present in the configured trusted repositories, first do:
+
+```sh
+apk update
+apk add avahi-dbus-daemon avahi-utils
+```
+
+Build the LuCI application with an **exactly matching** firmware SDK that
+uses APK. From the SDK root, after installing its matching LuCI feed:
+
+```sh
+sh /path/to/luci-avahi-web/scripts/build-apk-sdk.sh /path/to/luci-avahi-web
+# The script reports the actual bin/.../luci-app-avahi-web-*.apk filename.
+```
+
+Copy that APK to `/tmp` on the router and install your inspected,
+self-built local artifact:
+
+```sh
+apk add --allow-untrusted /tmp/luci-app-avahi-web-*.apk
+/etc/init.d/rpcd restart
+rm -f /tmp/luci-indexcache.*
+```
+
+A self-built local package uses a signing key not already trusted by this
+router; `--allow-untrusted` is only for the specific APK you just built and
+inspected, **not** an instruction to disable signatures for network feeds.
+The package never starts Avahi or stops umdns during installation. After
+installation, go to **Services → Avahi / ADB Discovery**. Review whether umdns
+is already running before starting Avahi.
 
 ## Install opkg / IPK firmware (e.g. OpenWrt 24.10)
 
@@ -63,7 +107,7 @@ and if you choose to switch daemons, do so explicitly:
 /etc/init.d/avahi-daemon start
 ```
 
-For apk-based OpenWrt, use the matching SDK below. Do not rename an IPK to APK.
+For apk-based OpenWrt, use the APK section above. Do not rename an IPK to APK.
 
 ## Reproducible local IPK build (opkg firmware)
 
@@ -71,7 +115,7 @@ Requires POSIX shell, `ar`, GNU tar, gzip, Node.js and Python for smoke tests:
 
 ```sh
 sh tests/smoke.sh
-# dist/luci-app-avahi-web_0.1.0-1_all.ipk
+# dist/luci-app-avahi-web_0.1.0-1_all.ipk (opkg-only development build)
 ```
 
 This builds an unsigned **development** IPK with the same root filesystem as
