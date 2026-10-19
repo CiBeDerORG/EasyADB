@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 NAME=luci-app-avahi-web
-VERSION=0.2.0-1
+VERSION=0.3.0-1
 for cmd in ar tar gzip mktemp; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "Missing $cmd" >&2; exit 1; }
 done
@@ -23,7 +23,7 @@ Maintainer: CiBeDerORG
 License: Apache-2.0
 Section: luci
 Priority: optional
-Depends: luci-base, rpcd-mod-file
+Depends: luci-base, rpcd-mod-file, libubox, uhttpd-mod-ubus
 Description: LuCI dashboard for Avahi configuration and Android ADB discovery
 EOC
 cat > "$TEMP/control/postinst" <<'EOC'
