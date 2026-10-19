@@ -59,7 +59,8 @@ def test_rpcd_login_scoped_scan_session_retry_and_error():
         assert params[1:] == ["file", "exec", {"command": SCANNER, "params": ["scan"]}]
         if retry_once[0]:
             retry_once[0] = False
-            return {"result": [6]}
+            return {"jsonrpc": "2.0", "id": 1,
+                    "error": {"code": -32001, "message": "Session not found"}}
         return {"result": [0, {"code": 0, "stdout": json.dumps(response), "stderr": ""}]}
 
     rpcd = RpcdDiscovery(transport)
@@ -67,6 +68,29 @@ def test_rpcd_login_scoped_scan_session_retry_and_error():
     assert [d["params"][2] for _, d in calls] == ["login", "exec", "login", "exec"]
     assert rpcd.scan(URL, "easyadb", SECRET) == response
     assert [d["params"][2] for _, d in calls][-1] == "exec"
+
+    # Status 6 means permission denied, NOT expiration; never re-login.
+    denied_calls = []
+    def status_six(url, payload):
+        denied_calls.append(payload["params"][2])
+        if payload["params"][2] == "login":
+            return {"result": [0, {"ubus_rpc_session": "a" * 32}]}
+        return {"result": [6]}
+    with pytest.raises(DiscoveryError, match="状态码 6") as error:
+        RpcdDiscovery(status_six).scan(URL, "easyadb", SECRET)
+    assert denied_calls == ["login", "exec"]
+    assert SECRET not in str(error.value)
+
+    # A second explicit expiration must stop after one re-login.
+    expired_calls = []
+    def expired_again(url, payload):
+        expired_calls.append(payload["params"][2])
+        if payload["params"][2] == "login":
+            return {"result": [0, {"ubus_rpc_session": "a" * 32}]}
+        return {"error": {"code": -32001, "message": "Session not found"}}
+    with pytest.raises(DiscoveryError, match="重新登录后会话仍无效"):
+        RpcdDiscovery(expired_again).scan(URL, "easyadb", SECRET)
+    assert expired_calls == ["login", "exec", "login", "exec"]
 
     def denied(url, data):
         if data["params"][2] == "login":
@@ -234,6 +258,30 @@ def test_ambiguous_and_active_connections_remain_unchanged(monkeypatch, tmp_path
     assert mod.store.get(b["id"])["port"] == 5555
     # Same IP from a different group must not update Home.
     assert mod.store.apply_group_discovery("Home", devices(("192.168.20.206", 40001)))["updated"] == []
+
+
+def test_authorization_test_without_lan_prefix_never_applies_ports(monkeypatch, tmp_path):
+    mod = make_module(monkeypatch, tmp_path)
+    calls = []
+    def transport(url, payload):
+        calls.append(payload["params"][2])
+        if payload["params"][2] == "login":
+            return {"result": [0, {"ubus_rpc_session": "c" * 32}]}
+        return {"result": [0, {"code": 0, "stdout": json.dumps(
+            devices(("192.168.10.206", 41234))), "stderr": ""}]}
+    mod.discovery_client = RpcdDiscovery(transport)
+    with TestClient(mod.app) as client:
+        assert client.post("/api/groups", headers=AUTH,
+                           json={"name": "Home", "ip_prefix": None}).status_code == 201
+        saved = client.put("/api/groups/Home/discovery", headers=AUTH,
+                           json={"url": URL, "username": "easyadb", "password": SECRET})
+        assert saved.status_code == 200
+        test = client.post("/api/groups/Home/discovery/test", headers=AUTH)
+        assert test.status_code == 200 and test.json() == {"authorized": True, "found": 1}
+        scan = client.post("/api/groups/Home/discovery/scan", headers=AUTH)
+        assert scan.status_code == 409 and "内网 IP 前缀" in scan.json()["detail"]
+        assert client.get("/api/groups/Home/discovery/last", headers=AUTH).json()["last"] is None
+        assert calls == ["login", "exec", "exec"]
 
 
 def test_unconfigured_not_exposed_and_unauthorized_does_not_scan(monkeypatch, tmp_path):
