@@ -208,6 +208,16 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-log-head button{white-space:nowrap;font-size:11px;padding:6px}
 .multi-log-head .multi-log-close{font-size:20px;min-width:30px;padding:2px 7px}
 .multi-card .muted{margin-top:5px}
+/* One global right-edge group menu. It never takes ownership of individual streams. */
+.group-fab{position:fixed;z-index:28;right:-22px;top:clamp(215px,50dvh,calc(100dvh - 200px));transform:none}
+.group-fab.is-open{right:16px}
+.group-fab .fab-main{background:#267462;border-color:#8ad6c2}
+.group-fab .group-text-panel{width:min(270px,calc(100vw - 54px));max-width:none}
+.group-fab[hidden],.group-log-panel[hidden],.group-text-panel[hidden]{display:none!important}
+body.video-fullscreen-active .group-fab,body.video-fullscreen-active .group-log-panel{display:none!important}
+.group-log-panel{position:fixed;z-index:29;right:68px;top:50%;transform:translateY(-50%);width:min(430px,calc(100vw - 86px));max-height:75dvh;overflow:auto;overscroll-behavior:contain;padding:10px;border:1px solid #6783af;border-radius:11px;background:#132034f5;box-shadow:0 10px 30px #000b}
+.group-log-content{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 system-ui,sans-serif;color:#c9d9f2;margin:9px 0 0}
+@media(prefers-reduced-motion:reduce){.group-fab{transition:none}}
 @media(prefers-reduced-motion:reduce){.multi-fab,.multi-fab .fab-action{transition:none}}
 @media(max-width:1050px){
  .item{grid-template-columns:minmax(0,1fr)}.device-quality{border-left:0;border-top:1px solid #34445e;padding-left:0;padding-top:12px}
@@ -263,9 +273,10 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  <button id="inventoryToggle" class="inventory-toggle" type="button" aria-label="展开设备管理" aria-expanded="false" aria-controls="inventoryPanel" title="展开设备管理">☷<small>设备管理</small></button>
  </div>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
-  <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理；点击抽屉以外的位置即可立即收起，不占用画面空间。每路画面按实际视频宽度展示，空间不足时自动换行；点击画面右侧悬浮按钮操作。</p></div></div>
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理；点击抽屉以外的位置即可立即收起。每路画面按实际视频宽度展示，空间不足时自动换行；画面内悬浮按钮用于单路操作，页面右侧的群控按钮用于操作当前全部实时画面。</p></div></div>
   <div id="multiInfo" class="status" role="status" aria-live="polite">勾选已连接设备后点击「批量投屏」，也可点击设备标题中 ADB 端口后的投屏图标单独开启或关闭画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
+  <div id="groupControlHost"></div>
  </section>
 </div>
 <dialog class="device-dialog" id="deviceDialog" aria-labelledby="formTitle">
@@ -394,6 +405,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 <script src="/m2-touch.js"></script>
 <script src="/m2-metrics.js"></script>
 <script src="/m2-multi.js"></script>
+<script src="/m2-group.js"></script>
 <script src="/display-lab.js"></script>
 <script>
 const $=id=>document.getElementById(id);
@@ -1137,6 +1149,8 @@ multiView=EasyADBMulti.create({
  })).json(),
  onChange:()=>render()
 });
+multiView.groupControl=EasyADBGroup.create({view:multiView,host:$('groupControlHost')});
+multiView.groupControl.refresh();
 displayLabView=EasyADBDisplayLab.create({
  dialog:$('displayLabDialog'),getDevice:id=>devices.find(d=>d.id===id),
  api,multiView
