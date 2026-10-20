@@ -68,3 +68,17 @@ def test_start_concurrency_config_validation(tmp_path):
     for value in ("0", "21", "many", "-1"):
         with pytest.raises(RuntimeError, match="EASYADB_MAX_STARTING"):
             load_settings({**env, "EASYADB_MAX_STARTING": value})
+
+
+def test_each_runtime_registry_owns_independent_start_budget():
+    from server.m2_live import LiveRegistry
+    from server.services.resource_budget import ScopedResourceBudget
+    registry = LiveRegistry()
+    scoped = ScopedResourceBudget(lambda: registry, max_starting=1)
+    assert scoped.acquire_start("A", "one")
+    assert not scoped.acquire_start("B", "two")
+    registry = LiveRegistry()
+    assert scoped.snapshot()["starting"] == 0
+    assert scoped.acquire_start("B", "two")
+    assert not scoped.acquire_start("C", "three")
+    assert scoped.release_start("B", "two")

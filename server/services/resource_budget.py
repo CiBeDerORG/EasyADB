@@ -1,5 +1,6 @@
 """V2-04 bounded admission: short critical section, no ADB or polling."""
 from threading import RLock
+from weakref import WeakKeyDictionary
 
 
 class ResourceBudget:
@@ -30,3 +31,34 @@ class ResourceBudget:
     def snapshot(self):
         with self._lock:
             return {"starting": len(self._starting), "max_starting": self.max_starting}
+
+
+class ScopedResourceBudget:
+    """One startup quota per authoritative LiveRegistry, including test overrides.
+
+    Replacing the registry must never leave unrelated sessions consuming
+    startup slots. Production's registry remains stable for the process lifetime.
+    """
+    def __init__(self, registry_provider, max_starting=3):
+        self._provider = registry_provider
+        self._max_starting = max_starting
+        self._lock = RLock()
+        self._scopes = WeakKeyDictionary()
+
+    def _scope(self):
+        registry = self._provider()
+        with self._lock:
+            budget = self._scopes.get(registry)
+            if budget is None:
+                budget = ResourceBudget(self._max_starting)
+                self._scopes[registry] = budget
+            return budget
+
+    def acquire_start(self, device_id, session_id):
+        return self._scope().acquire_start(device_id, session_id)
+
+    def release_start(self, device_id, session_id):
+        return self._scope().release_start(device_id, session_id)
+
+    def snapshot(self):
+        return self._scope().snapshot()
