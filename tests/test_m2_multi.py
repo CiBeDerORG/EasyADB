@@ -218,7 +218,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         # Route selection acts directly on its IP and triggers one explicit connect.
         # The separate batch status check remains probe-only.
         assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
-        assert "title.append(elem('span','device-port','ADB '+d.port))" in html
+        assert "title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))" in html
         assert "addressList.append(...addressRows)" in html
         assert "addressList.append(plus)" in html
         assert "removeButton=action('删除'" not in html
@@ -229,8 +229,8 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "row.append(change)" in html and "title.append(change)" not in html
         assert "if(route==='mesh'){" in html
         assert ".device-edit-icon{position:absolute;right:-3px;top:-5px;" in html
-        assert ".device-projector{position:static;" in html
-        assert "if(multiView)title.append(multiView.projectionButton(d))" in html
+        assert ".device-port.device-projector{position:static;" in html
+        assert "if(multiView)title.append(multiView.projectionButton(d))" not in html
         assert "name.append(model)" in html and "name.tabIndex=0" in html
         assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "const connect=action('连接'" not in html
@@ -246,9 +246,9 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert ".device-title:hover .device-model-tooltip" in html
         assert ".device-title:focus-within .device-model-tooltip" in html
         assert "if(d.model)title.append(elem('span','device-model'" not in html
-        assert "if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version))" in html
+        assert "if(d.model||d.android_version)" in html
         assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
-        assert ".device-android{" in html
+        assert ".device-android{" not in html
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         # Header indicator uses actual active_serial for successful ADB,
         # selected_serial only to explain an explicit failed attempt.
