@@ -26,6 +26,7 @@ services:
       EASYADB_VIDEO_ENGINE: webrtc
       EASYADB_BIND_IP: ${EASYADB_BIND_IP:-127.0.0.1}
       EASYADB_PORT: ${EASYADB_PORT:-8765}
+      EASYADB_MAX_STARTING: ${EASYADB_MAX_STARTING:-3}
     volumes:
       - ./data/adb:/root/.android
       - ./data/storage:/app/data
