@@ -1,11 +1,14 @@
+# Optional manual Compose entry for the Mihomo build-argument path.
+# The build helper uses its dedicated proxy-net BuildKit builder and deploys
+# with compose.webrtc.yaml. EasyADB itself is NEVER attached to proxy-net:
+# all V2 Compose entries share the same WebRTC host-network runtime.
+# Do not stack these alternative Compose files with multiple -f flags.
 services:
   easyadb:
     image: easyadb:local
     build:
       context: .
-      # Do not specify build.network: proxy-net; BuildKit does not support
-      # custom names in RUN network mode. The helper script creates a dedicated
-      # docker-container Buildx builder attached to proxy-net instead.
+      # Build arguments apply only during image creation, not to runtime networking.
       args:
         HTTP_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
         HTTPS_PROXY: ${EASYADB_BUILD_PROXY:-http://mihomo:7890}
@@ -14,20 +17,15 @@ services:
         NO_PROXY: localhost,127.0.0.1
         no_proxy: localhost,127.0.0.1
     restart: unless-stopped
+    network_mode: host
+    # Argument-vector command: no shell parsing of interface/port configuration.
+    command: ["uvicorn", "server.app:app", "--host", "${EASYADB_BIND_IP:-127.0.0.1}", "--port", "${EASYADB_PORT:-8765}", "--workers", "1", "--ws", "wsproto"]
     environment:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
       EASYADB_DB: /app/data/devices.sqlite3
-      EASYADB_VIDEO_ENGINE: ${EASYADB_VIDEO_ENGINE:-mse}
-    ports:
-      - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+      EASYADB_VIDEO_ENGINE: webrtc
+      EASYADB_BIND_IP: ${EASYADB_BIND_IP:-127.0.0.1}
+      EASYADB_PORT: ${EASYADB_PORT:-8765}
     volumes:
       - ./data/adb:/root/.android
       - ./data/storage:/app/data
-    networks:
-      - default
-      - proxy-net
-
-networks:
-  proxy-net:
-    external: true
-    name: proxy-net

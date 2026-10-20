@@ -113,7 +113,9 @@ def test_direct_compose_is_standalone_and_preserves_persistent_paths():
     assert "build:" not in "\n".join(
         line for line in direct.splitlines() if not line.lstrip().startswith("#")
     )
-    assert "network_mode: host" not in direct
+    assert "network_mode: host" in direct
+    assert "EASYADB_VIDEO_ENGINE: webrtc" in direct
+    assert "ports:" not in direct
 
 
 
@@ -195,3 +197,31 @@ def test_invalid_engine_not_hidden_by_if_changed_short_circuit(tmp_path):
     result = invoke(project, env, "--no-proxy", "--if-changed")
     assert result.returncode == 2
     assert not (tmp_path / "calls.log").exists()
+
+
+def test_every_v2_compose_entry_has_identical_host_network_webrtc_runtime():
+    """No manually selected Compose file can resurrect MSE or Docker bridge video."""
+    templates = [PROXY_COMPOSE, DIRECT_COMPOSE, WEBRTC_COMPOSE]
+    contents = [path.read_text() for path in templates]
+    runtime_sections = []
+    for content in contents:
+        assert content.count("    restart: unless-stopped\n") == 1
+        runtime = content.split("    restart: unless-stopped\n", 1)[1]
+        runtime_sections.append(runtime)
+        assert "network_mode: host" in runtime
+        assert "EASYADB_VIDEO_ENGINE: webrtc" in runtime
+        assert "EASYADB_BIND_IP:" in runtime
+        assert "EASYADB_PORT:" in runtime
+        assert 'command: ["uvicorn", "server.app:app", "--host",' in runtime
+        assert '"--workers", "1", "--ws", "wsproto"]' in runtime
+        assert "ports:" not in content and "8000" not in content
+        assert "mse" not in content.lower() and "ffmpeg" not in content.lower()
+        assert "\n    networks:" not in content and "\nnetworks:" not in content
+        assert "./data/adb:/root/.android" in runtime
+        assert "./data/storage:/app/data" in runtime
+    assert runtime_sections[0] == runtime_sections[1] == runtime_sections[2]
+    # Build proxy args belong to optional image creation only, never runtime.
+    assert "build:" in contents[0] and "EASYADB_BUILD_PROXY" in contents[0]
+    assert "build:" not in contents[1] and "EASYADB_BUILD_PROXY" not in contents[1]
+    assert "build:" not in contents[2] and "EASYADB_BUILD_PROXY" not in contents[2]
+    assert "proxy-net" not in runtime_sections[0]

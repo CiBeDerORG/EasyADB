@@ -1,17 +1,20 @@
-# Standalone deployment for hosts using Docker/OpenWrt networking directly.
-# Pass explicitly: docker compose -f compose.no-proxy.yaml up -d --no-build
-# Do not merge with compose.yaml: its proxy-net attachment is intentionally absent.
-# Same Compose project directory, image, port and persistent bind mounts.
+# Optional manual no-proxy Compose entry (existing local image; no build section).
+# The --no-proxy build helper still deploys the canonical compose.webrtc.yaml.
+# Same WebRTC host-network runtime, volumes, bind address and HTTP port as
+# the proxy/manual and canonical entries. Do not stack alternative Compose files.
 services:
   easyadb:
     image: easyadb:local
     restart: unless-stopped
+    network_mode: host
+    # Argument-vector command: no shell parsing of interface/port configuration.
+    command: ["uvicorn", "server.app:app", "--host", "${EASYADB_BIND_IP:-127.0.0.1}", "--port", "${EASYADB_PORT:-8765}", "--workers", "1", "--ws", "wsproto"]
     environment:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
       EASYADB_DB: /app/data/devices.sqlite3
-      EASYADB_VIDEO_ENGINE: ${EASYADB_VIDEO_ENGINE:-mse}
-    ports:
-      - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+      EASYADB_VIDEO_ENGINE: webrtc
+      EASYADB_BIND_IP: ${EASYADB_BIND_IP:-127.0.0.1}
+      EASYADB_PORT: ${EASYADB_PORT:-8765}
     volumes:
       - ./data/adb:/root/.android
       - ./data/storage:/app/data
