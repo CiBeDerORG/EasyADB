@@ -28,6 +28,12 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
+          for path in web/app/main.js web/core/api-client.js web/shared/dom.js web/shared/ui/dialog.js web/shared/ui/toast.js tests/v4_frontend_modules.mjs eslint.config.mjs tests/v4_frontend_standards.cjs; do
+            echo "V4_FMT_START:${path}"
+            npx --no-install prettier "$path" | base64 -w 120
+            echo
+            echo "V4_FMT_END:${path}"
+          done
           npm run format:check
           npm run test:architecture
       - name: Check modal UI and deployment scripts
