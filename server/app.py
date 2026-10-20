@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 import threading
 import time
-from contextlib import asynccontextmanager, ExitStack
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -34,6 +34,7 @@ from .castplus_lab import CastError
 from .core.config import load_settings
 from .core.runtime import build_runtime
 from .api.static import router as static_router
+from .services.operations import device_lock, device_locks
 
 # Module-level aliases remain during incremental migration: existing tests and
 # integrations replace app.store/manager/live_registry directly.
@@ -228,7 +229,7 @@ def pair(target: PairTarget):
 def pair_existing_device(device_id: str, target: PairExisting):
     # Bind pairing to the database-selected route: do not accept a client-side
     # IP override or switch routes, and NEVER connect automatically after pair.
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         device = get_device(device_id)
         serial = selected_address(device)
         if not serial:
@@ -342,9 +343,7 @@ def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None 
         # screen session: next explicit scan can update it when idle.
         group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
                                key=lambda d: d["id"])
-        with ExitStack() as held:
-            for device in group_devices:
-                held.enter_context(manager._device_lock(device["id"]))
+        with device_locks(manager, (device["id"] for device in group_devices)):
             blocked = set()
             for device in group_devices:
                 if manager.snapshot(device)["status"] == "connected" or display_lab.has_pending(device["id"]):
@@ -443,7 +442,7 @@ def unlock_state(device_id: str):
 
 @app.put("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
 def set_unlock_state(device_id: str, payload: UnlockInput):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         get_device(device_id)
         if payload.password is None:
             return {"configured": store.unlock_configured(device_id)}
@@ -475,7 +474,7 @@ def delete_device(device_id: str):
 def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
     # Reject while a server-side live slot is owned (including cleanup).
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         if display_lab.has_pending(device_id):
             raise HTTPException(409, "请先恢复该设备的副屏实验，再修改线路")
         original = get_device(device_id)
@@ -510,7 +509,7 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
 def select_device_route(device_id: str, payload: RouteInput):
     # Use the same lock as connect, refresh and screenshot. Switching changes
     # persisted preference only; no hidden adb connect or automatic fallback.
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         if display_lab.has_pending(device_id):
             raise HTTPException(409, "请先恢复该设备的副屏实验，再切换线路")
         if payload.route not in ("mesh", "lan", "temp"):
@@ -549,7 +548,7 @@ def refresh_device(device_id: str):
 @app.post("/api/devices/{device_id}/m2/preflight", dependencies=[Depends(authorize)])
 def m2_device_preflight(device_id: str):
     """User-initiated M2-00 capability check; no connect or scrcpy process."""
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         device = get_device(device_id)
         serial = selected_address(device)
         if not serial or manager.serial_for(device) != serial or not is_connected(serial):
@@ -560,7 +559,7 @@ def m2_device_preflight(device_id: str):
 @app.post("/api/devices/{device_id}/m2/video-probe", dependencies=[Depends(authorize)])
 def m2_video_probe(device_id: str, payload: VideoProbeInput):
     """Opt-in, bounded, non-recording experiment: phone encoder -> FNOS only."""
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         device = get_device(device_id)
         serial = selected_address(device)
         if not serial or manager.serial_for(device) != serial or not is_connected(serial):
@@ -588,7 +587,7 @@ def display_lab_state(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/environment", dependencies=[Depends(authorize)])
 def display_lab_environment(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         try:
             result = display_lab.environment(device_id, serial)
@@ -600,7 +599,7 @@ def display_lab_environment(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/scan", dependencies=[Depends(authorize)])
 def display_lab_scan(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         try:
             result = display_lab.scan(serial)
@@ -612,7 +611,7 @@ def display_lab_scan(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/overlay", dependencies=[Depends(authorize)])
 def display_lab_overlay(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         with live_registry.lock:
             running = live_registry.sessions.get(device_id)
@@ -626,7 +625,7 @@ def display_lab_overlay(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/restore", dependencies=[Depends(authorize)])
 def display_lab_restore(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         with live_registry.lock:
             running = live_registry.sessions.get(device_id)
@@ -647,7 +646,7 @@ def lab_require_idle(device_id):
 
 @app.post("/api/devices/{device_id}/display-lab/castplus/start", dependencies=[Depends(authorize)])
 def castplus_start(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         lab_require_idle(device_id)
         try:
@@ -658,7 +657,7 @@ def castplus_start(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/castplus/auto", dependencies=[Depends(authorize)])
 def castplus_auto(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         lab_require_idle(device_id)
         try:
@@ -669,7 +668,7 @@ def castplus_auto(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/castplus/switch", dependencies=[Depends(authorize)])
 def castplus_switch(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         lab_require_idle(device_id)
         try:
@@ -680,7 +679,7 @@ def castplus_switch(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/castplus/verify", dependencies=[Depends(authorize)])
 def castplus_verify(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         try:
             return display_lab.cast_verify(device_id, serial)
@@ -690,7 +689,7 @@ def castplus_verify(device_id: str):
 
 @app.post("/api/devices/{device_id}/display-lab/castplus/restore", dependencies=[Depends(authorize)])
 def castplus_restore(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
         lab_require_idle(device_id)
         try:
@@ -714,7 +713,7 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
         return False  # unknown is NOT a confirmed offline device
     if still_online:
         return False
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         current = store.get(device_id)
         if (current and selected_address(current) == serial
                 and manager.serial_for(current) == serial):
@@ -857,7 +856,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         # Atomic with route mutation: another browser cannot switch the
         # selected serial between validation and reserving this live session.
         error = None
-        with manager._device_lock(device_id):
+        with device_lock(manager, device_id):
             current = store.get(device_id)
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 error = "当前选择的 IP 已改变，请重新开启投屏"
@@ -1362,7 +1361,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
 
 @app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
 def device_screenshot(device_id: str):
-    with manager._device_lock(device_id):
+    with device_lock(manager, device_id):
         device = get_device(device_id)
         serial = manager.serial_for(device)
         if not serial or not is_connected(serial):
