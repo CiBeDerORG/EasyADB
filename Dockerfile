@@ -31,5 +31,5 @@ RUN pip install --no-cache-dir --retries 5 --timeout 30 -r /app/server/requireme
 COPY server/ /app/server/
 COPY web/ /app/web/
 RUN mkdir -p /root/.android
-EXPOSE 8000
+EXPOSE 8000 8001
 CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--ws", "wsproto"]
