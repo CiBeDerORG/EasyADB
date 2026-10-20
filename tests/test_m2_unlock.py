@@ -124,3 +124,80 @@ def test_all_stream_paths_share_server_owned_secret():
     assert "unlock_secret" not in client
     assert "readUnlockSettings" in client and "saveUnlockSettings" in client
     assert "unlock_notice" in client
+
+def test_manual_unlock_websocket_uses_current_saved_secret(monkeypatch, tmp_path):
+    """Manual retrigger never carries plaintext and can use a newly saved PIN."""
+    import queue
+    from server.devices import DeviceManager
+    from server.m2_live import LiveRegistry
+
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    store, device = create_store(tmp_path)
+    monkeypatch.setattr(mod, "store", store)
+    monkeypatch.setattr(mod, "manager", DeviceManager(store, mod.adb))
+    monkeypatch.setattr(mod, "live_registry", LiveRegistry())
+    monkeypatch.setattr(mod, "is_connected", lambda serial: True)
+    mod.manager._set_state(device["id"], "connected",
+                           serial=device["ip"]+":"+str(device["port"]), route="mesh")
+    used=[]
+    class Live:
+        def __init__(self, serial, profile):
+            self.serial=serial;self.profile=profile;self.session_id="session-manual"
+            self.finished=threading.Event();self.stop_event=threading.Event()
+            self.cleanup_complete=False;self.events=queue.Queue()
+        def start(self):
+            self.events.put(("init", {"width":720,"height":1280,
+                "mime":'video/mp4; codecs="avc1.640028"', "control_available":True}))
+        def stop(self):
+            self.stop_event.set();self.finished.set();self.cleanup_complete=True
+        def join(self,timeout=20):self.finished.wait(timeout)
+        def diagnostics(self):return {"stage":"test"}
+        def release_touch(self):pass
+    monkeypatch.setattr(mod, "LiveVideo", Live)
+    monkeypatch.setattr(mod, "automatic_unlock", lambda stream, password:
+        (used.append((stream.serial, password)), "submitted")[1])
+    def next_notice(ws, status):
+        for _ in range(30):
+            event=ws.receive_json()
+            if event["type"]=="unlock_notice" and event.get("status")==status:
+                assert "123456" not in str(event)
+                return event
+            assert event["type"] in ("starting","init","diagnostic","unlock_notice",
+                                     "control_enabled","stopping")
+        pytest.fail("missing unlock_notice: "+status)
+    with TestClient(mod.app) as client:
+        with client.websocket_connect("/api/devices/"+device["id"]+"/m2/live",
+                headers={"origin":"http://testserver"}) as ws:
+            ws.send_json({"token":"local-test-token-123","player":"mse",
+                          "profile":"baseline","selected_serial":device["ip"]+":5555"})
+            sid=None
+            for _ in range(10):
+                msg=ws.receive_json()
+                if msg["type"]=="starting":
+                    sid=msg["session_id"];break
+            assert sid=="session-manual"
+            ws.send_json({"type":"unlock","session_id":sid})
+            assert next_notice(ws,"unconfigured")["error"] is True
+            assert not used
+            assert client.put("/api/devices/"+device["id"]+"/unlock",headers=AUTH,
+                              json={"password":"123456"}).json()=={"configured":True}
+            # An untrusted browser cannot provide arbitrary input fields.
+            ws.send_json({"type":"unlock","session_id":sid,"password":"do-not-use"})
+            assert next_notice(ws,"invalid")["error"] is True
+            assert not used
+            ws.send_json({"type":"unlock","session_id":sid})
+            next_notice(ws,"running")
+            done=next_notice(ws,"submitted")
+            assert done["source"]=="manual" and not done["error"]
+            assert used==[(device["ip"]+":5555","123456")]
+            ws.send_json({"type":"unlock","session_id":sid})
+            assert next_notice(ws,"cooldown")["error"] is True
+            assert len(used)==1
+            ws.send_text("stop")
+            for _ in range(20):
+                msg=ws.receive_json()
+                if msg["type"]=="ended":
+                    assert msg["cleanup_complete"] is True
+                    break
+            else:pytest.fail("no final cleanup")
