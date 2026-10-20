@@ -51,7 +51,10 @@ def decrypt_password(db_path, ciphertext):
 def lock_state(serial):
     """Fail closed on ambiguous OEM output: never inject into an unlocked app."""
     for args in (("dumpsys", "trust"), ("dumpsys", "window", "policy")):
-        output = _run_adb(serial, "shell", *args, timeout=6)
+        try:
+            output = _run_adb(serial, "shell", *args, timeout=6)
+        except VideoProbeError:
+            continue  # OEM may restrict one diagnostics service; try the other
         locked = bool(LOCKED_PATTERN.search(output))
         unlocked = bool(UNLOCKED_PATTERN.search(output))
         if locked != unlocked:
@@ -77,10 +80,10 @@ def automatic_unlock(stream, password, *, sleep=time.sleep):
     if state is None:
         return "unknown_lock_state"
     size = _run_adb(stream.serial, "shell", "wm", "size", timeout=6)
-    match = SIZE_PATTERN.search(size)
-    if not match:
+    matches = list(SIZE_PATTERN.finditer(size))
+    if not matches:
         return "unknown_screen_size"
-    width, height = map(int, match.groups())
+    width, height = map(int, matches[-1].groups())  # Prefer active override size
     if not (240 <= width <= 10000 and 400 <= height <= 20000):
         return "unknown_screen_size"
     _run_adb(stream.serial, "shell", "input", "swipe", str(width//2),
