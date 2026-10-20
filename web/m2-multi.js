@@ -524,7 +524,7 @@ class MultiView{
   });
   const state=make('div','status','正在建立本轮会话…');
   const stats=make('div','muted','等待浏览器诊断…');
-  const qualityLine=make('div','muted','视频引擎：'+(card.engine==='webrtc'?'WebRTC':'FFmpeg + MSE')+
+  const qualityLine=make('div','muted','视频引擎：'+('WebRTC')+
    ' / 本设备画质：'+briefQuality(this.getChoice(d.id))+
    (lowLatency?' / 低延迟播放实验已开启':'')+
    (card.screenOff?' / 已请求投屏时关闭物理屏幕':'')+'（本轮固定）');
@@ -538,7 +538,7 @@ class MultiView{
    xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
   xiaomi.append(xiaomiTitle,xiaomiHelp);
   detail.append(make('h4','','会话与画质'),qualityLine,state,stats,initInfo,
-   make('h4','',card.engine==='webrtc'?'WebRTC / 资源详情':'MSE / 资源详情'),diagnostic,
+   make('h4','','WebRTC / 资源详情'),diagnostic,
    make('h4','','本轮事件日志'),eventLog,
    make('h4','','本页历史'),history,xiaomi);
   const logPanel=make('section','multi-log-panel');logPanel.hidden=true;
@@ -729,22 +729,7 @@ class MultiView{
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
     },
     onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
-   }):root.EasyADBPlayers.create('mse',video,{
-    lowOverhead:true,lowLatency:card.lowLatency,
-    onState:stage=>{
-     if(card.closed)return;
-     if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
-      card.state='ready';mark('MSE 已就绪，控制通道可单独开启；等待首帧…');
-      refresh();this.updatePicker();
-     }
-     if(stage==='playing'&&card.state!=='stopping'&&card.state!=='playing'){
-      card.state='playing';mark('画面播放中（此路独立会话）');
-      refresh();this.updatePicker();
-     }
-     if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
-    },
-    onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
-   }));
+   });
    const scheme=location.protocol==='https:'?'wss:':'ws:';
    const ws=new WebSocket(scheme+'//'+location.host+
     '/api/devices/'+encodeURIComponent(d.id)+'/m2/live');
@@ -762,11 +747,7 @@ class MultiView{
     if(card.closed)return;
     if(typeof ev.data!=='string'){
      if(card.state==='stopping')return;
-     if(card.engine==='webrtc'){mark('WebRTC 会话意外收到 MSE 视频片段',true);this.end(card,false);return;}
-     const len=ev.data.byteLength;card.meter.record(len);card.metrics.recordBytes(len);
-     try{card.player.append(new Uint8Array(ev.data));}
-     catch(e){mark(e.message,true);this.end(card,false);}
-     return;
+     mark('WebRTC 信令通道收到非预期二进制数据',true);this.end(card,false);return;
     }
     let m;try{m=JSON.parse(ev.data);}catch{mark('服务端返回非法消息',true);this.end(card,false);return;}
     if(m.session_id&&card.session&&m.session_id!==card.session){
@@ -775,11 +756,10 @@ class MultiView{
     if(m.type==='starting'){
      card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
      refresh();this.updatePicker();
-     if(card.engine==='webrtc')card.player.start(ws,card.session).catch(e=>{
+     card.player.start(ws,card.session).catch(e=>{
       if(!card.closed){mark('WebRTC Offer 失败：'+e.message,true);this.end(card,false);}
      });
     }else if(m.type==='webrtc_answer'){
-     if(card.engine!=='webrtc'){mark('意外的 WebRTC Answer',true);this.end(card,false);return;}
      card.player.answer(m.sdp).catch(e=>{
       if(!card.closed){mark('WebRTC Answer 失败：'+e.message,true);this.end(card,false);}
      });
@@ -818,7 +798,7 @@ class MultiView{
        catch{this.end(card,false);return;}
       }
      }
-     if(card.engine==='webrtc')card.player.pollStats(delta=>{
+     card.player.pollStats(delta=>{
        if(!card.closed){card.meter.record(delta);card.metrics.recordBytes(delta);}
       });
       const traffic=card.meter.sample(performance.now());
