@@ -173,8 +173,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         options["display_source"] = experiment
                     if screen_off:
                         options["screen_off"] = True
-                    if VIDEO_ENGINE == "webrtc":
-                        options["video_engine"] = "webrtc"
                     candidate = LiveVideo(serial, profile=profile, **options)
                 if candidate is None:
                     pass

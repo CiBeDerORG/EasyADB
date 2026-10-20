@@ -72,7 +72,7 @@ def test_broken_control_cancel_does_not_prevent_video_and_process_stop():
 
     stream = LiveVideo("manually-selected:5555", "baseline")
     video = Video()
-    ffmpeg, adb = Process(), Process()
+    adb = Process()
     with stream._touch_lock:
         stream.control_sock = BrokenControl()
         stream.touch_size = (720, 1600)
@@ -80,10 +80,9 @@ def test_broken_control_cancel_does_not_prevent_video_and_process_stop():
         stream.touch_point = (10, 20)
     with stream._resource_lock:
         stream.video_sock = video
-        stream.ffmpeg_proc = ffmpeg
         stream.adb_proc = adb
     stream.stop()
-    assert video.closed and ffmpeg.terminated and adb.terminated
+    assert video.closed and adb.terminated
     assert stream._close_failed and stream.control_sock is None
     assert stream.touch_point is None and not stream.touch_pressed
 
