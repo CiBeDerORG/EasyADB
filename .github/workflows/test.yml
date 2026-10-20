@@ -39,6 +39,7 @@ jobs:
           node tests/m2_group_contract.cjs
           node tests/m2_batch_connect.cjs
           node tests/device_connect_order_contract.cjs
+          node tests/progressive_connect_contract.cjs
           node tests/m2_player_contract.cjs
           node tests/m2_webrtc_contract.cjs
           node tests/m2_traffic_meter.cjs
