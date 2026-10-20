@@ -107,7 +107,18 @@ def test_all_stream_paths_share_server_owned_secret():
     app=Path("server/app.py").read_text()
     client=Path("web/m2-multi.js").read_text()
     assert "store.get_unlock_secret(device_id)" in app
-    assert "await asyncio.to_thread(automatic_unlock, stream, unlock_secret)" in app
+    assert "await asyncio.to_thread(automatic_unlock, stream, password)" in app
+    assert '"wake", "unlock", "heartbeat", "webrtc_offer"' in app
+    assert 'store.get_unlock_secret(device_id)' in app
+    assert 'set(message) != {"type", "session_id"}' in app
+    assert '"status": "unconfigured"' in app
+    assert '"status": "busy"' in app
+    assert '"source": "manual"' in app
+    assert "manual_secret = store.get_unlock_secret(device_id)" in app
+    assert "asyncio.create_task(run_unlock_attempt(manual_secret, \"manual\"))" in app
+    assert "requestUnlock(card)" in client
+    assert "JSON.stringify({type:'unlock',session_id:card.session})" in client
+    assert "password" not in client[client.index('requestUnlock(card){'):client.index('sendInput(card,type,body){')].replace('plaintext, credential ID or user input','')
     assert "payload.screen_off=card.screenOff" in client
     assert "get_unlock_secret" not in client
     assert "unlock_secret" not in client
