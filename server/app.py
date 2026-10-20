@@ -1298,6 +1298,11 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             except queue.Empty:
                 continue
             if kind == "init":
+                # Publish control readiness BEFORE exposing init to the browser.
+                # Otherwise a fast auto-control/unlock request races with this
+                # flag and receives a spurious "not ready" rejection.
+                if payload.get("control_available"):
+                    touch_ready.set()
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
                     "player": VIDEO_ENGINE,
@@ -1305,7 +1310,6 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                     "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
-                    touch_ready.set()
                     if unlock_secret and unlock_task is None and not experiment:
                         await websocket.send_json({
                             "type": "unlock_notice", "session_id": stream.session_id,
