@@ -277,7 +277,7 @@ body.video-fullscreen-active .group-fab,body.video-fullscreen-active .group-log-
  <section class="panel inventory-panel" id="inventoryPanel" aria-label="设备管理" inert>
   <div class="heading"><div><div class="inventory-title-row"><h2>设备管理</h2>
     <div class="inventory-auth"><input id="token" type="password" autocomplete="off" aria-label="访问密钥" placeholder="访问密钥（EASYADB_TOKEN）"><button id="load" type="button">加载/刷新设备</button></div></div>
-    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多四路，单台也可独立开启画面。临时 IP 保存为第三条线路，三条线路共用 ADB 端口；切换 IP 时主动连接一次，不自动回退。</p>
+    <p class="hint">左侧「选择」用于全部批量操作；投屏仅启动所选且已连接设备，最多20路，可从1路逐台追加，单台也可独立开启画面。临时 IP 保存为第三条线路，三条线路共用 ADB 端口；切换 IP 时主动连接一次，不自动回退。</p>
     <label class="inventory-opacity-setting" for="inventoryOpacity">抽屉透明度
      <input id="inventoryOpacity" type="range" min="0" max="60" step="5" value="20" aria-label="设备管理抽屉透明度">
      <output id="inventoryOpacityValue" for="inventoryOpacity">20%</output>
