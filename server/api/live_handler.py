@@ -30,6 +30,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     store = source.store
     manager = source.manager
     live_registry = source.live_registry
+    session_manager = source.session_manager
     display_lab = source.display_lab
     LiveVideo = source.LiveVideo
     resolve_live_quality = source.resolve_live_quality
@@ -177,7 +178,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     candidate = LiveVideo(serial, profile=profile, **options)
                 if candidate is None:
                     pass
-                elif not live_registry.reserve(device_id, candidate):
+                elif not session_manager.reserve(device_id, candidate):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
@@ -190,13 +191,14 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         try:
                             stream.start()
                         except (RuntimeError, OSError):
-                            live_registry.release(device_id, candidate)
+                            session_manager.complete(device_id, candidate, clean=True)
                             stream = None
                             error = "视频会话未能启动，请稍后重试"
 
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
+        session_manager.starting(device_id, stream)
         if experiment:
             display_lab._log(device_id, {"new": "A1", "new_settings": "A2",
                                 "new_resolution": "实验性分辨率", "display": "B3"}[experiment["mode"]],
@@ -246,6 +248,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 while True:
                     raw = await websocket.receive_text()
                     if raw == "stop":
+                        session_manager.stopping(device_id, stream, reason="manual")
                         manual_stop = True
                         break
                     if len(raw) > 32768:
@@ -517,7 +520,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             if now >= next_diagnostic and not stream.finished.is_set():
                 await asyncio.wait_for(websocket.send_json({
                     "type": "diagnostic", "session_id": stream.session_id,
-                    **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
+                    **stream.diagnostics(),
+                    "session_phase": (session_manager.snapshot(device_id, stream) or {}).get("phase"),
+                    "ws_video_bytes": ws_video_bytes,
                     "ws_video_chunks": ws_video_chunks,
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
                         if getattr(stream, "webrtc_track", None) is not None else None),
@@ -546,6 +551,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             except queue.Empty:
                 continue
             if kind == "init":
+                session_manager.running(device_id, stream)
                 # Publish control readiness BEFORE exposing init to the browser.
                 # Otherwise a fast auto-control/unlock request races with this
                 # flag and receives a spurious "not ready" rejection.
@@ -602,6 +608,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             watchdog.cancel()
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
+            session_manager.cleaning(device_id, stream)
             await asyncio.to_thread(stream.stop)
             if unlock_task:
                 unlock_task.cancel()
@@ -633,7 +640,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             if live_registry.is_cleaned(stream):
                 # Ended(cleanup_complete=true) only after all session-owned
                 # video/control/ADB resources were verifiably released.
-                live_registry.release(device_id, stream)
+                session_manager.complete(device_id, stream, clean=True)
                 if manual_stop:
                     try:
                         await asyncio.wait_for(websocket.send_json({
@@ -643,6 +650,8 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
                         pass
             else:
+                session_manager.complete(device_id, stream, clean=False,
+                    reason="worker or WebRTC peer cleanup was not verified")
                 # Fail closed: registry continues to reserve a worker whose
                 # cleanup has not finished. reserve() retires it once finished.
                 try:

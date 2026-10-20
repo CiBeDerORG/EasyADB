@@ -52,6 +52,7 @@ from .api import groups as group_routes, devices as device_routes, lab as lab_ro
 from .api.live_handler import handle_live_video
 from .api import lab_handlers, screenshots, legacy_handlers
 from .services.live_coordination import confirm_adb_loss, close_webrtc_peer
+from .services.session_manager import SessionManager
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
@@ -80,6 +81,7 @@ store = runtime.store
 discovery_client = runtime.discovery_client
 manager = runtime.manager
 live_registry = runtime.live_registry
+session_manager = SessionManager(lambda: live_registry)
 display_lab = runtime.display_lab
 
 # Only active, user-started WebSocket sessions have a watchdog. The client
@@ -375,7 +377,10 @@ def m2_video_engine():
 
 
 async def _close_webrtc_peer(pc, stream, device_id, registry):
-    return await close_webrtc_peer(pc, stream, device_id, registry)
+    result = await close_webrtc_peer(pc, stream, device_id, registry)
+    if result:
+        session_manager.late_cleanup(device_id, stream)
+    return result
 
 
 async def m2_live_video(websocket: WebSocket, device_id: str):
