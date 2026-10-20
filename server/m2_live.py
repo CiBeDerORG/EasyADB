@@ -828,8 +828,11 @@ class LiveVideo:
 
 
 class LiveRegistry:
-    """At most four explicit sessions, one per logical device; no auto startup."""
-    MAX_LIVE_SESSIONS = 4
+    """Up to twenty explicit sessions, one per logical device; no auto startup.
+
+    Stopping/dirty workers keep their slot until cleanup is verified.
+    """
+    MAX_LIVE_SESSIONS = 20
     def __init__(self):
         self.lock = threading.Lock()
         self.sessions = {}
