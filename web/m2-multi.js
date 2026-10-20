@@ -68,7 +68,7 @@ class MultiView{
   this.onProjectionStarted=onProjectionStarted;this.onOpenManagement=onOpenManagement;
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
-  this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
+  this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;this.mappingEnabled=false;
   if(typeof root.fetch==='function'){
    this.engineReady=false;
    root.fetch('/api/m2/video-engine',{cache:'no-store'})
@@ -76,6 +76,7 @@ class MultiView{
     .then(data=>{
      if(!['mse','webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
      this.videoEngine=data.engine;this.engineSupported=data.implemented===true;
+     this.mappingEnabled=data.mapping_enabled===true;
      this.engineReady=true;
      this.status('当前视频引擎：'+({mse:'FFmpeg + MSE',webrtc:'WebRTC',
       webcodecs:'WebCodecs（尚未实现）'})[data.engine]+
@@ -366,12 +367,16 @@ class MultiView{
    touch:null,player:null,video:null,meter:new root.EasyADBTraffic.Meter(performance.now()),
    metrics:new root.EasyADBMetrics.QualityMeter(performance.now()),lastInput:false,
    startSettled:false,nextLaunch,adbCheckMs:null,frameLastAt:null,frameCount:0,
-   permissionWarningShown:false,
+   permissionWarningShown:false,mapping:null,mappingBusy:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name+(experiment?.mode==='new_resolution'?' · 实验性虚拟屏幕':
   experiment?' · 电脑模式实验':'')),
    make('span','muted',d.selected_serial+(experiment?.mode==='display'?' · Display '+experiment.display_id:'')));
+  const mappingLink=make('a','muted','映射中 · 打开');
+  mappingLink.hidden=true;mappingLink.target='_blank';mappingLink.rel='noopener noreferrer';
+  mappingLink.title='打开独立映射页面（M1 仅限可信网络）';
+  header.append(mappingLink);
   const screen=make('div','multi-screen');
   const video=make('video','multi-video');video.autoplay=true;video.muted=true;
   video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
@@ -429,8 +434,9 @@ class MultiView{
   const logButton=icon('fab-up','☷','查看日志');
   const wakeButton=icon('fab-up-wake','☀','唤醒手机屏幕');
   const reconnectButton=icon('fab-up-reconnect','↻','重连此路实时画面');
+  const mappingButton=icon('fab-up-mapping','⇱','开启画面映射（M1 测试）');
   const closeStreamButton=icon('fab-up-stop','✕','关闭当前投屏并展开设备管理');
-  wakeButton.disabled=true;reconnectButton.disabled=true;closeStreamButton.disabled=true;
+  wakeButton.disabled=true;reconnectButton.disabled=true;closeStreamButton.disabled=true;mappingButton.disabled=true;
   const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
   const fullscreenButton=icon('fab-fullscreen','⛶','全屏展示');
@@ -466,10 +472,10 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,toggle,textButton,fullscreenButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,mappingButton,closeStreamButton,toggle,textButton,fullscreenButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
-   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,closeStreamButton,fullscreenButton,
+   qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,mappingButton,mappingLink,closeStreamButton,fullscreenButton,
    logPanel,logClose,toggle,stop,
    textButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
@@ -529,6 +535,7 @@ class MultiView{
   logButton.addEventListener('pointerdown',resetMenuTimer);
   wakeButton.addEventListener('pointerdown',resetMenuTimer);
   reconnectButton.addEventListener('pointerdown',resetMenuTimer);
+  mappingButton.addEventListener('pointerdown',resetMenuTimer);
   closeStreamButton.addEventListener('pointerdown',resetMenuTimer);
   fullscreenButton.addEventListener('pointerdown',resetMenuTimer);
   card.refreshMenu=()=>{
@@ -564,6 +571,10 @@ class MultiView{
     card.ws.readyState===WebSocket.OPEN&&card.state!=='stopping';
    wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
    reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
+   mappingButton.disabled=!sessionReady||!card.ready||card.engine!=='webrtc'||!this.mappingEnabled||card.mappingBusy;
+   mappingButton.textContent=card.mapping?'⇲':'⇱';
+   mappingButton.title=card.mapping?'关闭画面映射':'开启画面映射（M1 仅限可信网络）';
+   mappingButton.setAttribute('aria-label',mappingButton.title);
    closeStreamButton.disabled=!sessionReady||card.reconnectRequested;
    const canToggle=!card.closed&&card.ready&&!card.permissionWarningShown&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
@@ -813,6 +824,35 @@ class MultiView{
    card.wakePending=true;refresh();resetMenuTimer();
    try{card.ws.send(JSON.stringify({type:'wake',session_id:card.session}));}
    catch(e){card.wakePending=false;mark('唤醒请求发送失败：'+e.message,true);refresh();}
+  });
+  mappingButton.addEventListener('click',async()=>{
+   if(mappingButton.disabled||card.mappingBusy||card.closed||!card.session)return;
+   card.mappingBusy=true;refresh();resetMenuTimer();
+   const path='/api/devices/'+encodeURIComponent(card.id)+'/m2/mapping';
+   try{
+    const response=await root.fetch(path,{
+     method:card.mapping?'DELETE':'POST',
+     headers:{'X-EasyADB-Token':this.getToken(),'Content-Type':'application/json'},
+     ...(card.mapping?{}:{body:JSON.stringify({session_id:card.session})})
+    });
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||'映射操作失败');
+    if(card.closed)return;
+    if(card.mapping){
+     card.mapping=null;mappingLink.hidden=true;mappingLink.removeAttribute('href');
+     mark('画面映射已关闭，内网投屏不受影响');
+    }else{
+     const base=data.public_url||location.protocol+'//'+location.hostname+':'+data.port;
+     const url=new URL(base);
+     url.pathname=url.pathname.replace(/\\/$/,'')+'/m/'+encodeURIComponent(data.mapping_id);
+     url.search='';url.hash='';
+     card.mapping=url.href;
+     mappingLink.href=card.mapping;mappingLink.hidden=false;
+     mark('画面映射已开启（M1 仅限可信网络）：'+card.mapping);
+     this.status(card.name+'：画面映射已开启，点击卡片标题旁“映射中 · 打开”访问。');
+    }
+   }catch(error){if(!card.closed)mark('画面映射操作失败：'+error.message,true);}
+   finally{card.mappingBusy=false;if(!card.closed)refresh();}
   });
   reconnectButton.addEventListener('click',()=>{
    if(reconnectButton.disabled)return;
