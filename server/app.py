@@ -38,6 +38,8 @@ from .core.lifecycle import managed_resources
 from .core.exceptions import DomainError
 from .services.group_discovery import run_group_scan
 from .services.device_service import create_device_record, update_device_record, delete_device_record
+from .services.pair_service import pair_at_record, pair_existing_record
+from .services.preflight_service import preflight_record, video_probe_record
 from .services.device_control import (unlock_state_record, set_unlock_record, set_temporary_record,
                                       select_route_record, probe_device_record)
 from .services.group_service import (create_group_record, update_group_record, delete_group_record,
@@ -133,14 +135,10 @@ def capture(serial):
 
 
 def pair_at(ip, port, code):
-    dest = address(ip, port)
-    if not re.fullmatch(r"\d{6}", code):
-        raise HTTPException(400, "配对码应为手机显示的 6 位数字")
-    result = adb("pair", dest, timeout=20, input_text=code + "\n")
-    if result.returncode != 0 or "Successfully paired" not in result.stdout:
-        raise HTTPException(502, "ADB 配对失败，请检查配对端口、配对码和网络")
-    return {"message": "配对成功，请使用无线调试主页的连接端口继续连接"}
-
+    try:
+        return pair_at_record(ip, port, code, validate_address=address, adb=adb)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def pair(target: PairTarget):
     # Original first-time pairing from the add-device form remains compatible.
@@ -148,19 +146,14 @@ def pair(target: PairTarget):
 
 
 def pair_existing_device(device_id: str, target: PairExisting):
-    # Bind pairing to the database-selected route: do not accept a client-side
-    # IP override or switch routes, and NEVER connect automatically after pair.
-    with device_lock(manager, device_id):
-        device = get_device(device_id)
-        serial = selected_address(device)
-        if not serial:
-            raise HTTPException(409, "当前连接地址不可用，请先选择有效的 IP")
-        if target.selected_serial != serial:
-            raise HTTPException(409, "所选连接地址已发生变化，请重新加载设备后再配对")
-        ip = serial.rsplit(":", 1)[0]
-        result = pair_at(ip, target.port, target.code)
-        return {**result, "paired_ip": ip, "selected_route": device["selected_route"]}
-
+    try:
+        return pair_existing_record(
+            device_id, selected_serial=target.selected_serial,
+            port=target.port, code=target.code, store=store, manager=manager,
+            pair_at=pair_at,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def list_devices():
     return [manager.snapshot(d) for d in store.list()]
@@ -315,28 +308,24 @@ def refresh_device(device_id: str):
         raise HTTPException(exc.status_code, exc.detail) from None
 
 def m2_device_preflight(device_id: str):
-    """User-initiated M2-00 capability check; no connect or scrcpy process."""
-    with device_lock(manager, device_id):
-        device = get_device(device_id)
-        serial = selected_address(device)
-        if not serial or manager.serial_for(device) != serial or not is_connected(serial):
-            raise HTTPException(409, "请先手动连接当前选择的设备，再执行 M2 预检")
-        return inspect_device(serial, adb)
-
+    """User-initiated capability check; no connect or scrcpy process."""
+    try:
+        return preflight_record(
+            device_id, store=store, manager=manager,
+            is_connected=is_connected, inspect=inspect_device, adb=adb,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def m2_video_probe(device_id: str, payload: VideoProbeInput):
-    """Opt-in, bounded, non-recording experiment: phone encoder -> FNOS only."""
-    with device_lock(manager, device_id):
-        device = get_device(device_id)
-        serial = selected_address(device)
-        if not serial or manager.serial_for(device) != serial or not is_connected(serial):
-            raise HTTPException(409, "请先手动连接当前选择的地址，再启动视频链路实验")
-        try:
-            return probe_video(serial, profile=payload.profile)
-        except VideoProbeError as exc:
-            raise HTTPException(502, str(exc)) from None
-
-
+    """Opt-in encoder experiment: phone -> FNOS only."""
+    try:
+        return video_probe_record(
+            device_id, payload.profile, store=store, manager=manager,
+            is_connected=is_connected, probe=probe_video,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def lab_connected_serial(device_id):
     return lab_handlers.lab_connected_serial(sys.modules[__name__], device_id)
