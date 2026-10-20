@@ -32,6 +32,12 @@ assert(first.assignSession('session-one'));
 assert(first.assignSession('session-one'));
 assert.equal(first.assignSession('session-two'), false);
 assert.equal(first.session, 'session-one');
+const originalMeter = { totalBytes: 12 };
+const originalMetrics = { samples: [{ fps: 24 }] };
+assert(first.attachDiagnostics(originalMeter, originalMetrics));
+assert.equal(first.attachDiagnostics({}, {}), false, 'one metrics owner per card');
+assert.equal(first.meter, originalMeter);
+assert.equal(first.metrics, originalMetrics);
 
 const destroyed = [];
 const socket = (name) => ({
@@ -78,6 +84,10 @@ assert.equal(
 timers.get(currentTimer)(); // Late timeout from an old session has no effect.
 assert.equal(next.closed, false);
 assert.equal(next.session, null);
+const nextMeter = { totalBytes: 0 };
+const nextMetrics = { samples: [] };
+assert(next.attachDiagnostics(nextMeter, nextMetrics));
+assert.notEqual(first.metrics, next.metrics, 'diagnostics must not be shared across sessions');
 let frameCanceled = null;
 assert(
   first.dispose({
@@ -95,6 +105,8 @@ assert.equal(first.ws, null);
 assert.equal(first.player, null);
 assert.equal(first.touch, null);
 assert.equal(first.stopTimer, null);
+assert.equal(first.metrics, originalMetrics, 'summary remains readable only until old card is released');
+assert.equal(next.metrics, nextMetrics, 'new session metrics are untouched');
 assert.equal(first.dispose({ clean: true, openSocketState: 1 }), false);
 assert.equal(next.closed, false);
 
@@ -110,6 +122,7 @@ const multi = readFileSync(new URL('../web/m2-multi.js', import.meta.url), 'utf8
 const main = readFileSync(new URL('../web/app/main.js', import.meta.url), 'utf8');
 assert.match(multi, /createSessionController=event\.detail\?\.createLiveSessionController/);
 assert.match(multi, /card\.sessionController=controller/);
+assert.match(multi, /controller\.attachDiagnostics\(card\.meter,card\.metrics\)/);
 assert.match(multi, /card\.sessionController\.dispose\(/);
 assert.match(multi, /this\.cards\.get\(card\.id\)!==card/);
 assert.match(main, /createLiveSessionController,/);

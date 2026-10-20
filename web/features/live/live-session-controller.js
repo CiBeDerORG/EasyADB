@@ -14,6 +14,8 @@ export class LiveSessionController {
     this.ws = null;
     this.player = null;
     this.touch = null;
+    this.meter = null;
+    this.metrics = null;
     this.closed = false;
     this.stopTimer = null;
     this.frameCallback = undefined;
@@ -59,6 +61,13 @@ export class LiveSessionController {
     return true;
   }
 
+  attachDiagnostics(meter, metrics) {
+    if (this.disposed || this.meter || this.metrics || !meter || !metrics) return false;
+    this.meter = meter;
+    this.metrics = metrics;
+    return true;
+  }
+
   assignSession(sessionId) {
     if (!this.active || typeof sessionId !== 'string' || !sessionId) return false;
     if (this.session && this.session !== sessionId) return false;
@@ -100,6 +109,8 @@ export class LiveSessionController {
       video.cancelVideoFrameCallback(this.frameCallback);
       this.frameCallback = undefined;
     }
+    // Retain immutable post-close metric snapshots for MultiView history.
+    // All frame and diagnostic callbacks are disabled once closed.
     if (this.player) {
       this.player.destroy();
       this.player = null;

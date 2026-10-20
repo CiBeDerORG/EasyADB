@@ -1,5 +1,6 @@
-/* M2-06: one-page, multi-phone viewing. Every card owns its player, socket,
- * traffic, metrics, touch and current session. No cross-browser takeover,
+/* M2 compatibility view and batch coordinator. The V4 LiveSessionController
+ * owns each production card's media, socket, touch and diagnostic resources.
+ * No cross-browser takeover,
  * background reconnect, global keyboard capture or automatic ADB connect.
  */
 (function(root){
@@ -525,9 +526,10 @@ class MultiView{
     scheduleTimeout:(fn,ms)=>root.setTimeout(fn,ms),
     cancelTimeout:id=>root.clearTimeout(id)
    });
+   if(!controller.attachDiagnostics(card.meter,card.metrics))throw Error('本路诊断资源绑定失败');
    card.sessionController=controller;
    // The old card fields are compatibility accessors, not duplicate owners.
-   for(const key of ['ws','session','player','touch','closed','stopTimer','frameCallback']){
+   for(const key of ['ws','session','player','touch','meter','metrics','closed','stopTimer','frameCallback']){
     Object.defineProperty(card,key,{
      configurable:true,enumerable:true,
      get:()=>controller[key],
