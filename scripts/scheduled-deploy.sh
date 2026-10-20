@@ -57,8 +57,8 @@ parse_interval() {
 }
 valid_branch() {
   case "$1" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery) ;;
-    *) echo 'ERROR: scheduled branch must be M2, display-mode-lab or M3.' >&2; exit 2 ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance) ;;
+    *) echo 'ERROR: unsupported scheduled branch; use an explicitly allowed EasyADB branch.' >&2; exit 2 ;;
   esac
 }
 read_config() {
@@ -71,7 +71,7 @@ read_config() {
   case "$GIT_UID" in ''|*[!0-9]*) return 1 ;; esac
   case "$MODE" in proxy|direct) ;; *) return 1 ;; esac
   case "$BRANCH" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery) ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance) ;;
     *) return 1 ;;
   esac
   [ "$INTERVAL" -ge 1 ] && [ "$INTERVAL" -le 10080 ]

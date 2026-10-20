@@ -160,3 +160,58 @@ def test_changed_tree_skips_rebuild_then_deploys_and_retries_failure(tmp_path):
     assert retried.returncode == 0, retried.stdout + retried.stderr
     assert marker.read_text().strip() != after
     assert (tmp_path / "docker.log").read_text().count("build --progress=plain") == 3
+
+
+@pytest.mark.parametrize("branch", (
+    "feat/m2-web-control",
+    "feat/display-mode-lab",
+    "feat/m3-openwrt-discovery",
+    "refactor/foundation-v1",
+    "refactor/session-v2",
+    "refactor/v2-session-governance",
+))
+def test_scheduler_start_read_config_and_due_run_agree_on_allowed_branch(tmp_path, branch):
+    project, env, _ = setup_project(tmp_path)
+    env["EASYADB_SOURCE_BRANCH"] = branch
+    started = invoke(project, env, "scheduled-deploy.sh", "start", "15m", "--no-proxy")
+    assert started.returncode == 0, started.stdout + started.stderr
+    status = invoke(project, env, "scheduled-deploy.sh", "status")
+    assert f"Branch: {branch}" in status.stdout
+    config = (project / "data/storage/.easyadb-schedule").read_text().splitlines()
+    assert config == ["15", "direct", str(os.getuid()), branch]
+
+    # Force a scheduled tick, with a fake builder (no Git/Docker deployment).
+    (project / "scripts/build-with-mihomo.sh").write_text(
+        '#!/bin/sh\nprintf "%s|%s\\n" "$EASYADB_SOURCE_BRANCH" "$*" >> "$EASYADB_TEST_LOG"\n'
+    )
+    (project / "data/storage/.easyadb-schedule-last-check").write_text("0\n")
+    due = invoke(project, env, "scheduled-deploy.sh", "run-locked")
+    assert due.returncode == 0, due.stdout + due.stderr
+    assert (tmp_path / "docker.log").read_text().splitlines() == [
+        f"{branch}|--if-changed --no-proxy"
+    ]
+
+
+@pytest.mark.parametrize("branch", ("feat/m4-screen-mapping-m1", "experimental/unknown"))
+def test_scheduler_rejects_m4_and_unknown_branch_without_cron_mutation(tmp_path, branch):
+    project, env, _ = setup_project(tmp_path)
+    env["EASYADB_SOURCE_BRANCH"] = branch
+    rejected = invoke(project, env, "scheduled-deploy.sh", "start", "15m")
+    assert rejected.returncode == 2
+    assert "unsupported scheduled branch" in rejected.stderr
+    assert not (tmp_path / "cron.txt").exists()
+    assert not (project / "data/storage/.easyadb-schedule").exists()
+
+
+def test_scheduler_rejects_invalid_persisted_branch_before_running_builder(tmp_path):
+    project, env, _ = setup_project(tmp_path)
+    started = invoke(project, env, "scheduled-deploy.sh", "start", "15m", "--no-proxy")
+    assert started.returncode == 0, started.stdout + started.stderr
+    config_path = project / "data/storage/.easyadb-schedule"
+    config = config_path.read_text().splitlines()
+    config[3] = "feat/m4-screen-mapping-m1"
+    config_path.write_text("\n".join(config) + "\n")
+    rejected = invoke(project, env, "scheduled-deploy.sh", "run-locked")
+    assert rejected.returncode == 1
+    assert "invalid scheduled deployment state" in rejected.stderr
+    assert not (tmp_path / "docker.log").exists()
