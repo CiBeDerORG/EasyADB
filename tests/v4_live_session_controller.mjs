@@ -105,7 +105,11 @@ assert.equal(first.ws, null);
 assert.equal(first.player, null);
 assert.equal(first.touch, null);
 assert.equal(first.stopTimer, null);
-assert.equal(first.metrics, originalMetrics, 'summary remains readable only until old card is released');
+assert.equal(
+  first.metrics,
+  originalMetrics,
+  'summary remains readable only until old card is released',
+);
 assert.equal(next.metrics, nextMetrics, 'new session metrics are untouched');
 assert.equal(first.dispose({ clean: true, openSocketState: 1 }), false);
 assert.equal(next.closed, false);
