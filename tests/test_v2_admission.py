@@ -5,6 +5,8 @@ import threading
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+import pytest
 
 from server.devices import DeviceManager
 from server.m2_live import LiveRegistry
@@ -75,8 +77,11 @@ def test_runtime_admission_limit_released_after_verified_stop(monkeypatch, tmp_p
                 start(second, devices[1])
                 error = next_kind(second, {"error"})
                 assert error["code"] == "start_budget_full"
-                assert devices[1]["id"] not in app.live_registry.sessions or (
-                    not app.live_registry.is_cleaned(app.live_registry.sessions[devices[1]["id"]]))
+                # The error event precedes async stop/cleanup. Wait for its
+                # close frame rather than racing the releasing coroutine.
+                with pytest.raises(WebSocketDisconnect):
+                    second.receive_json()
+            assert devices[1]["id"] not in app.live_registry.sessions
             first.send_text("stop")
             done = next_kind(first, {"ended", "error"})
             assert done["type"] == "ended" and done["cleanup_complete"]
