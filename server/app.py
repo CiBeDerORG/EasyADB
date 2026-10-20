@@ -36,6 +36,7 @@ from .core.config import load_settings
 from .core.runtime import build_runtime
 from .core.exceptions import DomainError
 from .services.group_discovery import run_group_scan
+from .services.device_service import create_device_record, update_device_record, delete_device_record
 from .api.static import router as static_router
 from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
@@ -356,41 +357,23 @@ def delete_group(group_name: str):
         raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
 
 def create_device(payload: DeviceInput):
-    with membership_lock():
-        data = clean_input(payload)
-        try:
-            device = store.create(data)
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from None
-        return manager.snapshot(device)
-
+    try:
+        return create_device_record(clean_input(payload), store=store, manager=manager)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def refresh_devices():
     return manager.poll_all()
 
 
 def update_device(device_id: str, payload: DeviceInput):
-    with membership_lock():
-        with device_lock(manager, device_id):
-            if display_lab.has_pending(device_id):
-                raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-            original = get_device(device_id)
-            data = clean_input(payload)
-            try:
-                updated = store.update(device_id, data)
-            except sqlite3.IntegrityError:
-                raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
-            except ValueError as exc:
-                raise HTTPException(409, str(exc)) from None
-            if not updated:
-                raise HTTPException(404, "找不到该设备")
-            if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
-                live_registry.stop_for(device_id)
-                manager.clear(device_id)
-            return manager.snapshot(updated)
-
+    try:
+        return update_device_record(
+            device_id, lambda: clean_input(payload), store=store, manager=manager,
+            display_lab=display_lab, live_registry=live_registry,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def unlock_state(device_id: str):
     get_device(device_id)
@@ -414,18 +397,13 @@ def set_unlock_state(device_id: str, payload: UnlockInput):
 
 
 def delete_device(device_id: str):
-    with membership_lock():
-        with device_lock(manager, device_id):
-            if display_lab.has_pending(device_id):
-                raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-            get_device(device_id)
-            if not store.delete(device_id):
-                raise HTTPException(404, "找不到该设备")
-            live_registry.stop_for(device_id)
-            manager.clear(device_id)
-            # Deliberately don't adb disconnect: other clients may be using the target.
-            return {"deleted": True}
-
+    try:
+        return delete_device_record(
+            device_id, store=store, manager=manager,
+            display_lab=display_lab, live_registry=live_registry,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
