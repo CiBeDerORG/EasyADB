@@ -52,7 +52,9 @@ class RpcdDiscovery:
     def __init__(self, transport=None):
         self.transport = transport
         self.lock = threading.RLock()
-        self.sessions = {}
+        # Never cache RPCD sessions across user-triggered scans. uhttpd may
+        # return -32002 rather than -32001 when a prior SID has disappeared,
+        # because its session.access check simply answers "access: false".
 
     def _call(self, url, session, method, params):
         payload = {"jsonrpc": "2.0", "id": 1, "method": "call",
@@ -119,9 +121,10 @@ class RpcdDiscovery:
         url = validate_url(url)
         if not username or not password:
             raise DiscoveryError("请先在分组配置专用账号及密钥")
-        cache_key = (url, username, password)
         with self.lock:
-            session = self.sessions.get(cache_key)
+            # Each explicit scan/test authenticates afresh. A prior router reload,
+            # session eviction or ACL reload cannot poison subsequent clicks.
+            session = None
             for attempt in range(2):
                 if not session:
                     code, result = self._call(url, "00000000000000000000000000000000",
@@ -129,14 +132,13 @@ class RpcdDiscovery:
                     session = result.get("ubus_rpc_session")
                     if code != 0 or not isinstance(session, str) or len(session) != 32:
                         raise DiscoveryError("RPCD 登录失败，请检查专用账号和密钥")
-                    self.sessions[cache_key] = session
                 try:
                     code, result = self._call(url, session, "scan",
                                               {"command": SCANNER, "params": ["scan"]})
                 except RpcdSessionExpired:
-                    # Only uhttpd's explicit -32001 means the cached session
-                    # disappeared. Retry login at most once, never on ACL denial.
-                    self.sessions.pop(cache_key, None)
+                    # Only an explicit -32001 can retry this scan's login once.
+                    # A fresh login is used per click, and real ACL denials are
+                    # never automatically retried.
                     session = None
                     if attempt == 0:
                         continue

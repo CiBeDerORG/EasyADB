@@ -57,3 +57,7 @@ EasyADB 不再将 JSON-RPC `error` 统一归为「RPCD 返回协议错误」：�
 已按 OpenWrt `uhttpd/ubus.c` 和 `rpcd/file.c` 上游流程复核：浏览器、NAS 通过 HTTP `/ubus` 发出 `file.exec` 时，uhttpd 首先调用 `session.access(object=file,function=exec)`，要求 `read.ubus.file=["exec"]`；接下来 rpcd-mod-file 对规范化的固定可执行文件及拼接的参数 `/usr/libexec/luci-avahi-scan scan` 再执行 `session_access(...,"file",...,"exec")`，要求 NAS 角色 `read.file` 只允许这一个命令。v0.6.1 均具备，不能仅因为管理员通过本地 LuCI 扫描成功就认定 NAS 鉴权成功。
 
 EasyADB 的会话重试只针对 HTTP JSON-RPC `-32001 Session not found`，最多重新登录一次。HTTP `-32002` 或 ubus `result:[6]` 明确是权限不足，不得通过反复重新登录掩盖 ACL 问题。单纯的「测试授权」即使没有配置分组的内网 IP 前缀，也允许登录并做一次不入库扫描；只有正式更新设备端口前才需要内网 IP 前缀。测试为模拟 HTTP ubus，最终仍需实机用专用账号验证。
+
+## 多次点击「立即发现 ADB」的 RPCD Session 修复
+
+旧版 NAS 客户端将账号与密码对应的 RPCD Session 缓存在内存中，第二次扫描会直接复用。OpenWrt uhttpd 在执行 `file.exec` 前调用 `session.access`；旧 SID 失效时，检查结果也可能表现为 `-32002 Access denied` 而非 `-32001 Session not found`，从而使“第一次成功、第二次失败”被误诊为静态 ACL 缺失。现在每次**用户主动**点击授权测试或立即发现都独立调用 `session.login`，仅在本次请求内使用 Session；不缓存密码键或 SID，也没有后台扫描。仅本轮显式 `-32001` 可重登一次；重新登录后仍为 `-32002` 则确实需要核对运行时 ACL，绝不放宽授权或盲目重试。

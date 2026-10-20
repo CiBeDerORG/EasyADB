@@ -67,7 +67,7 @@ def test_rpcd_login_scoped_scan_session_retry_and_error():
     assert rpcd.scan(URL, "easyadb", SECRET) == response
     assert [d["params"][2] for _, d in calls] == ["login", "exec", "login", "exec"]
     assert rpcd.scan(URL, "easyadb", SECRET) == response
-    assert [d["params"][2] for _, d in calls][-1] == "exec"
+    assert [d["params"][2] for _, d in calls] == ["login", "exec", "login", "exec", "login", "exec"]
 
     # Status 6 means permission denied, NOT expiration; never re-login.
     denied_calls = []
@@ -98,6 +98,35 @@ def test_rpcd_login_scoped_scan_session_retry_and_error():
         return {"result": [0, {"code": 1, "stderr": "permission denied"}]}
     with pytest.raises(DiscoveryError, match="permission denied"):
         RpcdDiscovery(denied).scan(URL, "easyadb", SECRET)
+
+
+def test_two_explicit_scans_use_independent_sessions_even_when_old_sid_returns_32002():
+    # In uhttpd, an invalid SID can fail session.access as -32002 rather
+    # than -32001. Do not reuse it on the user's next "discover now" click.
+    calls = []
+    latest = [None]
+    serial = [0]
+    expected = devices(("192.168.10.206", 37819))
+
+    def transport(url, payload):
+        method = payload["params"][2]
+        calls.append(method)
+        if method == "login":
+            serial[0] += 1
+            latest[0] = str(serial[0]).zfill(32)
+            return {"result": [0, {"ubus_rpc_session": latest[0]}]}
+        assert method == "exec"
+        if payload["params"][0] != latest[0]:
+            return {"error": {"code": -32002, "message": "Access denied"}}
+        return {"result": [0, {"code": 0, "stdout": json.dumps(expected), "stderr": ""}]}
+
+    rpcd = RpcdDiscovery(transport)
+    assert rpcd.scan(URL, "easyadb", SECRET) == expected
+    # Simulate a session lost due to a router reload, between two clicks.
+    latest[0] = None
+    assert rpcd.scan(URL, "easyadb", SECRET) == expected
+    assert calls == ["login", "exec", "login", "exec"]
+    assert not hasattr(rpcd, "sessions"), "Do not retain plaintext credential keys or stale SIDs"
 
 
 def test_rpcd_http_jsonrpc_errors_identify_gate_and_never_echo_tokens():
