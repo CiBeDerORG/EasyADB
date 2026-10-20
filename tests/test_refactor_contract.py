@@ -106,5 +106,6 @@ def test_m3_auth_and_public_capability_boundary(monkeypatch):
         assert client.get("/api/devices", headers={"X-EasyADB-Token": "invalid"}).status_code == 401
         public = client.get("/api/m2/video-engine")
         assert public.status_code == 200
-        assert set(public.json()) == {"engine", "implemented"}
+        assert set(public.json()) == {"engine", "implemented", "max_starting"}
+        assert 1 <= public.json()["max_starting"] <= 20
         assert "token" not in str(public.json()).lower()

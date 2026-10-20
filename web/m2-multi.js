@@ -77,6 +77,9 @@ class MultiView{
     .then(data=>{
      if(!['webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
      this.videoEngine=data.engine;this.engineSupported=data.implemented===true;
+     if(!Number.isInteger(data.max_starting)||data.max_starting<1||data.max_starting>MAX_DEVICES)
+      throw Error("服务器启动并发配置无效");
+     this.maxStarting=data.max_starting;
      this.engineReady=true;
      this.status('当前视频引擎：'+({webrtc:'WebRTC',
       webcodecs:'WebCodecs（尚未实现）'})[data.engine]+
@@ -823,7 +826,12 @@ class MultiView{
        '｜本路累计 '+root.EasyADBTraffic.size(traffic.totalBytes)+
        '｜本路进程 CPU '+fmt(m.proc_cpu_pct)+'% / RSS '+fmt(m.proc_rss_mib)+' MiB（ADB shell）';
      const age=v=>Number.isFinite(v)?fmt(v/1000,2)+'s':'—';
-     diagnostic.textContent='会话 '+card.session+' / ADB 检查 '+(card.adbCheckMs??'—')+'ms'+
+     const phaseNames={reserved:'预留',starting:'启动中',running:'运行中',
+      stopping:'停止中',cleaning:'清理中',dirty:'清理未确认',released:'已释放'};
+     diagnostic.textContent='会话 '+card.session+' / 状态 '+
+      (phaseNames[m.session_phase]||m.session_phase||'未知')+
+      ' / 启动并发 '+(m.start_budget?.starting??'—')+'/'+
+      (m.start_budget?.max_starting??'—')+' / ADB 检查 '+(card.adbCheckMs??'—')+'ms'+
       ' / 阶段 '+m.stage+' / 已运行 '+age(m.elapsed_ms)+
       '\\n手机编码包 '+(m.phone_packets??'—')+' / 距上包 '+age(m.phone_idle_ms)+
       ' / WebRTC 已取帧 '+(m.webrtc_sent_frames??0)+
