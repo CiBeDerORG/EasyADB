@@ -440,7 +440,7 @@ class MultiView{
   if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
      additions.length>MAX_DEVICES-this.cards.size||
      additions.some(d=>!d||this.isBusyFor(d.id)||!this.isAdbReady(d)||this.checking.has(d.id))){
-   this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多四路）。',true);
+   this.status('请检查目标设备是否已手动连接、当前是否已有会话及剩余投屏名额（最多 '+MAX_DEVICES+' 路）。',true);
    this.updatePicker();return false;
   }
   if(!this.engineReady||!this.engineSupported){this.status('当前视频引擎未就绪或尚未实现。',true);return false;}
@@ -457,7 +457,7 @@ class MultiView{
   // proceeds concurrently. Do not wait for device A's first frame to start B.
   this.launchQueue=batch;
   this.status((isAppend?'正在并发追加 ':'正在并发启动 ')+additions.length+
-   ' 路独立投屏；最多同时四路，已经运行的设备保持原会话与远控。');
+   ' 路独立投屏；最多同时 '+MAX_DEVICES+' 路，已经运行的设备保持原会话与远控。');
   this._launchNext();
   this.updatePicker();
   this.onProjectionStarted?.();
