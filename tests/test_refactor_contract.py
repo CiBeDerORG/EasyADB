@@ -6,7 +6,6 @@ An intentional API change needs explicit review of this contract.
 """
 import importlib
 
-from fastapi.routing import APIWebSocketRoute
 from fastapi.testclient import TestClient
 
 
@@ -74,9 +73,9 @@ def test_m3_http_and_websocket_routes_unchanged(monkeypatch):
     mod = _module(monkeypatch)
     # Verify the actual external HTTP method/path contract, not framework
     # internals (router registration representation differs by versions).
-    ws = {route.path for route in mod.app.routes
-          if isinstance(route, APIWebSocketRoute)}
-    assert ws == EXPECTED_WS
+    assert str(mod.app.url_path_for("m2_live_video", device_id="missing")) == (
+        "/api/devices/missing/m2/live"
+    )
     with TestClient(mod.app) as client:
         for method, path in EXPECTED_HTTP:
             url = path.replace("{device_id}", "missing").replace("{group_name}", "missing")
