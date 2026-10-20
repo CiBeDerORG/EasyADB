@@ -124,6 +124,10 @@ def test_all_stream_paths_share_server_owned_secret():
     assert "unlock_secret" not in client
     assert "readUnlockSettings" in client and "saveUnlockSettings" in client
     assert "unlock_notice" in client
+    init_branch=app[app.index('if kind == "init":'):app.index('elif kind == "screen_power_notice":')]
+    assert init_branch.index("touch_ready.set()") < init_branch.index('"type": "init"'), (
+        "browser init must never precede server control readiness"
+    )
 
 def test_manual_unlock_websocket_uses_current_saved_secret(monkeypatch, tmp_path):
     """Manual retrigger never carries plaintext and can use a newly saved PIN."""
