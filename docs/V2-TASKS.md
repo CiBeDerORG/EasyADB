@@ -18,7 +18,7 @@
 | ID | 优先级 | 状态 | 最小任务与验收条件 |
 | --- | --- | --- | --- |
 | V2-F01 | P0 | [x] | **Git 更新不误切旧分支**：`scripts/update-m2.sh` 识别 V2 治理分支；未知 checkout 明确报错而不切回 M2；定向测试通过。提交 [56aa978](https://github.com/CiBeDerORG/EasyADB/commit/56aa978bf10670eb9a4f56606199f3f32f445183)，[CI #39444098281](https://github.com/CiBeDerORG/EasyADB/actions/runs/39444098281) success。 |
-| V2-F02 | P0 | [ ] | **定时部署分支白名单**：仅修改 `scripts/scheduled-deploy.sh` 与对应定向测试，使 `valid_branch`、`read_config` 一致接纳 V2 工作分支；不允许 M4/未知分支，保留 cron、时间间隔、锁、无变更跳过逻辑。 |
+| V2-F02 | P0 | [x] | **定时部署分支白名单**：`scripts/scheduled-deploy.sh` 的 `valid_branch` 和 `read_config` 一致接纳 V2 治理分支及其他明确允许分支；M4、未知分支与非法历史配置明确拒绝；保留原 cron、间隔、锁及增量部署行为。定向测试覆盖启动/状态/到期执行/拒绝。提交 [223f3c2](https://github.com/CiBeDerORG/EasyADB/commit/223f3c28378ef2a1c28f8c30c280bbf41f5a64b7)，[CI #39445004213](https://github.com/CiBeDerORG/EasyADB/actions/runs/39445004213) success。 |
 | V2-F03 | P0 | [ ] | **构建脚本 WebRTC-only**：`scripts/build-with-mihomo.sh` 未设置引擎时按 WebRTC；遗留 `mse`、未实现的 `webcodecs` 要明确拒绝且不得启动 Docker；保留 Mihomo 与 `--no-proxy` 两条构建方式；加脚本定向回归。 |
 | V2-F04 | P0 | [ ] | **统一运行时 Compose**：审查并规范 `compose.yaml`、`compose.no-proxy.yaml`、`compose.webrtc.yaml` 的实际部署入口，避免任何可被误用的 MSE 默认/bridge 视频运行路径；WebRTC 使用 Host 网络与正确 uvicorn 绑定，构建代理路径仍独立；覆盖代理与直连部署模拟，不直接操作真实 Docker。 |
 | V2-F05 | P1 | [ ] | **启动配额配置端到端贯通**：实际运行的 Compose 明确传入 `EASYADB_MAX_STARTING`；测试 1/3/5 与无效值，核对服务端 `/api/m2/video-engine` 对应返回；20 个逻辑会话槽位不变。 |
@@ -30,7 +30,7 @@
 
 ## 当前停点
 
-- **已完成：V2-F01**。
-- **下一步只做：V2-F02（定时部署白名单）**，收到用户明确“继续”后才开始。
+- **已完成：V2-F01、V2-F02**。
+- **下一步只做：V2-F03（构建脚本 WebRTC-only）**，收到用户明确“继续”后才开始。
 - F03～F10 不因编写本清单而视为已启动或已完成。
 - 原 V2-00～V2-07 的历史 CI 通过记录不被此整改清单覆盖；当前发现的问题按上表分别复验。
