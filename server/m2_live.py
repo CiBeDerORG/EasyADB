@@ -186,6 +186,8 @@ class LiveVideo:
             raise ValueError("尚未实现的视频引擎")
         self.video_engine = video_engine
         self.webrtc_track = None  # assigned by owning WS before starting worker
+        self.webrtc_relay = None  # owner and mapping peers subscribe to one encoded source
+        self.mapping_init = None  # latest owner-published video dimensions for late viewers
         self.serial = serial
         self.profile = profile
         self.display_source = display_source  # None keeps the original primary screen.
