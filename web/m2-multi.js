@@ -746,7 +746,7 @@ class MultiView{
    const scheme=location.protocol==='https:'?'wss:':'ws:';
    const ws=new WebSocket(scheme+'//'+location.host+
     '/api/devices/'+encodeURIComponent(d.id)+'/m2/live');
-   ws.binaryType='arraybuffer';card.ws=ws;
+   card.ws=ws;
    ws.onopen=()=>{
     if(card.closed)return;
     const payload={token:this.getToken(),player:card.engine,selected_serial:card.serial,
@@ -819,7 +819,7 @@ class MultiView{
      const stat=card.metrics.sample(video,performance.now(),{
       renderedFrames:card.frameCount,
       frameAgeMs:card.frameLastAt===null?null:performance.now()-card.frameLastAt,
-      receiveMbps:traffic.mbps,queueBytes:pd.queueBytes,
+      receiveMbps:traffic.mbps,
       procCpuPct:m.proc_cpu_pct,procRssMib:m.proc_rss_mib
      });
      stats.textContent=root.EasyADBMetrics.format(stat)+'｜提示：'+root.EasyADBMetrics.advice(stat)+
@@ -839,7 +839,7 @@ class MultiView{
       '\\n首关键帧 '+age(m.init_ready_ms)+
       ' / RTP 浏览器累计接收 '+root.EasyADBTraffic.size(pd.webrtcBytes||0)+
       ' / 本路浏览器收到 '+root.EasyADBTraffic.size(traffic.totalBytes)+
-      '\\nICE/DTLS '+pd.sourceState+' / 播放点 '+fmt(pd.currentTime,2)+'s'+
+      '\\nICE/DTLS '+pd.sourceState+
       ' / 解码帧 '+(pd.webrtcFrames??'—')+' / 丢帧 '+(pd.webrtcDrops??'—')+
       ' / Video error '+(pd.videoError??'无')+
       ' / Android 控制提示 '+(m.control_warning||'无已确认拒绝');

@@ -1,5 +1,5 @@
-/* EasyADB M2 optional WebRTC receiver. Video and controls share the existing
- * authenticated per-device WS, but video bytes are DTLS-SRTP / ICE, not WS/MSE.
+/* EasyADB V2 WebRTC receiver. Video and controls share the existing
+ * authenticated per-device WS for signaling; media travels over DTLS-SRTP / ICE.
  * No local camera/mic permissions, WebCodecs, or implicit reconnect.
  */
 (function(root){
@@ -62,7 +62,6 @@ class WebRTCPlayer {
   if(this.closed||metadata?.player!=='webrtc')throw Error('WebRTC 初始化信息无效');
   this.onState('ready');
  }
- append(){throw Error('WebRTC 不接收 MSE 视频片段');}
  async pollStats(recordBytes){
   if(!this.pc||this.closed)return;
   const pc=this.pc;
@@ -86,11 +85,9 @@ class WebRTCPlayer {
   }catch{} // statistics must never interrupt an active media/control session
  }
  diagnostics(){
-  const pc=this.pc,v=this.video;
-  return {sourceState:pc?pc.connectionState:'未初始化',sourceBufferReady:Boolean(pc),
-   sourceRanges:0,rangeEnd:null,currentTime:v.currentTime||0,queueChunks:0,queueBytes:0,
-   appendCalls:0,completedUpdates:0,videoError:v.error?v.error.code:null,
-   playbackRate:v.playbackRate||1,lowLatency:false,
+  const pc=this.pc;
+  return {sourceState:pc?pc.connectionState:'未初始化',
+   videoError:this.video.error?this.video.error.code:null,
    webrtcBytes:this.bytesReceived,webrtcFrames:this.framesDecoded,
    webrtcDrops:this.framesDropped};
  }

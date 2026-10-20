@@ -49,9 +49,9 @@ const root={
  performance:{now:()=>{clock+=1000;return clock;}},
  EasyADBWebRTC:{create:(_video,cbs)=>({
    async start(){},async answer(){},pollStats(){},
-   initialize(){cbs.onState('ready');},append(){},triggerPlaying(){cbs.onState('playing');},
-   diagnostics(){return {queueBytes:0,sourceState:'open',sourceRanges:1,
-    rangeEnd:3,currentTime:2,queueChunks:0,appendCalls:4,completedUpdates:4,videoError:null};},
+   initialize(){cbs.onState('ready');},triggerPlaying(){cbs.onState('playing');},
+   diagnostics(){return {sourceState:'open',videoError:null,
+    webrtcBytes:0,webrtcFrames:0,webrtcDrops:0};},
    resume(){},destroy(){}
  })},
  EasyADBTouch:{create:()=>({enable(){},disable(){},destroy(){}})},
@@ -403,7 +403,7 @@ assert.equal(ca.logPanel.hidden,false,'upward log action opens overlay');
 assert.equal(ca.menuOpen,false,'opening log folds floating menu');
 ca.logClose.fire('click');assert.equal(ca.logPanel.hidden,true,'log panel closes independently');
 a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
- mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
+ elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20});
 assert.match(ca.diagnostic.textContent,/手机编码包 9/);
 assert.match(ca.diagnostic.textContent,/WebRTC 已取帧/);
 assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
@@ -488,7 +488,7 @@ assert.equal(c.sent.filter(x=>x.includes('"type":"control_enable"')).length,1);
 cb.input.value='Hello';cb.form.fire('submit');
 assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
 assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
-c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
+c.emit('diagnostic',{session_id:'second-b',phone_packets:5,stage:'streaming'});
 assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
 c.emit('diagnostic',{session_id:'second-b',stage:'streaming',
  control_warning:'android_input_permission'});
@@ -762,9 +762,8 @@ async function waitForCheck(id){
  // an indefinite server wait, but timeout cannot claim cleanup or reconnect.
  root.EasyADBWebRTC={create:(_video,cbs)=>({
   async start(){},initialize(){cbs.onState('ready');},
-  diagnostics(){return{queueBytes:0,sourceState:'connected',sourceRanges:0,
-   rangeEnd:null,currentTime:0,queueChunks:0,appendCalls:0,completedUpdates:0,
-   videoError:null,webrtcBytes:0,webrtcFrames:0};},
+  diagnostics(){return{sourceState:'connected',videoError:null,
+   webrtcBytes:0,webrtcFrames:0,webrtcDrops:0};},
   pollStats(){},resume(){},destroy(){this.destroyed=true;}
  })};
  multi.videoEngine='webrtc';multi.engineReady=true;multi.engineSupported=true;

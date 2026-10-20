@@ -106,9 +106,6 @@ class LiveVideo:
         self._phase = "等待启动"
         self._phone_packets = 0
         self._phone_last = None
-        self._mux_chunks = 0
-        self._mux_last = None
-        self._media_fragments = 0
         self._ready_at = None
 
     def _phase_set(self, phase):
@@ -119,15 +116,6 @@ class LiveVideo:
         with self._metric_lock:
             self._phone_packets += 1
             self._phone_last = time.monotonic()
-
-    def _record_mux_chunk(self):
-        with self._metric_lock:
-            self._mux_chunks += 1
-            self._mux_last = time.monotonic()
-
-    def _record_media_fragments(self, count):
-        with self._metric_lock:
-            self._media_fragments += count
 
     def diagnostics(self):
         """Safe stage/age counters for an explicitly opened stream only."""
@@ -161,10 +149,6 @@ class LiveVideo:
                 "phone_packets": self._phone_packets,
                 "phone_idle_ms": (round((now - self._phone_last) * 1000)
                                   if self._phone_last is not None else None),
-                "mux_chunks": self._mux_chunks,
-                "media_fragments": self._media_fragments,
-                "mux_idle_ms": (round((now - self._mux_last) * 1000)
-                                if self._mux_last is not None else None),
                 "init_ready_ms": (round((self._ready_at - self._born) * 1000)
                                    if self._ready_at is not None else None),
             }
@@ -343,7 +327,7 @@ class LiveVideo:
                 return
             except queue.Full:
                 if time.monotonic() >= deadline:
-                    raise VideoProbeError("浏览器读取视频过慢，已终止本轮会话")
+                    raise VideoProbeError("视频会话诊断消息队列阻塞，已终止本轮会话")
         raise StreamStopped()
 
     def _stream_to_webrtc(self, video, first_header, width, height, name):

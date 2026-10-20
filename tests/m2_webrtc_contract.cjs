@@ -44,6 +44,16 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/m2-webrtc.js'),'u
  assert(states.includes('playing'));
  let rx=0;await p.pollStats(n=>rx+=n);
  assert.equal(rx,1234);assert.equal(p.diagnostics().webrtcFrames,8);
+ const diag=p.diagnostics();
+ assert.equal(diag.sourceState,'new');
+ assert.equal(diag.webrtcBytes,1234);
+ assert.equal(diag.webrtcDrops,1);
+ assert.equal(diag.videoError,null);
+ for(const retired of ['queueBytes','queueChunks','sourceRanges','sourceBufferReady',
+   'appendCalls','completedUpdates','rangeEnd','playbackRate']){
+  assert.equal(retired in diag,false,'retired MSE field: '+retired);
+ }
+ assert.equal('append' in p,false,'WebRTC cannot accept MSE fragments');
  await p.pollStats(n=>rx+=n);assert.equal(rx,1234,'stats must be deltas, not double-counted');
  // The mock close() returns undefined, exactly like native RTCPeerConnection.close().
  assert.doesNotThrow(()=>p.destroy(),'native synchronous close must never interrupt card cleanup');

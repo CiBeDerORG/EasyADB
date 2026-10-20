@@ -513,13 +513,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
 
         receiver = asyncio.create_task(receive_commands())
         watchdog = asyncio.create_task(watch_browser())
-        # Transport payload-only accounting for THIS authenticated live session.
-        # Excludes HTTP and network protocol framing/headers.
-        ws_video_bytes = 0
-        ws_video_chunks = 0
         next_diagnostic = 0.0
         while True:
-            # Stop receives priority over queued old video fragments. The
+            # Stop takes priority over queued diagnostic/control events. The
             # browser waits for an "ended" message sent after cleanup/release.
             if requested_stop.is_set():
                 if manual_stop:
@@ -535,8 +531,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     **stream.diagnostics(),
                     "session_phase": (session_manager.snapshot(device_id, stream) or {}).get("phase"),
                     "start_budget": resource_budget.snapshot(),
-                    "ws_video_bytes": ws_video_bytes,
-                    "ws_video_chunks": ws_video_chunks,
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
                         if getattr(stream, "webrtc_track", None) is not None else None),
                     "webrtc_dropped_frames": (stream.webrtc_track.dropped_frames
@@ -596,10 +590,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "lab_notice", "session_id": stream.session_id, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
-            elif kind == "bytes":
-                await asyncio.wait_for(websocket.send_bytes(payload), LIVE_WS_SEND_TIMEOUT)
-                ws_video_bytes += len(payload)
-                ws_video_chunks += 1
             elif kind == "error":
                 # Only unexpected live transport/encoder errors trigger a
                 # one-shot get-state, never continuous ADB polling.
