@@ -46,6 +46,7 @@ from .api.schemas import (Target, PairTarget, PairExisting, DeviceInput, RouteIn
 from .api.validation import clean_group, address, clean_input
 from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .api.live_handler import handle_live_video
+from .api import lab_handlers
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
@@ -386,121 +387,51 @@ def m2_video_probe(device_id: str, payload: VideoProbeInput):
 
 
 def lab_connected_serial(device_id):
-    device = get_device(device_id)
-    serial = selected_address(device)
-    if not serial or manager.serial_for(device) != serial or not is_connected(serial):
-        raise HTTPException(409, "请先手动连接当前选定的 ADB 地址")
-    return serial
+    return lab_handlers.lab_connected_serial(sys.modules[__name__], device_id)
 
 
 def display_lab_state(device_id: str):
-    get_device(device_id)
-    return display_lab.state(device_id)
+    return lab_handlers.display_lab_state(sys.modules[__name__], device_id)
 
 
 def display_lab_environment(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        try:
-            result = display_lab.environment(device_id, serial)
-            display_lab._log(device_id, "环境检测", serial, "检测到显示器 " + str(result["display_ids"]))
-            return result
-        except LabError as exc:
-            raise HTTPException(502, str(exc)) from None
+    return lab_handlers.display_lab_environment(sys.modules[__name__], device_id)
 
 
 def display_lab_scan(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        try:
-            result = display_lab.scan(serial)
-            display_lab._log(device_id, "B2", serial, "检测到显示器 " + str(result["display_ids"]))
-            return result
-        except LabError as exc:
-            raise HTTPException(502, str(exc)) from None
+    return lab_handlers.display_lab_scan(sys.modules[__name__], device_id)
 
 
 def display_lab_overlay(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        with live_registry.lock:
-            running = live_registry.sessions.get(device_id)
-            if running is not None and not live_registry.is_cleaned(running):
-                raise HTTPException(409, "先停止此设备已有的实时画面，再模拟副屏")
-        try:
-            return display_lab.enable_overlay(device_id, serial)
-        except LabError as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.display_lab_overlay(sys.modules[__name__], device_id)
 
 
 def display_lab_restore(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        with live_registry.lock:
-            running = live_registry.sessions.get(device_id)
-            if running is not None and not live_registry.is_cleaned(running):
-                raise HTTPException(409, "请先停止当前副屏预览，再恢复设置")
-        try:
-            return display_lab.restore(device_id, serial)
-        except LabError as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.display_lab_restore(sys.modules[__name__], device_id)
 
 
 def lab_require_idle(device_id):
-    with live_registry.lock:
-        running = live_registry.sessions.get(device_id)
-        if running is not None and not live_registry.is_cleaned(running):
-            raise HTTPException(409, "请先停止此设备现有画面并等待会话清理完成")
+    return lab_handlers.lab_require_idle(sys.modules[__name__], device_id)
 
 
 def castplus_start(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        lab_require_idle(device_id)
-        try:
-            return display_lab.cast_create(device_id, serial)
-        except (LabError, CastError) as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.castplus_start(sys.modules[__name__], device_id)
 
 
 def castplus_auto(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        lab_require_idle(device_id)
-        try:
-            return display_lab.cast_auto(device_id, serial)
-        except (LabError, CastError) as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.castplus_auto(sys.modules[__name__], device_id)
 
 
 def castplus_switch(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        lab_require_idle(device_id)
-        try:
-            return display_lab.cast_switch(device_id, serial)
-        except (LabError, CastError) as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.castplus_switch(sys.modules[__name__], device_id)
 
 
 def castplus_verify(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        try:
-            return display_lab.cast_verify(device_id, serial)
-        except (LabError, CastError) as exc:
-            raise HTTPException(409, str(exc)) from None
+    return lab_handlers.castplus_verify(sys.modules[__name__], device_id)
 
 
 def castplus_restore(device_id: str):
-    with device_lock(manager, device_id):
-        serial = lab_connected_serial(device_id)
-        lab_require_idle(device_id)
-        try:
-            return display_lab.cast_restore(device_id, serial)
-        except (LabError, CastError) as exc:
-            raise HTTPException(409, str(exc)) from None
-
+    return lab_handlers.castplus_restore(sys.modules[__name__], device_id)
 
 async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
     """One event-triggered check after a running stream fails, NEVER polling.
