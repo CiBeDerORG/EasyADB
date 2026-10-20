@@ -120,6 +120,7 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
             self.cleanup_complete = False
             self.events = queue.Queue()
         def start(self): raise RuntimeError("cannot start worker")
+        def diagnostics(self): return {"stage": "启动失败"}
         def stop(self):
             self.cleanup_complete = True
             self.finished.set()
