@@ -13,12 +13,6 @@ def home():
     return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-store"})
 
 
-@router.get("/m2-player.js")
-def m2_player_script():
-    return FileResponse(ROOT / "web" / "m2-player.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
 @router.get("/m2-webrtc.js")
 def m2_webrtc_script():
     return FileResponse(ROOT / "web" / "m2-webrtc.js", media_type="application/javascript",

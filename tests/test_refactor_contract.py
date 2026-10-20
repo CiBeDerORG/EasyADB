@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 EXPECTED_HTTP = {
     ("GET", "/"),
-    ("GET", "/m2-player.js"),
     ("GET", "/m2-webrtc.js"),
     ("GET", "/m2-traffic.js"),
     ("GET", "/m2-touch.js"),
@@ -71,6 +70,7 @@ def _module(monkeypatch):
 
 def test_m3_http_and_websocket_routes_unchanged(monkeypatch):
     mod = _module(monkeypatch)
+    # V2 intentionally retires the MSE player JS; all other M3 URLs are preserved.
     # Verify the actual external HTTP method/path contract, not framework
     # internals (router registration representation differs by versions).
     assert str(mod.app.url_path_for("m2_live_video", device_id="missing")) == (
