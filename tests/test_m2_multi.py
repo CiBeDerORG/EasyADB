@@ -173,7 +173,9 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'class="stage-view"' in html
         assert 'class="stage-main"' not in html and 'class="stage-settings"' not in html
         assert 'id="multiPicker" hidden aria-hidden="true"' in html
-        assert "qualityRows.get(d.id)" in html
+        assert "qualityRows.get(d.id)" not in html
+        assert 'class="device-quality"' not in html
+        assert "const configure=action('✎',()=>multiView.openSettings(d),'projection-settings-edit')" in html
         assert 'id="multiStart"' in html and 'id="multiStop"' in html
         assert html.index('id="multiStart"') < html.index('id="devices"') < html.index('id="multiGrid"')
         # Live cards flow by each stream's own width, not a fixed column count.
@@ -198,7 +200,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "projectionButton(d)" in multi_js
         assert "开启此设备投屏" in multi_js and "关闭此设备投屏" in multi_js
         assert ".device-port.device-projector.ready,.device-port.device-projector.playing" in html
-        assert "title.append(multiView?multiView.projectionButton(d)" in html
+        assert "portWrap.append(multiView?multiView.projectionButton(d)" in html
         assert "model.append(elem('span','device-tooltip-line','Android：'+d.android_version))" in html
         assert "item.append(liveRow,playback)" not in multi_js
         assert "getManagementBusy:()=>loading" in html
@@ -218,7 +220,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         # Route selection acts directly on its IP and triggers one explicit connect.
         # The separate batch status check remains probe-only.
         assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
-        assert "title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))" in html
+        assert "portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))" in html
         assert "addressList.append(...addressRows)" in html
         assert "addressList.append(plus)" in html
         assert "removeButton=action('删除'" not in html
@@ -253,9 +255,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         # Header indicator uses actual active_serial for successful ADB,
         # selected_serial only to explain an explicit failed attempt.
         assert "top.append(managementLabel,info);primary.append(top,addressList)" in html
-        assert "row.prepend(adbStatusBadge(d))" in html
+        assert "row.prepend(adbStatusBadge(d))" not in html
         assert "addressRows.push(row)" in html
-        assert ".device-quality .adb-badge{justify-self:start;margin-left:0}" in html
+        assert ".device-port.device-projector.adb-connected::before" in html
+        assert ".device-port.device-projector.adb-failed::before" in html
         assert "const connected=d.status==='connected'&&Boolean(d.active_serial)" in html
         assert "d.connect_failed===true||d.status==='error'" in html
         assert "const serial=connected?d.active_serial:(failed?d.selected_serial:null)" in html
