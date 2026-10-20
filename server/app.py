@@ -817,6 +817,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     receiver = None
     watchdog = None
     unlock_task = None
+    last_manual_unlock_at = 0.0
     requested_stop = asyncio.Event()
     touch_ready = asyncio.Event()
     manual_stop = False
@@ -969,8 +970,35 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
 
         last_browser_ack = time.monotonic()
 
+        async def run_unlock_attempt(password, source):
+            # The browser sends only a session-scoped intent; the actual
+            # credential never enters WebSocket JSON or the device log.
+            try:
+                result = await asyncio.to_thread(automatic_unlock, stream, password)
+                explanations = {
+                    "submitted": "已发送开屏密码与回车；是否解锁成功请查看设备",
+                    "already_unlocked": "设备已处于解锁状态，无需输入密码",
+                    "unknown_lock_state": "无法确认当前仍是锁屏页面；为了避免误输入密码，已跳过",
+                    "unknown_screen_size": "无法获取屏幕尺寸，未执行解锁",
+                    "skipped": "当前投屏已停止或显示源不支持解锁"
+                }
+                if not requested_stop.is_set():
+                    await websocket.send_json({
+                        "type": "unlock_notice", "session_id": stream.session_id,
+                        "source": source, "status": result,
+                        "message": explanations.get(result, "本次解锁操作已结束"),
+                        "error": result not in ("submitted", "already_unlocked")
+                    })
+            except (InvalidTouch, VideoProbeError, OSError, ValueError):
+                if not requested_stop.is_set():
+                    await websocket.send_json({
+                        "type": "unlock_notice", "session_id": stream.session_id,
+                        "source": source, "status": "failed", "error": True,
+                        "message": "解锁操作未完成，请查看手机状态和 ADB / scrcpy 控制权限"
+                    })
+
         async def receive_commands():
-            nonlocal manual_stop, last_browser_ack, pc
+            nonlocal manual_stop, last_browser_ack, pc, unlock_task, last_manual_unlock_at
             control_enabled = False
             last_move = 0.0
             last_input = 0.0
@@ -988,7 +1016,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         continue
                     if not isinstance(message, dict) or message.get("type") not in (
                         "control_enable", "control_disable", "touch", "input_text", "nav_key",
-                        "wake", "heartbeat", "webrtc_offer"
+                        "wake", "unlock", "heartbeat", "webrtc_offer"
                     ):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
@@ -1073,6 +1101,57 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             })
                             if offline or stream.stop_event.is_set():
                                 break
+                        continue
+                    if kind == "unlock":
+                        # Explicit per-card (or group-per-card) retry; never accept
+                        # a password, serial or arbitrary ADB command in the payload.
+                        if set(message) != {"type", "session_id"}:
+                            await websocket.send_json({
+                                "type": "unlock_notice", "session_id": stream.session_id,
+                                "source": "manual", "status": "invalid", "error": True,
+                                "message": "主动解锁请求字段无效"
+                            })
+                            continue
+                        if experiment or not touch_ready.is_set():
+                            await websocket.send_json({
+                                "type": "unlock_notice", "session_id": stream.session_id,
+                                "source": "manual", "status": "not_ready", "error": True,
+                                "message": "主屏控制通道尚未就绪，不能主动解锁"
+                            })
+                            continue
+                        if unlock_task is not None and not unlock_task.done():
+                            await websocket.send_json({
+                                "type": "unlock_notice", "session_id": stream.session_id,
+                                "source": "manual", "status": "busy", "error": True,
+                                "message": "当前设备已有一次解锁尝试在执行，请等待其结果"
+                            })
+                            continue
+                        now_unlock = time.monotonic()
+                        if now_unlock - last_manual_unlock_at < 3.0:
+                            await websocket.send_json({
+                                "type": "unlock_notice", "session_id": stream.session_id,
+                                "source": "manual", "status": "cooldown", "error": True,
+                                "message": "请至少间隔 3 秒再尝试主动解锁"
+                            })
+                            continue
+                        try:
+                            manual_secret = store.get_unlock_secret(device_id)
+                        except ValueError:
+                            manual_secret = None
+                        if not manual_secret:
+                            await websocket.send_json({
+                                "type": "unlock_notice", "session_id": stream.session_id,
+                                "source": "manual", "status": "unconfigured", "error": True,
+                                "message": "本设备未配置有效开屏密码，请在 ADB 端口右上角的投屏参数中设置"
+                            })
+                            continue
+                        last_manual_unlock_at = now_unlock
+                        unlock_task = asyncio.create_task(run_unlock_attempt(manual_secret, "manual"))
+                        await websocket.send_json({
+                            "type": "unlock_notice", "session_id": stream.session_id,
+                            "source": "manual", "status": "running",
+                            "message": "已开始主动解锁：亮屏、确认锁屏、输入密码并回车"
+                        })
                         continue
                     if kind == "control_enable":
                         if set(message) != {"type", "session_id"} or not touch_ready.is_set():
@@ -1227,27 +1306,13 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
-                    if unlock_secret and not unlock_task and not experiment:
-                        async def run_startup_unlock():
-                            try:
-                                result = await asyncio.to_thread(automatic_unlock, stream, unlock_secret)
-                                explanations = {
-                                    "submitted": "已发送开屏密码及回车，请查看设备确认是否解锁",
-                                    "already_unlocked": "设备已解锁，无需输入开屏密码",
-                                    "unknown_lock_state": "无法确认设备仍处于锁屏，已跳过密码输入",
-                                    "unknown_screen_size": "无法确认锁屏滑动尺寸，已跳过密码输入",
-                                    "skipped": "已取消本轮自动解锁"
-                                }
-                                if not requested_stop.is_set():
-                                    await websocket.send_json({"type": "unlock_notice",
-                                        "session_id": stream.session_id,
-                                        "message": explanations.get(result, "自动解锁已结束")})
-                            except (InvalidTouch, VideoProbeError, OSError, ValueError):
-                                if not requested_stop.is_set():
-                                    await websocket.send_json({"type": "unlock_notice",
-                                        "session_id": stream.session_id,
-                                        "message": "开屏密码发送未完成，请手动检查设备", "error": True})
-                        unlock_task = asyncio.create_task(run_startup_unlock())
+                    if unlock_secret and unlock_task is None and not experiment:
+                        unlock_task = asyncio.create_task(run_unlock_attempt(unlock_secret, "auto"))
+                        await websocket.send_json({
+                            "type": "unlock_notice", "session_id": stream.session_id,
+                            "source": "auto", "status": "running",
+                            "message": "正在尝试启动自动解锁；如未成功，可使用悬浮菜单的主动解锁"
+                        })
             elif kind == "screen_power_notice":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "screen_power_notice", "session_id": stream.session_id, **payload
