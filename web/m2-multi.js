@@ -320,10 +320,11 @@ class MultiView{
   screenOff.type='checkbox';screenOff.checked=previous.screen_off===true&&!previous.experimental_resolution;
   screenLabel.append(screenOff,make('span','','投屏时关闭手机物理屏幕（远端画面继续显示）'));
   const experimentHint=make('p','muted','实验性虚拟分辨率使用所选 DPI，不改变手机原有系统 DPI；此模式不支持关闭物理屏幕。');
+  let hasUnlock=false;
   const syncExperiment=()=>{
    const experimental=selectors.max_size.value.startsWith('exp:');
-   screenOff.disabled=experimental;
-   if(experimental)screenOff.checked=false;
+   screenOff.disabled=experimental||hasUnlock;
+   if(screenOff.disabled)screenOff.checked=false;
    experimentHint.hidden=!experimental;
   };
   selectors.max_size.addEventListener('change',syncExperiment);syncExperiment();
@@ -337,12 +338,23 @@ class MultiView{
   const unlockState=make('p','muted','密码状态：正在读取…');
   const clearLabel=make('label','quality-setting-check'),clear=make('input');
   clear.type='checkbox';clearLabel.append(clear,make('span','','清除已保存的开屏密码'));
-  unlockInput.addEventListener('input',()=>{if(unlockInput.value)clear.checked=false;});
-  clear.addEventListener('change',()=>{if(clear.checked)unlockInput.value='';});
+  unlockInput.addEventListener('input',()=>{
+   if(unlockInput.value)clear.checked=false;
+   hasUnlock=Boolean(unlockInput.value)||(!clear.checked&&hasUnlock);
+   syncExperiment();
+  });
+  clear.addEventListener('change',()=>{
+   if(clear.checked){unlockInput.value='';hasUnlock=false;}
+   syncExperiment();
+  });
   unlockLabel.append(unlockInput);section.append(unlockLabel,unlockHint,unlockState,clearLabel);
   if(this.readUnlockSettings){
    Promise.resolve(this.readUnlockSettings(d.id)).then(state=>{
-    if(dialog.open)unlockState.textContent='密码状态：'+(state.configured?'已配置（不会回显）':'未配置');
+    if(dialog.open){
+     hasUnlock=state.configured===true&&!clear.checked||Boolean(unlockInput.value);
+     unlockState.textContent='密码状态：'+(state.configured?'已配置（不会回显）':'未配置');
+     syncExperiment();
+    }
    }).catch(()=>{if(dialog.open)unlockState.textContent='密码状态：读取失败，请检查服务端。';});
   }else unlockState.textContent='密码状态：未配置';
   const footer=make('div','modal-actions'),cancel=make('button','secondary','取消'),
