@@ -68,9 +68,14 @@ const notifyFullscreen=()=>{for(const fn of [...fullscreenEvents])fn();};
 root.document.exitFullscreen=()=>{root.document.fullscreenElement=null;notifyFullscreen();return Promise.resolve();};
 El.prototype.requestFullscreen=function(){root.document.fullscreenElement=this;notifyFullscreen();return Promise.resolve();};
 root.window=root;
-vm.runInNewContext(fs.readFileSync('web/m2-multi.js','utf8'),root,{filename:'m2-multi.js'});
+const productionSource=fs.readFileSync('web/m2-multi.js','utf8');
+assert.match(productionSource,/const MAX_DEVICES=20;/,'production supports 20 simultaneous sessions');
+// Preserve the detailed original four-slot teardown/isolation fixture,
+// while m2_twenty_contract.cjs exercises the unmodified production limit.
+vm.runInNewContext(productionSource.replace('const MAX_DEVICES=20;','const MAX_DEVICES=4;'),
+ root,{filename:'m2-multi.js'});
 const page=fs.readFileSync('web/index.html','utf8');
-assert.match(page,/最多四路/);
+assert.match(page,/最多20路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
 assert.match(page,/class="workspace"/);
