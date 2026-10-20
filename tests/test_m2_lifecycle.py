@@ -150,6 +150,16 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
                 assert msg["type"] in ("diagnostic",)
             else:
                 pytest.fail("WebRTC worker startup failure did not report an error")
+            # An error frame is sent BEFORE asynchronous peer/worker cleanup.
+            # Only server WS closure confirms the cleanup path has finished.
+            from starlette.websockets import WebSocketDisconnect
+            for _ in range(12):
+                try:
+                    ws.receive_json()
+                except WebSocketDisconnect:
+                    break
+            else:
+                pytest.fail("WebRTC startup-failure session never closed")
         assert not app.live_registry.sessions
 
 
