@@ -62,6 +62,7 @@ for (const name of legacyScripts) {
 }
 assert(prettierIgnore.includes('web/index.html\n'));
 assert(!prettierIgnore.includes('web/**'));
+assert(eslintConfig.includes('camelcase:'), 'new modules must enforce camelCase identifiers');
 visit(webRoot);
 
 assert.equal(packageInfo.private, true);

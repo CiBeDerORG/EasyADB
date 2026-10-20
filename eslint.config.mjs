@@ -39,7 +39,11 @@ export default [
         clearTimeout: 'readonly',
       },
     },
-    rules: { ...qualityRules, 'no-implicit-globals': 'error' },
+    rules: {
+      ...qualityRules,
+      camelcase: ['error', { properties: 'never', ignoreDestructuring: true }],
+      'no-implicit-globals': 'error',
+    },
   },
   {
     files: ['eslint.config.mjs'],
