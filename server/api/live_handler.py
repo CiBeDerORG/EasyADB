@@ -71,14 +71,8 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         if not isinstance(supplied, str) or not secrets.compare_digest(supplied, TOKEN):
             await websocket.close(code=1008, reason="访问密钥错误")
             return
-        if VIDEO_ENGINE == "webcodecs":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 mse 或 webrtc"})
-            return
-        if initial.get("player") == "webcodecs":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现，请在 .env 选择 mse 或 webrtc"})
-            return
-        if initial.get("player", "mse") != VIDEO_ENGINE:
-            await websocket.send_json({"type": "error", "message": "播放器与服务器 EASYADB_VIDEO_ENGINE 配置不一致，请刷新网页"})
+        if initial.get("player", "webrtc") != "webrtc":
+            await websocket.send_json({"type": "error", "message": "V2 仅支持 WebRTC；旧版 MSE/WebCodecs 客户端请刷新页面"})
             return
         profile = initial.get("profile")
         try:
@@ -173,8 +167,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         options["display_source"] = experiment
                     if screen_off:
                         options["screen_off"] = True
-                    if VIDEO_ENGINE == "webrtc":
-                        options["video_engine"] = "webrtc"
                     candidate = LiveVideo(serial, profile=profile, **options)
                 if candidate is None:
                     pass
@@ -182,18 +174,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     error = "这台设备已有实时投屏会话，请先停止原会话"
                 else:
                     stream = candidate
-                    if VIDEO_ENGINE == "webrtc":
-                        # Do not start capture until the offer is authenticated
-                        # and an SDP answer has been sent to this same WS.
-                        from ..m2_webrtc import ScrcpyH264Track
-                        stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
-                    else:
-                        try:
-                            stream.start()
-                        except (RuntimeError, OSError):
-                            live_registry.release(device_id, candidate)
-                            stream = None
-                            error = "视频会话未能启动，请稍后重试"
+                    # Do not start capture until the authenticated offer/answer.
+                    from ..m2_webrtc import ScrcpyH264Track
+                    stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
 
         if error:
             await websocket.send_json({"type": "error", "message": error})
@@ -249,7 +232,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     if raw == "stop":
                         manual_stop = True
                         break
-                    if len(raw) > (32768 if VIDEO_ENGINE == "webrtc" else 1024):
+                    if len(raw) > 32768:
                         break  # allow one bounded WebRTC SDP offer, not arbitrary commands
                     try:
                         message = json.loads(raw)
@@ -268,7 +251,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         break  # no implicit connect, IP fallback or stale-target injection
                     kind = message["type"]
                     if kind == "webrtc_offer":
-                        if (VIDEO_ENGINE != "webrtc" or pc is not None or
+                        if (pc is not None or
                                 set(message) != {"type", "session_id", "sdp"} or
                                 not isinstance(message["sdp"], str) or
                                 not 100 <= len(message["sdp"]) <= 24000 or
@@ -480,7 +463,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
                 if requested_stop.is_set():
                     return
-                if VIDEO_ENGINE == "webrtc" and stream.thread is None and time.monotonic() - stream._born > 25:
+                if stream.thread is None and time.monotonic() - stream._born > 25:
                     requested_stop.set()
                     await asyncio.to_thread(stream.stop)
                     return
@@ -493,8 +476,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         watchdog = asyncio.create_task(watch_browser())
         # Transport payload-only accounting for THIS authenticated live session.
         # Excludes HTTP and network protocol framing/headers.
-        ws_video_bytes = 0
-        ws_video_chunks = 0
         next_diagnostic = 0.0
         while True:
             # Stop receives priority over queued old video fragments. The
@@ -510,8 +491,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             if now >= next_diagnostic and not stream.finished.is_set():
                 await asyncio.wait_for(websocket.send_json({
                     "type": "diagnostic", "session_id": stream.session_id,
-                    **stream.diagnostics(), "ws_video_bytes": ws_video_bytes,
-                    "ws_video_chunks": ws_video_chunks,
+                    **stream.diagnostics(),
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
                         if getattr(stream, "webrtc_track", None) is not None else None),
                     "webrtc_dropped_frames": (stream.webrtc_track.dropped_frames
@@ -547,7 +527,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
                     "player": VIDEO_ENGINE,
-                    **({"format": "fmp4"} if VIDEO_ENGINE == "mse" else {}),
                     "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
@@ -567,10 +546,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "lab_notice", "session_id": stream.session_id, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
-            elif kind == "bytes":
-                await asyncio.wait_for(websocket.send_bytes(payload), LIVE_WS_SEND_TIMEOUT)
-                ws_video_bytes += len(payload)
-                ws_video_chunks += 1
             elif kind == "error":
                 # Only unexpected live transport/encoder errors trigger a
                 # one-shot get-state, never continuous ADB polling.
@@ -616,7 +591,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         "WebRTC peer close still pending for device %s session %s; "
                         "will release only after verified late cleanup",
                         device_id, stream.session_id)
-            if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
+            if getattr(stream, "thread", None) is None:
                 # SDP failure never launched ADB or allocated a worker resource.
                 stream.cleanup_complete = True
                 stream.finished.set()

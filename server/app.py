@@ -371,7 +371,7 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
 
 def m2_video_engine():
     # Public capability metadata contains no token, serial, network or device data.
-    return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
+    return {"engine": VIDEO_ENGINE, "implemented": True}
 
 
 async def _close_webrtc_peer(pc, stream, device_id, registry):
