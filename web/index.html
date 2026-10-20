@@ -192,7 +192,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-card .heading{margin-bottom:9px;flex-wrap:wrap}
 .multi-screen{position:relative;container-type:inline-size;aspect-ratio:9 / 16;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:#142033;isolation:isolate}
 .multi-video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent;touch-action:auto}
-.multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(230px,40%,calc(100% - 184px));width:44px;height:44px;transition:right .22s ease}
+ .multi-fab{position:absolute;z-index:5;right:-22px;top:clamp(8px,40%,calc(100% - 188px));width:44px;height:44px;transition:right .22s ease}
 .multi-fab.is-open{right:12px}
 .multi-fab button{display:flex;justify-content:center;align-items:center;line-height:1;box-shadow:0 5px 17px #0008}
 .multi-fab .fab-main,.multi-fab .fab-action{position:absolute;width:42px;height:42px;border-radius:50%;padding:0;color:#fff;background:#263d66;border:1px solid #7798cf;font-size:23px}
@@ -204,7 +204,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-fab .fab-up-wake{bottom:104px;right:0}
 .multi-fab .fab-up-reconnect{bottom:156px;right:0}
 .multi-fab .fab-up-stop{bottom:208px;right:0;background:#803545;border-color:#df8498;font-size:20px}
-.multi-screen[data-orientation="landscape"] .multi-fab{top:52%}
+.multi-screen[data-orientation="landscape"] .multi-fab{top:clamp(8px,calc(100% - 188px),52%)}
 .multi-screen[data-orientation="landscape"] .fab-up-wake{bottom:52px;right:52px}
 .multi-screen[data-orientation="landscape"] .fab-up-reconnect{bottom:52px;right:104px}
 .multi-screen[data-orientation="landscape"] .fab-up-stop{bottom:52px;right:156px}
@@ -238,7 +238,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-log-head .multi-log-close{font-size:20px;min-width:30px;padding:2px 7px}
 .multi-card .muted{margin-top:5px}
 /* One global right-edge group menu. It never takes ownership of individual streams. */
-.group-fab{position:fixed;z-index:28;right:-22px;top:clamp(215px,50dvh,calc(100dvh - 200px));transform:none}
+.group-fab{position:fixed;z-index:28;right:-22px;top:clamp(8px,50dvh,calc(100dvh - 190px));transform:none}
 .group-fab.is-open{right:16px}
 .group-fab .fab-main{background:#267462;border-color:#8ad6c2}
 .group-fab .group-text-panel{width:min(270px,calc(100vw - 54px));max-width:none}
