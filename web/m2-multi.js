@@ -562,7 +562,8 @@ class MultiView{
   const reconnectButton=icon('fab-up-reconnect','↻','重连此路实时画面');
   const closeStreamButton=icon('fab-up-stop','✕','关闭当前投屏并展开设备管理');
   wakeButton.disabled=true;reconnectButton.disabled=true;closeStreamButton.disabled=true;
-  const toggle=icon('fab-remote','⏻','启用远控');toggle.disabled=true;
+  // Remote control is enabled automatically when this session's control
+  // socket becomes ready; there is no manual on/off button in the FAB.
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
   const fullscreenButton=icon('fab-fullscreen','⛶','全屏展示');
   fullscreenButton.disabled=typeof screen.requestFullscreen!=='function';
@@ -571,7 +572,7 @@ class MultiView{
   form.setAttribute('aria-label','本设备文字与按键输入');
   const input=make('input'),submit=make('button','','发送');
   input.type='text';input.maxLength=300;input.autocomplete='off';
-  input.placeholder='仅 ASCII，先启用此设备控制';
+  input.placeholder='仅 ASCII；等待本设备控制通道就绪';
   submit.type='submit';input.disabled=true;submit.disabled=true;
   const textHead=make('div','multi-text-head'),textClose=make('button','secondary','×');
   textClose.type='button';textClose.setAttribute('aria-label','关闭文字输入');
@@ -587,7 +588,7 @@ class MultiView{
    btn.type='button';btn.disabled=true;
    btn.setAttribute('aria-label',label);
    if(key==='enter'||key==='backspace')textKeys.append(btn);
-   else{btn.hidden=true;fab.append(btn);}
+   else fab.append(btn);
    btn.addEventListener('click',()=>{
     if(btn.disabled)return;
     this.sendInput(card,'nav_key',{key});resetMenuTimer();
@@ -597,11 +598,11 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,toggle,textButton,fullscreenButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,textButton,fullscreenButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
    qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,closeStreamButton,fullscreenButton,
-   logPanel,logClose,toggle,stop,
+   logPanel,logClose,stop,
    textButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
    menuTimer:null});
@@ -656,7 +657,6 @@ class MultiView{
    e.addEventListener('keydown',resetMenuTimer);
   }
   input.addEventListener('input',resetMenuTimer);
-  toggle.addEventListener('pointerdown',resetMenuTimer);
   logButton.addEventListener('pointerdown',resetMenuTimer);
   wakeButton.addEventListener('pointerdown',resetMenuTimer);
   reconnectButton.addEventListener('pointerdown',resetMenuTimer);
@@ -665,7 +665,8 @@ class MultiView{
   card.refreshMenu=()=>{
    fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
     (card.enabled?' is-control-enabled':'');
-   for(const b of nav.slice(0,3))b.hidden=!card.enabled;
+   // The three fixed navigation buttons follow the main FAB's visibility
+   // (CSS .is-open), not the asynchronous control handshake.
    if(!card.enabled){card.textOpen=false;form.hidden=true;}
   };
   this.cards.set(card.id,card);
@@ -697,14 +698,10 @@ class MultiView{
    wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
    reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
    closeStreamButton.disabled=!sessionReady||card.reconnectRequested;
-   const canToggle=!card.closed&&card.ready&&!card.permissionWarningShown&&
+   const controlReady=!card.closed&&card.ready&&!card.permissionWarningShown&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
-   toggle.disabled=!canToggle;
-   toggle.title=card.pending?'正在确认…':card.enabled?'关闭远控':'启用远控';
-   toggle.setAttribute('aria-label',toggle.title);
-   toggle.setAttribute('aria-pressed',String(card.enabled));
-   const canInput=canToggle&&card.enabled&&!card.lastInput;
+   const canInput=controlReady&&card.enabled&&!card.lastInput;
    input.disabled=!canInput;submit.disabled=!canInput;
    textButton.disabled=!canInput;
    nav.forEach(b=>b.disabled=!canInput);
@@ -869,6 +866,15 @@ class MultiView{
       // Control remains independent of the playback "playing" event.
       if(card.state==='connecting')card.state='ready';
       refresh();this.updatePicker();
+      // Single and batch launches share open(): enable only THIS session
+      // once the current scrcpy control channel has been announced as ready.
+      if(card.ready&&!card.closed&&!card.pending&&!card.enabled&&!card.permissionWarningShown){
+       card.pending=true;refresh();
+       try{ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));}
+       catch(e){mark('自动开启远控失败：'+e.message,true);this.end(card,false);return;}
+      }else if(!card.ready){
+       keyStatus.textContent='本轮控制通道不可用，导航及输入已禁用。';
+      }
       card.settleLaunch(); // start next phone only after this pipeline initialized
      }catch(e){mark(e.message,true);this.end(card,false);}
     }else if(m.type==='control_enabled'){
@@ -882,7 +888,7 @@ class MultiView{
     }else if(m.type==='control_disabled'){
      card.enabled=false;card.pending=false;card.lastInput=false;
      if(card.touch)card.touch.disable();
-     if(!card.permissionWarningShown)keyStatus.textContent='控制已关闭，此路仅观看';
+     if(!card.permissionWarningShown)keyStatus.textContent='服务端已关闭此路控制，当前仅可观看。';
      refresh();
     }else if(m.type==='input_accepted'){
      card.lastInput=false;
@@ -895,10 +901,13 @@ class MultiView{
       this.onDeviceDisconnected?.(card.id);this.end(card,false);
      }
     }else if(m.type==='touch_error'){
-     // A rejected early control_enable must release the pending UI latch.
-     // Otherwise this card's button stays disabled forever.
-     card.pending=false;refresh();
-     keyStatus.textContent=m.message||'触摸失败';
+     // Fail closed if the one-shot automatic control opt-in was rejected;
+     // do not repeatedly send enable requests or imply inputs will work.
+     const enableRejected=card.pending&&!card.enabled;
+     card.pending=false;
+     if(enableRejected)card.permissionWarningShown=true;
+     refresh();
+     keyStatus.textContent=m.message||'自动开启控制失败，本轮仅可观看';
      if(m.code==='adb_disconnected'){
       mark('ADB 已断开，请手动重新连接',true);
       this.onDeviceDisconnected?.(card.id);this.end(card,false);
@@ -932,17 +941,6 @@ class MultiView{
    card.frameCallback=video.requestVideoFrameCallback(track);
   }
   video.addEventListener('click',()=>{if(!card.closed&&card.player)card.player.resume();});
-  toggle.addEventListener('click',()=>{
-   if(toggle.disabled||!card.session||card.closed)return;
-   card.pending=true;
-   try{
-    if(card.enabled){
-     if(card.touch)card.touch.disable();card.enabled=false;
-     card.ws.send(JSON.stringify({type:'control_disable',session_id:card.session}));
-    }else card.ws.send(JSON.stringify({type:'control_enable',session_id:card.session}));
-    refresh();
-   }catch(e){mark('控制请求发送失败：'+e.message,true);this.end(card,false);}
-  });
   wakeButton.addEventListener('click',()=>{
    if(wakeButton.disabled||!card.session||card.closed)return;
    card.wakePending=true;refresh();resetMenuTimer();
