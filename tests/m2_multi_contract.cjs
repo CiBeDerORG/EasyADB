@@ -197,7 +197,7 @@ const checkingBadge=makeBadge({status:'checking',selected_serial:'10.10.10.2:555
 assert.match(checkingBadge.className,/checking/,'ongoing check must not show stale red error');
 
 
-const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,status:'connected',
+const devices=[1,2,3,4,5].map(n=>({id:'id-'+n,name:'Phone '+n,port:5555,status:'connected',
  selected_serial:'10.10.0.'+n+':5555',active_serial:'10.10.0.'+n+':5555'}));
 const picker=new El('div'),grid=new El('div'),startButton=new El('button'),stopButton=new El('button'),info=new El('div');
 const calls=[],batchSelected=new Set(),drawerEvents=[];
