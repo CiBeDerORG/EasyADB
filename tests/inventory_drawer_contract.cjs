@@ -1,6 +1,6 @@
-/* The drawer controller extracted from the real inline page script.
- * Fake clocks prove the 5s interaction timer, manual collapse, safety holds
- * and saved transparency without requiring a browser or network.
+/* Exercise the actual drawer controller: it has no inactivity timer.
+ * Clicks inside never dismiss; outside pointer presses do, except while a
+ * management dialog is open. Manual/project/fullscreen retract as before.
  */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
@@ -9,87 +9,65 @@ const inline=html.split('<script>',2)[1].split('</script>',1)[0];
 const source=inline.slice(inline.indexOf("const inventoryDrawer=$("),inline.indexOf('function adbStatusBadge(d)'));
 assert(source.startsWith('const inventoryDrawer='));
 assert(source.includes('inventoryOpacity.addEventListener'));
+assert(!source.includes('setTimeout('),'device management must not auto-collapse on inactivity');
+assert(!source.includes('inventoryHovered'),'hover state must not control closure');
 class Element {
- constructor(){this.events={};this.attrs={};this.inert=true;this.value='';this.style={setProperty:(key,value)=>{this.css[key]=value;}};this.css={};
-  const names=new Set();this.classList={add:x=>names.add(x),remove:x=>names.delete(x),contains:x=>names.has(x)};}
+ constructor(){this.events={};this.attrs={};this.inert=true;this.value='';
+  this.style={setProperty:(key,value)=>{this.css[key]=value;}};this.css={};
+  this.parent=null;const names=new Set();
+  this.classList={add:x=>names.add(x),remove:x=>names.delete(x),contains:x=>names.has(x)};
+ }
  addEventListener(type,callback){(this.events[type]??=[]).push(callback);}
  setAttribute(key,value){this.attrs[key]=value;}
- fire(type){for(const cb of this.events[type]||[])cb();}
+ contains(node){for(let p=node;p;p=p.parent)if(p===this)return true;return false;}
+ fire(type,arg={}){for(const cb of this.events[type]||[])cb(arg);}
 }
 const elements=Object.fromEntries(['inventoryDrawer','inventoryPanel','inventoryToggle','inventoryOpacity','inventoryOpacityValue'].map(id=>[id,new Element()]));
+const drawer=elements.inventoryDrawer,panel=elements.inventoryPanel,toggle=elements.inventoryToggle,slider=elements.inventoryOpacity;
+panel.parent=drawer;toggle.parent=drawer;
+const inside=new Element(),outside=new Element(),modalContent=new Element();
+inside.parent=panel;
 const dialogs=[{open:false}];
-const storage=new Map();
-let busy=false,scans=0,next=1;
-const timers=new Map(),set=(fn,ms)=>{assert.equal(ms,5000);const id=next++;timers.set(id,fn);return id;};
-const body=new Element(),documentEvents=new Map();
+const storage=new Map(),body=new Element(),documentEvents=new Map();
 body.classList.toggle=(name,state)=>{if(state)body.classList.add(name);else body.classList.remove(name);};
-const doc={getElementById:id=>elements[id],querySelectorAll:()=>dialogs,activeElement:null,
+const doc={getElementById:id=>elements[id],querySelectorAll:()=>dialogs,
  fullscreenElement:null,body,
- addEventListener:(event,handler)=>documentEvents.set(event,handler)};
+ addEventListener:(event,handler,capture)=>documentEvents.set(event,{handler,capture})};
 const ctx={document:doc,
  localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
- setTimeout:set,clearTimeout:id=>timers.delete(id)};
-vm.runInNewContext("const $=id=>document.getElementById(id);let loading=false;const scanningGroups=new Set();\n"+source+
- "\nthis.api={setBusy:v=>loading=v,setScanning:v=>v?scanningGroups.add('home'):scanningGroups.clear()};",ctx);
-const drawer=elements.inventoryDrawer,panel=elements.inventoryPanel,toggle=elements.inventoryToggle,slider=elements.inventoryOpacity;
-const tick=()=>{const t=[...timers.values()];timers.clear();for(const fn of t)fn();};
-assert.equal(drawer.classList.contains('is-open'),false);
-assert.equal(slider.value,'20');assert.equal(panel.css['--inventory-panel-opacity'],'0.8');
-toggle.fire('click');
-assert.equal(drawer.classList.contains('is-open'),true);assert.equal(panel.inert,false);
-assert.equal(toggle.attrs['aria-expanded'],'true');assert.equal(timers.size,1);
-panel.fire('pointerdown');assert.equal(timers.size,1,'interaction resets, never multiplies timers');
-panel.fire('input');assert.equal(timers.size,1);
-drawer.fire('pointerenter');
-assert.equal(timers.size,0,'pointer hovering the management drawer pauses the timer');
-panel.fire('pointerdown');panel.fire('wheel');
-assert.equal(timers.size,0,'interaction while hovered must not restart the timer');
-tick();assert.equal(drawer.classList.contains('is-open'),true,'stationary mouse never closes the drawer');
-drawer.fire('pointerleave');
-assert.equal(timers.size,1,'leaving starts a new five-second countdown');
-tick();assert.equal(drawer.classList.contains('is-open'),false);
-assert.equal(panel.inert,true);assert.equal(timers.size,0,'collapsed drawer has no background polling');
-toggle.fire('click');dialogs[0].open=true;tick();
-assert.equal(drawer.classList.contains('is-open'),true,'do not hide an open modal');assert.equal(timers.size,1);
-dialogs[0].open=false;ctx.api.setBusy(true);tick();
-assert.equal(drawer.classList.contains('is-open'),true,'do not hide active operations');
-ctx.api.setBusy(false);ctx.api.setScanning(true);tick();
-assert.equal(drawer.classList.contains('is-open'),true,'do not hide an active discovery');
-ctx.api.setScanning(false);tick();assert.equal(drawer.classList.contains('is-open'),false);
-// Focused inline editing must not disappear; focusout re-arms the idle check.
-const field={tagName:'INPUT',id:'token'};
-panel.contains=node=>node===field;
-toggle.fire('click');ctx.document.activeElement=field;panel.fire('focusin');tick();
-assert.equal(drawer.classList.contains('is-open'),true,'do not hide a focused input');
-ctx.document.activeElement=null;panel.fire('focusout');tick();
-assert.equal(drawer.classList.contains('is-open'),false);
+ setTimeout:()=>{throw Error('No auto-collapse timer should exist');},
+ clearTimeout:()=>{throw Error('No auto-collapse timer should exist');}};
+vm.runInNewContext("const $=id=>document.getElementById(id);"+source,ctx);
+const clickOutside=target=>documentEvents.get('pointerdown').handler({target});
+const expanded=()=>drawer.classList.contains('is-open');
+assert.equal(documentEvents.get('pointerdown').capture,true,'outside listener captures before other actions');
+assert.equal(expanded(),false);assert.equal(slider.value,'20');
+assert.equal(panel.css['--inventory-panel-opacity'],'0.8');
+clickOutside(outside);assert.equal(expanded(),false,'outside click while closed is inert');
+toggle.fire('click');assert.equal(expanded(),true);assert.equal(panel.inert,false);
+assert.equal(toggle.attrs['aria-expanded'],'true');
+clickOutside(inside);clickOutside(panel);clickOutside(toggle);
+assert.equal(expanded(),true,'panel, its controls and the handle are all inside');
+panel.fire('input');panel.fire('wheel');drawer.fire('pointerleave');
+assert.equal(expanded(),true,'scroll, input and mouse leaving never auto-dismiss');
+clickOutside(outside);assert.equal(expanded(),false,'outside press retracts immediately');
+assert.equal(panel.inert,true);assert.equal(toggle.attrs['aria-expanded'],'false');
+toggle.fire('click');dialogs[0].open=true;
+clickOutside(modalContent);assert.equal(expanded(),true,'keep drawer available while editing modal is open');
+dialogs[0].open=false;clickOutside(outside);assert.equal(expanded(),false);
 toggle.fire('click');slider.value='45';slider.fire('input');
 assert.equal(elements.inventoryOpacityValue.textContent,'45%');
 assert.equal(panel.css['--inventory-panel-opacity'],'0.55');
 assert.equal(storage.get('easyadb.inventory-transparency'),'45');
-drawer.fire('pointerenter');
-toggle.fire('click');
-assert.equal(drawer.classList.contains('is-open'),false,'manual collapse overrides hover');
-assert.equal(timers.size,0);
-drawer.fire('pointerleave');
-// An open inventory drawer disappears immediately on video fullscreen and
-// only its collapsed half-hidden handle comes back on browser Escape.
-toggle.fire('click');
-assert.equal(drawer.classList.contains('is-open'),true);
+toggle.fire('click');assert.equal(expanded(),false,'manual handle retracts immediately');
+toggle.fire('click');assert.equal(expanded(),true);
 doc.fullscreenElement={id:'phone-stream'};
-documentEvents.get('fullscreenchange')();
+documentEvents.get('fullscreenchange').handler();
 assert.equal(body.classList.contains('video-fullscreen-active'),true);
-assert.equal(toggle.disabled,true);
-assert.equal(drawer.classList.contains('is-open'),false);
-assert.equal(panel.inert,true);
-assert.equal(timers.size,0,'entering fullscreen cancels auto-collapse timer');
-toggle.fire('click');
-assert.equal(drawer.classList.contains('is-open'),false,'cannot expand while video is fullscreen');
-doc.fullscreenElement=null;
-documentEvents.get('fullscreenchange')();
+assert.equal(toggle.disabled,true);assert.equal(expanded(),false);
+toggle.fire('click');assert.equal(expanded(),false,'fullscreen prevents opening');
+doc.fullscreenElement=null;documentEvents.get('fullscreenchange').handler();
 assert.equal(body.classList.contains('video-fullscreen-active'),false);
-assert.equal(toggle.disabled,false);
-assert.equal(drawer.classList.contains('is-open'),false,'Escape restores the collapsed handle, not the open drawer');
-toggle.fire('click');assert.equal(drawer.classList.contains('is-open'),true);
-toggle.fire('click');
-console.log('Inventory drawer hover pause, leave reset, manual override, fullscreen protection and transparency: OK');
+assert.equal(toggle.disabled,false);assert.equal(expanded(),false,'Escape restores only collapsed handle');
+toggle.fire('click');assert.equal(expanded(),true);
+console.log('Inventory drawer outside-click, modal protection, no timeout, fullscreen and transparency: OK');

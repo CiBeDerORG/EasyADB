@@ -263,7 +263,7 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
  <button id="inventoryToggle" class="inventory-toggle" type="button" aria-label="展开设备管理" aria-expanded="false" aria-controls="inventoryPanel" title="展开设备管理">☷<small>设备管理</small></button>
  </div>
  <section class="panel stage-panel" id="multiPanel" aria-label="实时投屏工作区">
-  <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理（5 秒无交互自动收起），不占用画面空间。每路画面按实际视频宽度展示，空间不足时自动换行；点击画面右侧悬浮按钮操作。</p></div></div>
+  <div class="heading"><div><h2>实时画面</h2><p class="hint">左侧半隐藏图标可展开设备管理；点击抽屉以外的位置即可立即收起，不占用画面空间。每路画面按实际视频宽度展示，空间不足时自动换行；点击画面右侧悬浮按钮操作。</p></div></div>
   <div id="multiInfo" class="status" role="status" aria-live="polite">勾选已连接设备后点击「批量投屏」，也可点击设备标题中 ADB 端口后的投屏图标单独开启或关闭画面。</div>
   <div class="stage-view"><div id="multiGrid" class="multi-grid"></div></div>
  </section>
@@ -404,33 +404,17 @@ const scanningGroups=new Set();
 const groupOpen=new Map();
 const inventoryDrawer=$('inventoryDrawer'),inventoryPanel=$('inventoryPanel');
 const inventoryToggle=$('inventoryToggle'),inventoryOpacity=$('inventoryOpacity');
-let inventoryCollapseTimer=null,inventoryHovered=false;
-// Timer runs only while visible. Keep editing dialogs and ongoing management
-// operations available until the user can safely return to the drawer.
-function inventoryBusy(){
- const focused=document.activeElement;
- const typing=focused&&inventoryPanel.contains(focused)&&
-  ['INPUT','TEXTAREA','SELECT'].includes(focused.tagName)&&focused.id!=='inventoryOpacity';
- return inventoryHovered||loading||scanningGroups.size>0||typing||
-  [...document.querySelectorAll('dialog')].some(dialog=>dialog.open);
-}
-function clearInventoryTimer(){
- if(inventoryCollapseTimer!==null){clearTimeout(inventoryCollapseTimer);inventoryCollapseTimer=null;}
-}
+// The drawer stays open indefinitely. Only the handle, a deliberate
+// projection/fullscreen action, or a pointer press OUTSIDE it can retract it.
 function collapseInventory(force=false){
  if(!inventoryDrawer.classList.contains('is-open'))return;
- if(!force&&inventoryBusy()){armInventoryTimer();return;}
- clearInventoryTimer();
+ // Editing modals are outside the drawer DOM but still belong to its workflow.
+ if(!force&&[...document.querySelectorAll('dialog')].some(dialog=>dialog.open))return;
  inventoryDrawer.classList.remove('is-open');
  inventoryPanel.inert=true;
  inventoryToggle.setAttribute('aria-expanded','false');
  inventoryToggle.setAttribute('aria-label','展开设备管理');
  inventoryToggle.title='展开设备管理';
-}
-function armInventoryTimer(){
- clearInventoryTimer();
- if(inventoryDrawer.classList.contains('is-open')&&!inventoryHovered)
-  inventoryCollapseTimer=setTimeout(()=>{inventoryCollapseTimer=null;collapseInventory();},5000);
 }
 function expandInventory(){
  if(document.fullscreenElement)return;
@@ -439,22 +423,19 @@ function expandInventory(){
  inventoryToggle.setAttribute('aria-expanded','true');
  inventoryToggle.setAttribute('aria-label','收起设备管理');
  inventoryToggle.title='收起设备管理';
- armInventoryTimer();
 }
 inventoryToggle.addEventListener('click',()=>{
  if(inventoryDrawer.classList.contains('is-open'))collapseInventory(true);
  else expandInventory();
 });
-// The half-hidden handle belongs to the drawer: entering either the handle
-// or the panel pauses the countdown, even if the pointer remains still.
-inventoryDrawer.addEventListener('pointerenter',()=>{
- inventoryHovered=true;
- clearInventoryTimer();
-});
-inventoryDrawer.addEventListener('pointerleave',()=>{
- inventoryHovered=false;
- armInventoryTimer(); // A fresh 5 seconds after leaving the entire drawer.
-});
+// Capture outside presses so they retract the drawer immediately, before
+// controls in the real-time area handle the click. Internal scrolling, hover,
+// form input and the half-hidden handle are NOT outside presses.
+document.addEventListener('pointerdown',event=>{
+ if(!inventoryDrawer.classList.contains('is-open'))return;
+ if(inventoryDrawer.contains(event.target))return;
+ collapseInventory();
+},true);
 // The fullscreen video is a top-layer element. Explicitly hide the inventory
 // drawer and retract any open panel, then restore only its collapsed handle
 // when leaving fullscreen (Esc or the video's fullscreen control).
@@ -466,8 +447,6 @@ function syncInventoryFullscreen(){
 }
 document.addEventListener('fullscreenchange',syncInventoryFullscreen);
 syncInventoryFullscreen();
-for(const eventName of ['pointerdown','keydown','input','change','wheel','focusin','focusout'])
- inventoryPanel.addEventListener(eventName,armInventoryTimer,{passive:eventName==='wheel'});
 function updateInventoryOpacity(raw){
  const amount=Number(raw),value=Number.isFinite(amount)?
   Math.max(0,Math.min(60,Math.round(amount/5)*5)):20;

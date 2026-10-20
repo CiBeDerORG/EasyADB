@@ -166,7 +166,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="inventoryPanel"' in html and 'id="inventoryOpacity"' in html
         assert 'aria-label="设备管理" inert' in html
         assert "inventoryPanel.inert=true" in html and "inventoryPanel.inert=false" in html
-        assert "setTimeout(()=>{inventoryCollapseTimer=null;collapseInventory();},5000)" in html
+        assert "inventoryCollapseTimer" not in html
+        assert "document.addEventListener('pointerdown',event=>{" in html
+        assert "if(inventoryDrawer.contains(event.target))return;" in html
+        assert "点击抽屉以外的位置即可立即收起" in html
         assert 'class="stage-view"' in html
         assert 'class="stage-main"' not in html and 'class="stage-settings"' not in html
         assert 'id="multiPicker" hidden aria-hidden="true"' in html
