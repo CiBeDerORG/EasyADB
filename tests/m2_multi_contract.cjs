@@ -117,7 +117,8 @@ assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deleti
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
-assert(page.includes("title.append(elem('span','device-port','ADB '+d.port))"),'shared port belongs to device title');
+assert(page.includes("title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"),
+ 'shared ADB port itself is the single title-mounted projection toggle');
 assert(!page.includes("primary.append(elem('div','common-adb-port'"),'no separate shared-port row');
 assert(page.includes("addressList.append(...addressRows)"),'addresses use wrapping compact layout');
 assert(page.includes("addressList.append(plus)"),'inline plus adds/edits temporary IP');
@@ -132,12 +133,18 @@ assert(page.includes("change.title='编辑 '+d.name"),'single-device edit is a c
 assert(!page.includes("const connect=action('连接'"),'no single-device connect button');
 assert(page.includes("$('load').addEventListener('click',loadAndConnect)"),'explicit reload connects once');
 assert(page.includes("if(current.selected_route!==route)"),'clicking current IP can reconnect without route mutation');
-assert(page.includes("multiView.projectionButton(d)"),'projection control lives next to ADB port');
-assert.match(page,/title\.append\(elem\('span','device-port','ADB '\+d\.port\)\);\s*if\(multiView\)title\.append\(multiView\.projectionButton\(d\)\)/);
+assert.match(page,/title\.append\(multiView\?multiView\.projectionButton\(d\):elem\('span','device-port','ADB '\+d\.port\)\)/,
+ 'clickable ADB port replaces the separate adjacent streaming icon');
+assert.doesNotMatch(page,/if\(multiView\)title\.append\(multiView\.projectionButton\(d\)\)/,
+ 'no second adjacent projection button');
 assert(page.includes("if(route==='mesh'){"),'mesh IP owns per-device editing');
 assert(page.includes("row.append(change)"),'edit button overlays upper right of mesh address');
 assert(!page.includes('title.append(change)'),'edit button no longer appears in device title');
-assert(page.includes(".device-projector{position:static;"),'stream icon belongs inline after the port');
+assert(page.includes(".device-port.device-projector{position:static;"),
+ 'port-shaped projection control remains inline');
+for(const state of ['starting','ready','playing','stopping','error','disconnected'])
+ assert(page.includes('.device-port.device-projector.'+state),
+  'ADB port should have the '+state+' color state');
 assert(page.includes(".device-edit-icon{position:absolute;right:-3px;top:-5px;"),'edit icon overlays the mesh IP chip');
 assert(!page.includes('临时 ADB 端口：'),'legacy temporary-only port is removed');
 assert.match(page,/target\.setAttribute\('aria-pressed',String\(chosen\)\)/);
@@ -148,7 +155,11 @@ assert.match(page,/name\.append\(model\)/);
 assert.match(page,/\.device-title:hover \.device-model-tooltip/);
 assert.match(page,/\.device-title\{display:flex;[^\n]*position:relative/);
 assert.doesNotMatch(page,/if\(d\.model\)title\.append\(elem\('span','device-model'/);
-assert.match(page,/if\(d\.android_version\)title\.append\(elem\('span','device-android','Android '\+d\.android_version\)\)/);
+assert.match(page,/if\(d\.model\|\|d\.android_version\)/,
+ 'tooltip exists even when only the Android version is available');
+assert(page.includes("model.append(elem('span','device-tooltip-line','型号：'+d.model))"));
+assert(page.includes("model.append(elem('span','device-tooltip-line','Android：'+d.android_version))"));
+assert.doesNotMatch(page,/device-android/,'Android version no longer occupies a standalone title pill');
 assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wrap/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
@@ -219,6 +230,10 @@ assert.equal(startButton.disabled,true,'empty selection cannot start');
 assert.equal(picker.children[0].children.some(x=>x.className==='multi-choice-label'),false,'no duplicate projection checkbox');
 assert.match(liveStatus(0),/未开启/);
 assert.equal(liveButton(0).disabled,false);
+assert.equal(liveButton(0).tagName,'button');
+assert.equal(liveButton(0).textContent,'ADB '+devices[0].selected_serial.split(':')[1]);
+assert.match(liveButton(0).className,/device-port device-projector idle/);
+assert.equal(liveButton(0)['aria-pressed'],'false');
 assert.match(liveStatus(1),/未开启/);
 select(0);
 assert.equal(startButton.disabled,false,'ONE selected device is enough');
@@ -578,10 +593,14 @@ async function waitForCheck(id){
  assert.match(liveStatus(1),/未开启|已停止/);
  assert.match(liveButton(0).title,/关闭此设备投屏/);
  assert.match(liveButton(0).className,/starting/);
+ assert.equal(liveButton(0)['data-projection-state'],'starting');
+ assert.equal(liveButton(0)['aria-pressed'],'true');
  const ownA=sockets.at(-1);ownA.open();ownA.emit('starting',{session_id:'own-A'});
  init(ownA,'own-A');assert.match(liveStatus(0),/等待画面/);
+ assert.equal(liveButton(0)['data-projection-state'],'ready');
  multi.cards.get('id-1').player.triggerPlaying();
  assert.match(liveStatus(0),/播放中/);
+ assert.equal(liveButton(0)['data-projection-state'],'playing');
  const ownACard=multi.cards.get('id-1'),ownAPlayer=ownACard.player;
  liveButton(1).fire('click');
  assert.equal(sockets.length,aloneCount+2,'row B starts without restarting A');
@@ -592,12 +611,15 @@ async function waitForCheck(id){
  liveButton(0).fire('click');
  assert.equal(ownA.sent.at(-1),'stop');
  assert.match(liveStatus(0),/停止中/);
+ assert.equal(liveButton(0)['data-projection-state'],'stopping');
  assert.equal(liveButton(0).disabled,true,'do not create another stream before confirmed cleanup');
  assert.equal(multi.cards.get('id-2').closed,false);
  assert.equal(ownB.sent.filter(x=>x==='stop').length,0,'row A stop cannot stop B');
  ownA.emit('ended',{session_id:'own-A',cleanup_complete:true});
  assert.equal(multi.cards.size,1);
  assert.match(liveStatus(0),/已停止/);
+ assert.equal(liveButton(0)['data-projection-state'],'idle');
+ assert.equal(liveButton(0)['aria-pressed'],'false');
  assert.equal(liveButton(0).disabled,false);
  const restartCount=sockets.length;
  liveButton(0).fire('click');
