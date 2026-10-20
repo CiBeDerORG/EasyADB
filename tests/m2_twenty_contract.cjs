@@ -30,14 +30,22 @@ const view=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
  onChange:()=>{}});
 // Isolate the quota scheduler from video codec and mock-WebSocket transport.
 // Every open call reserves a unique card as the real open() does before init.
-view.open=function(device){assert(!this.cards.has(device.id));launches.push(device.id);
- this.cards.set(device.id,{id:device.id,state:'connecting'});};
+view.open=function(device,_quality,onStartupSettled){assert(!this.cards.has(device.id));launches.push(device.id);
+ this.cards.set(device.id,{id:device.id,state:'connecting',settleLaunch:onStartupSettled});};
 assert.equal(startButton.disabled,true,'21 selected devices cannot exceed remaining 20');
 selected.delete('phone-21');view.updatePicker();
 assert.equal(startButton.disabled,false,'any subset up to twenty can start');
 assert.match(startButton.textContent,/待新增 20 台 \/ 剩余 20 路/);
 startButton.fire('click');
+assert.equal(view.cards.size,3,'only three devices enter startup concurrently');
+assert.equal(view.launchQueue.length,17,'remaining 17 retain a queued place');
+for(let i=0;i<20;i++){
+ const card=view.cards.get(launches[i]);
+ assert(card,'every queued device starts after a previous session settles');
+ card.settleLaunch();
+}
 assert.equal(view.cards.size,20);
+assert.equal(view.launchQueue.length,0);
 assert.equal(launches.length,20);
 assert.equal(new Set(launches).size,20,'each control session is uniquely reserved');
 assert.equal(startButton.disabled,true,'full pool cannot append');
