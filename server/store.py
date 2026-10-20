@@ -65,6 +65,9 @@ class DeviceStore:
                 db.execute("ALTER TABLE devices ADD COLUMN temp_ip TEXT")
             if "temp_port" not in columns:
                 db.execute("ALTER TABLE devices ADD COLUMN temp_port INTEGER")
+            db.execute("""CREATE TABLE IF NOT EXISTS device_unlock (
+                device_id TEXT PRIMARY KEY, credential TEXT NOT NULL
+            )""")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS group_configs (
                     name TEXT PRIMARY KEY,
@@ -455,6 +458,32 @@ class DeviceStore:
             db.execute("UPDATE devices SET model=?, android_version=? WHERE id=?",
                        (model, android_version, device_id))
 
+    def unlock_configured(self, device_id):
+        with self.connection() as db:
+            return db.execute("SELECT 1 FROM device_unlock WHERE device_id=?", (device_id,)).fetchone() is not None
+
+    def get_unlock_secret(self, device_id):
+        from .m2_unlock import decrypt_password
+        with self.connection() as db:
+            row = db.execute("SELECT credential FROM device_unlock WHERE device_id=?", (device_id,)).fetchone()
+        return decrypt_password(self.path, row["credential"]) if row else None
+
+    def save_unlock_secret(self, device_id, password):
+        from .m2_unlock import encrypt_password
+        ciphertext = encrypt_password(self.path, password)
+        with self.connection() as db:
+            if not db.execute("SELECT 1 FROM devices WHERE id=?", (device_id,)).fetchone():
+                return False
+            db.execute("""INSERT INTO device_unlock(device_id,credential) VALUES(?,?)
+                          ON CONFLICT(device_id) DO UPDATE SET credential=excluded.credential""",
+                       (device_id, ciphertext))
+        return True
+
+    def clear_unlock_secret(self, device_id):
+        with self.connection() as db:
+            return db.execute("DELETE FROM device_unlock WHERE device_id=?", (device_id,)).rowcount > 0
+
     def delete(self, device_id):
         with self.connection() as db:
+            db.execute("DELETE FROM device_unlock WHERE device_id=?", (device_id,))
             return db.execute("DELETE FROM devices WHERE id=?", (device_id,)).rowcount > 0
