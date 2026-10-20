@@ -104,7 +104,7 @@ def test_auto_unlock_guarded_order_and_stop(monkeypatch):
 
 def test_all_stream_paths_share_server_owned_secret():
     from pathlib import Path
-    app=Path("server/app.py").read_text()
+    app=Path("server/api/live_handler.py").read_text()
     client=Path("web/m2-multi.js").read_text()
     assert "store.get_unlock_secret(device_id)" in app
     assert "await asyncio.to_thread(automatic_unlock, stream, password)" in app

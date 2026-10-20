@@ -16,6 +16,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..display_lab import LabError
 from ..m2_touch import InvalidTouch
 from ..m2_video_probe import VideoProbeError
+from ..services.operations import device_lock
 
 
 async def handle_live_video(websocket: WebSocket, device_id: str, source):
