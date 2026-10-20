@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>EasyADB · 画面映射（M1 测试版）</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;background:#0d1420;color:#edf4ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px;gap:12px}
+header{width:100%;max-width:1280px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+h1{font-size:17px;margin:0}.hint{font-size:12px;color:#9cb2d0}.warn{color:#ffbf80}
+main{width:100%;max-width:1280px;min-height:0;display:flex;align-items:center;justify-content:center;flex:1}
+.screen{background:#02060c;position:relative;display:flex;align-items:center;justify-content:center;width:min(100%,960px);max-height:calc(100dvh - 112px);aspect-ratio:9/16;border-radius:12px;border:1px solid #30435f;overflow:hidden}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;touch-action:auto}
+.screen:fullscreen{width:100vw;max-height:none;height:100vh;border:0;border-radius:0}
+.fab{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:7px;z-index:5}
+.fab button,.panel button{background:#20334b;color:#fff;border:1px solid #557293;border-radius:9px;min-height:36px;min-width:36px;cursor:pointer}
+button:disabled{opacity:.36;cursor:default}.fab .primary{border-radius:50%;min-height:44px;min-width:44px;background:#345475}
+.fab .action{display:none}.fab.open .action{display:block}.fab button[hidden]{display:none}
+.panel{position:absolute;bottom:12px;left:12px;right:12px;background:#132236eb;border:1px solid #405875;border-radius:10px;z-index:6;padding:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.panel[hidden]{display:none}.panel input{min-width:120px;flex:1;border:1px solid #526d8e;background:#0b1422;color:#fff;padding:9px;border-radius:7px}.status{font-size:13px;color:#adbed5;max-width:1280px;width:100%;text-align:center}
+</style></head><body>
+<header><div><h1>EasyADB · 画面映射</h1><div class="hint warn">M1 功能验证版：无公网鉴权，仅限可信网络使用</div></div><div id="status" role="status">正在连接映射画面…</div></header>
+<main><section class="screen" id="screen" aria-label="映射画面">
+<video id="video" autoplay muted playsinline aria-label="设备实时画面"></video>
+<div class="fab" id="fab">
+<button class="action" id="wake" title="唤醒主屏">☀</button>
+<button class="action" id="toggle" title="启用远程控制" disabled>⏻</button>
+<button class="action" id="textButton" title="文字与按键输入" disabled>⌨</button>
+<button class="action" id="fullscreen" title="全屏">⛶</button>
+<button class="action" id="back" title="返回" disabled>↩</button>
+<button class="action" id="home" title="主页" disabled>⌂</button>
+<button class="action" id="recents" title="最近任务" disabled>▣</button>
+<button class="primary" id="menu" title="展开操作" aria-expanded="false">☰</button>
+</div>
+<form class="panel" id="panel" hidden><input id="input" maxlength="300" autocomplete="off" placeholder="ASCII 文本（1～300 字符）"><button type="submit">发送</button><button type="button" id="enter">回车</button><button type="button" id="backspace">退格</button><button type="button" id="closePanel">关闭</button></form>
+</section></main>
+<div class="status" id="detail">映射页仅提供这一张实时画面，不提供设备管理入口。</div>
+<script src="/m2-webrtc.js"></script><script src="/m2-touch.js"></script><script src="/mapping.js"></script></body></html>
