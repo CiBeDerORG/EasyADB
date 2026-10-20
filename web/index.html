@@ -141,6 +141,9 @@ dialog.quality-settings-dialog::backdrop{background:#030816b8;backdrop-filter:bl
 .quality-setting-check input{width:17px;height:17px;padding:0;flex:none;accent-color:#6a9cf0}
 .quality-setting-check input:disabled{cursor:not-allowed}
 .quality-playback>.muted{margin:8px 0 0}
+.quality-unlock-entry{display:grid;gap:6px;margin-top:13px}
+.quality-unlock-input{width:100%;height:38px}
+.quality-playback .quality-unlock-entry+.muted{margin-top:5px}
 .quality-settings-form .modal-actions{margin-top:2px}
 @media(max-width:480px){.quality-settings-fields{grid-template-columns:minmax(0,1fr)}}
 .muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
@@ -1208,6 +1211,10 @@ multiView=EasyADBMulti.create({
  onProjectionStarted:()=>collapseInventory(true),
  onOpenManagement:()=>expandInventory(),
  onDeviceDisconnected:()=>load(true), // reload saved state only; never adb connect
+ readUnlockSettings:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/unlock')).json(),
+ saveUnlockSettings:async(id,password)=>(await api('/api/devices/'+encodeURIComponent(id)+'/unlock',{
+  method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})
+ })).json(),
  runPreflight:async id=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/preflight',{method:'POST'})).json(),
  runVideoProbe:async(id,profile)=>(await api('/api/devices/'+encodeURIComponent(id)+'/m2/video-probe',{
   method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile})
