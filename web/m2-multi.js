@@ -4,7 +4,7 @@
  */
 (function(root){
 'use strict';
-const MAX_DEVICES=4;
+const MAX_DEVICES=20;
 const KEYS=[['back','返回'],['home','主页'],['recents','最近任务'],['enter','回车'],['backspace','退格']];
 const make=(tag,cls='',label)=>{
  const e=document.createElement(tag);
