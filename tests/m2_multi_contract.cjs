@@ -469,7 +469,8 @@ c.emit('diagnostic',{session_id:'second-b',stage:'streaming',
  control_warning:'android_input_permission'});
 assert.equal(cc.permissionWarningShown,true);
 assert.equal(cc.enabled,false,'Android denial disables only this device control');
-assert.equal(cc.nav.slice(0,3).every(b=>b.hidden),true,'input denial hides nav');
+assert.equal(cc.nav.slice(0,3).every(b=>b.disabled),true,'input denial disables fixed navigation');
+assert.equal(cc.nav.slice(0,3).every(b=>b.hidden!==true),true,'input denial keeps navigation mounted with FAB');
 assert.equal(cc.form.hidden,true,'input denial closes text entry');
 assert.equal(cc.textButton.disabled,true,'do not imply refused Android input still works');
 assert(c.sent.some(msg=>msg.includes('"type":"control_disable"')));
