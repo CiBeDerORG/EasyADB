@@ -34,7 +34,7 @@ from .castplus_lab import CastError
 from .core.config import load_settings
 from .core.runtime import build_runtime
 from .api.static import router as static_router
-from .services.operations import device_lock, device_locks
+from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
 # integrations replace app.store/manager/live_registry directly.
@@ -264,23 +264,29 @@ def create_group(payload: GroupInput):
 
 @app.put("/api/groups/{group_name}", dependencies=[Depends(authorize)])
 def update_group(group_name: str, payload: GroupInput):
-    name, prefix = clean_group(payload)
-    old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
-    if any(display_lab.has_pending(id) for id in old_members):
-        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
     try:
-        result = store.update_group(group_name, name, prefix)
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, "分组名称已存在") from None
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
-    if result is None:
-        raise HTTPException(404, "找不到该分组")
-    for device_id in old_members:
-        live_registry.stop_for(device_id)
-        manager.clear(device_id)
-    return result
+        with group_operation(_discovery_guard, _discovery_locks, group_name):
+            with membership_lock():
+                name, prefix = clean_group(payload)
+                old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
+                with device_locks(manager, old_members):
+                    if any(display_lab.has_pending(id) for id in old_members):
+                        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
+                    try:
+                        result = store.update_group(group_name, name, prefix)
+                    except sqlite3.IntegrityError:
+                        raise HTTPException(409, "分组名称已存在") from None
+                    except ValueError as exc:
+                        raise HTTPException(409, str(exc)) from None
+                    if result is None:
+                        raise HTTPException(404, "找不到该分组")
+                    for device_id in old_members:
+                        live_registry.stop_for(device_id)
+                        manager.clear(device_id)
+                    return result
 
+    except GroupBusy:
+        raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
 
 @app.put("/api/groups/{group_name}/discovery", dependencies=[Depends(authorize)])
 def configure_group_discovery(group_name: str, payload: GroupDiscoveryInput):
@@ -341,22 +347,23 @@ def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None 
             return {"authorized": True, "found": len(scan_result["devices"])}
         # Lock devices in stable order. Never override an active ADB or live
         # screen session: next explicit scan can update it when idle.
-        group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
-                               key=lambda d: d["id"])
-        with device_locks(manager, (device["id"] for device in group_devices)):
-            blocked = set()
-            for device in group_devices:
-                if manager.snapshot(device)["status"] == "connected" or display_lab.has_pending(device["id"]):
-                    blocked.add(device["id"])
-                    continue
-                with live_registry.lock:
-                    live = live_registry.sessions.get(device["id"])
-                    if live is not None and not live_registry.is_cleaned(live):
+        with membership_lock():
+            group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
+                                   key=lambda d: d["id"])
+            with device_locks(manager, (device["id"] for device in group_devices)):
+                blocked = set()
+                for device in group_devices:
+                    if manager.snapshot(device)["status"] == "connected" or display_lab.has_pending(device["id"]):
                         blocked.add(device["id"])
-            try:
-                return store.apply_group_discovery(group_name, scan_result, blocked)
-            except ValueError as exc:
-                raise HTTPException(409, str(exc)) from None
+                        continue
+                    with live_registry.lock:
+                        live = live_registry.sessions.get(device["id"])
+                        if live is not None and not live_registry.is_cleaned(live):
+                            blocked.add(device["id"])
+                try:
+                    return store.apply_group_discovery(group_name, scan_result, blocked)
+                except ValueError as exc:
+                    raise HTTPException(409, str(exc)) from None
     finally:
         mutex.release()
 
@@ -382,31 +389,39 @@ def group_discovery_last(group_name: str):
 
 @app.delete("/api/groups/{group_name}", dependencies=[Depends(authorize)])
 def delete_group(group_name: str):
-    # Clear the cached route after the DB transaction has safely moved all
-    # members to the ungrouped category; never disconnect or delete a device.
-    if any(display_lab.has_pending(d["id"]) for d in store.list()
-           if d["group_name"] == group_name):
-        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
-    result = store.delete_group(group_name)
-    if result is None:
-        raise HTTPException(404, "找不到该分组")
-    for device_id in result["device_ids"]:
-        live_registry.stop_for(device_id)
-        manager.clear(device_id)
-    return {"deleted": True, "moved_count": result["moved_count"]}
+    try:
+        with group_operation(_discovery_guard, _discovery_locks, group_name):
+            with membership_lock():
+                old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
+                with device_locks(manager, old_members):
+                    # Clear the cached route after the DB transaction has safely moved all
+                    # members to the ungrouped category; never disconnect or delete a device.
+                    if any(display_lab.has_pending(d["id"]) for d in store.list()
+                           if d["group_name"] == group_name):
+                        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
+                    result = store.delete_group(group_name)
+                    if result is None:
+                        raise HTTPException(404, "找不到该分组")
+                    for device_id in result["device_ids"]:
+                        live_registry.stop_for(device_id)
+                        manager.clear(device_id)
+                    return {"deleted": True, "moved_count": result["moved_count"]}
 
 
+    except GroupBusy:
+        raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
 
 @app.post("/api/devices", status_code=201, dependencies=[Depends(authorize)])
 def create_device(payload: DeviceInput):
-    data = clean_input(payload)
-    try:
-        device = store.create(data)
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
-    return manager.snapshot(device)
+    with membership_lock():
+        data = clean_input(payload)
+        try:
+            device = store.create(data)
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return manager.snapshot(device)
 
 
 @app.post("/api/devices/refresh", dependencies=[Depends(authorize)])
@@ -416,23 +431,24 @@ def refresh_devices():
 
 @app.put("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def update_device(device_id: str, payload: DeviceInput):
-    with device_lock(manager, device_id):
-        if display_lab.has_pending(device_id):
-            raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-        original = get_device(device_id)
-        data = clean_input(payload)
-        try:
-            updated = store.update(device_id, data)
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from None
-        if not updated:
-            raise HTTPException(404, "找不到该设备")
-        if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
-            live_registry.stop_for(device_id)
-            manager.clear(device_id)
-        return manager.snapshot(updated)
+    with membership_lock():
+        with device_lock(manager, device_id):
+            if display_lab.has_pending(device_id):
+                raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
+            original = get_device(device_id)
+            data = clean_input(payload)
+            try:
+                updated = store.update(device_id, data)
+            except sqlite3.IntegrityError:
+                raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+            if not updated:
+                raise HTTPException(404, "找不到该设备")
+            if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
+                live_registry.stop_for(device_id)
+                manager.clear(device_id)
+            return manager.snapshot(updated)
 
 
 @app.get("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
@@ -460,16 +476,17 @@ def set_unlock_state(device_id: str, payload: UnlockInput):
 
 @app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
-    with device_lock(manager, device_id):
-        if display_lab.has_pending(device_id):
-            raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-        get_device(device_id)
-        if not store.delete(device_id):
-            raise HTTPException(404, "找不到该设备")
-        live_registry.stop_for(device_id)
-        manager.clear(device_id)
-        # Deliberately don't adb disconnect: other clients may be using the target.
-        return {"deleted": True}
+    with membership_lock():
+        with device_lock(manager, device_id):
+            if display_lab.has_pending(device_id):
+                raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
+            get_device(device_id)
+            if not store.delete(device_id):
+                raise HTTPException(404, "找不到该设备")
+            live_registry.stop_for(device_id)
+            manager.clear(device_id)
+            # Deliberately don't adb disconnect: other clients may be using the target.
+            return {"deleted": True}
 
 
 @app.put("/api/devices/{device_id}/temp-address", dependencies=[Depends(authorize)])
