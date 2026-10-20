@@ -63,8 +63,8 @@ const briefQuality=v=>v.profile==='custom'
   (v.experimental_resolution?' / '+v.dpi+' DPI':'')
  :(CHOICES.find(x=>x[0]===v.profile)||CHOICES[0])[1];
 class MultiView{
- constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,onProjectionStarted,onOpenManagement}){
-  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove});
+ constructor({picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,onProjectionStarted,onOpenManagement,readUnlockSettings,saveUnlockSettings}){
+  Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,readUnlockSettings,saveUnlockSettings});
   this.onProjectionStarted=onProjectionStarted;this.onOpenManagement=onOpenManagement;
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
@@ -328,6 +328,23 @@ class MultiView{
   };
   selectors.max_size.addEventListener('change',syncExperiment);syncExperiment();
   section.append(latency,screenLabel,experimentHint);
+  const unlockLabel=make('label','quality-unlock-entry','开屏密码（可选）');
+  const unlockInput=make('input','quality-unlock-input');
+  unlockInput.type='password';unlockInput.maxLength=32;unlockInput.autocomplete='new-password';
+  unlockInput.placeholder='4～32 位英文数字；留空表示保留原密码';
+  unlockInput.setAttribute('aria-label',d.name+' 开屏密码');
+  const unlockHint=make('p','muted','配置后，单次/批量投屏自动亮屏；仅确认锁屏时滑动、输入密码和回车。');
+  const unlockState=make('p','muted','密码状态：正在读取…');
+  const clearLabel=make('label','quality-setting-check'),clear=make('input');
+  clear.type='checkbox';clearLabel.append(clear,make('span','','清除已保存的开屏密码'));
+  unlockInput.addEventListener('input',()=>{if(unlockInput.value)clear.checked=false;});
+  clear.addEventListener('change',()=>{if(clear.checked)unlockInput.value='';});
+  unlockLabel.append(unlockInput);section.append(unlockLabel,unlockHint,unlockState,clearLabel);
+  if(this.readUnlockSettings){
+   Promise.resolve(this.readUnlockSettings(d.id)).then(state=>{
+    if(dialog.open)unlockState.textContent='密码状态：'+(state.configured?'已配置（不会回显）':'未配置');
+   }).catch(()=>{if(dialog.open)unlockState.textContent='密码状态：读取失败，请检查服务端。';});
+  }else unlockState.textContent='密码状态：未配置';
   const footer=make('div','modal-actions'),cancel=make('button','secondary','取消'),
    save=make('button','','保存设置');
   cancel.type='button';save.type='submit';footer.append(cancel,save);
@@ -341,16 +358,30 @@ class MultiView{
    event.preventDefault();
    const resolution=selectors.max_size.value;
    const experiment=resolution.startsWith('exp:')?resolution.slice(4):null;
-   this.setChoice(d.id,{
-    profile:'custom',
-    max_size:experiment?previous.max_size:Number(resolution),
-    experimental_resolution:experiment,
-    video_bit_rate:Number(selectors.video_bit_rate.value),
-    max_fps:Number(selectors.max_fps.value),dpi:Number(selectors.dpi.value),
-    low_latency:low.checked,screen_off:!experiment&&screenOff.checked
-   });
-   this.status(d.name+'：投屏参数已保存，下次投屏生效。');
-   dismiss();
+   const password=unlockInput.value,remove=clear.checked;
+   if(password&&!/^[A-Za-z0-9]{4,32}$/.test(password)){
+    unlockState.textContent='仅支持 4～32 位英文数字密码';return;
+   }
+   const finalize=()=>{
+    if(!dialog.open)return;
+    this.setChoice(d.id,{
+     profile:'custom',
+     max_size:experiment?previous.max_size:Number(resolution),
+     experimental_resolution:experiment,
+     video_bit_rate:Number(selectors.video_bit_rate.value),
+     max_fps:Number(selectors.max_fps.value),dpi:Number(selectors.dpi.value),
+     low_latency:low.checked,screen_off:!experiment&&screenOff.checked
+    });
+    unlockInput.value='';
+    this.status(d.name+'：投屏参数已保存，下次投屏生效。');
+    dismiss();
+   };
+   if((password||remove)&&this.saveUnlockSettings){
+    save.disabled=true;
+    Promise.resolve(this.saveUnlockSettings(d.id,remove?'':password))
+     .then(finalize).catch(()=>{save.disabled=false;
+      unlockState.textContent='开屏密码保存失败，请检查服务端并重试。';});
+   }else finalize();
   });
   root.document.body.append(dialog);this.settingsDialog=dialog;dialog.showModal();
   return true;
@@ -737,6 +768,8 @@ class MultiView{
      });
     }else if(m.type==='screen_power_notice'){
      mark(m.message||'已发送显示屏电源指令');
+    }else if(m.type==='unlock_notice'){
+     mark(m.message||'本次自动解锁流程结束',m.error===true);
     }else if(m.type==='wake_accepted'){
      card.wakePending=false;mark(m.message||'已发送唤醒请求');refresh();
     }else if(m.type==='wake_error'){
