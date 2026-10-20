@@ -68,18 +68,18 @@ class MultiView{
   this.onProjectionStarted=onProjectionStarted;this.onOpenManagement=onOpenManagement;
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
   this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
-  this.videoEngine='mse';this.engineReady=true;this.engineSupported=true;
+  this.videoEngine='webrtc';this.engineReady=true;this.engineSupported=true;
   if(typeof root.fetch==='function'){
    this.engineReady=false;
    root.fetch('/api/m2/video-engine',{cache:'no-store'})
     .then(r=>{if(!r.ok)throw Error('无法加载服务端视频引擎配置');return r.json();})
     .then(data=>{
-     if(!['mse','webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
+     if(!['webrtc','webcodecs'].includes(data.engine))throw Error('未知视频引擎');
      this.videoEngine=data.engine;this.engineSupported=data.implemented===true;
      this.engineReady=true;
-     this.status('当前视频引擎：'+({mse:'FFmpeg + MSE',webrtc:'WebRTC',
+     this.status('当前视频引擎：'+({webrtc:'WebRTC',
       webcodecs:'WebCodecs（尚未实现）'})[data.engine]+
-      (this.engineSupported?'':'；请在 .env 改用 mse 或 webrtc'),!this.engineSupported);
+      (this.engineSupported?'':'；请在 .env 改用 webrtc'),!this.engineSupported);
      this.updatePicker();
     }).catch(e=>{this.engineReady=false;this.status(e.message+'；暂不允许启动投屏',true);});
   }

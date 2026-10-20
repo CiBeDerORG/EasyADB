@@ -72,12 +72,12 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             await websocket.close(code=1008, reason="访问密钥错误")
             return
         if VIDEO_ENGINE == "webcodecs":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 mse 或 webrtc"})
+            await websocket.send_json({"type": "error", "message": "WebCodecs 接口已预留，尚未实现；请在 .env 选择 webrtc"})
             return
         if initial.get("player") == "webcodecs":
-            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现，请在 .env 选择 mse 或 webrtc"})
+            await websocket.send_json({"type": "error", "message": "WebCodecs 尚未实现，请在 .env 选择 webrtc"})
             return
-        if initial.get("player", "mse") != VIDEO_ENGINE:
+        if initial.get("player", "webrtc") != VIDEO_ENGINE:
             await websocket.send_json({"type": "error", "message": "播放器与服务器 EASYADB_VIDEO_ENGINE 配置不一致，请刷新网页"})
             return
         profile = initial.get("profile")
@@ -249,7 +249,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     if raw == "stop":
                         manual_stop = True
                         break
-                    if len(raw) > (32768 if VIDEO_ENGINE == "webrtc" else 1024):
+                    if len(raw) > 32768:
                         break  # allow one bounded WebRTC SDP offer, not arbitrary commands
                     try:
                         message = json.loads(raw)
@@ -547,7 +547,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
                     "player": VIDEO_ENGINE,
-                    **({"format": "fmp4"} if VIDEO_ENGINE == "mse" else {}),
+                    
                     "requested": quality_settings, **payload
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
