@@ -115,8 +115,12 @@ case "${1:-}" in
     printf '%s\n%s\n%s\n%s\n' "$minutes" "$MODE" "$GIT_UID" "$BRANCH" > "$tmp"
     chmod 600 "$tmp"
     line="* * * * * /bin/sh '$SELF' run >> '$LOG' 2>&1 # $MARKER"
-    # crontab - installs the filtered table plus exactly one managed entry.
-    if ! { without_ours; printf '%s\n' "$line"; } | sed '/^$/d' | crontab -; then
+    # Read the old crontab COMPLETELY before starting crontab -.
+    # A simultaneous crontab -l / crontab - can otherwise race and drop
+    # unrelated jobs, even though our filtered entry is unique.
+    previous_table="$(without_ours)"
+    if ! { if [ -n "$previous_table" ]; then printf '%s\n' "$previous_table"; fi
+           printf '%s\n' "$line"; } | crontab -; then
       rm -f "$tmp"
       echo 'ERROR: could not install scheduled deployment into crontab.' >&2
       exit 1
@@ -150,7 +154,12 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { usage; exit 2; }
     require_cron
     if installed; then
-      without_ours | sed '/^$/d' | crontab -
+      previous_table="$(without_ours)"
+      if [ -n "$previous_table" ]; then
+        printf '%s\n' "$previous_table" | crontab -
+      else
+        printf '' | crontab -
+      fi
     fi
     echo 'Disabled: future scheduled checks stopped (an already running build is not interrupted).'
     ;;
