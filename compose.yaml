@@ -18,8 +18,15 @@ services:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
       EASYADB_DB: /app/data/devices.sqlite3
       EASYADB_VIDEO_ENGINE: ${EASYADB_VIDEO_ENGINE:-mse}
+      EASYADB_MAPPING_ENABLED: ${EASYADB_MAPPING_ENABLED:-false}
+      EASYADB_MAPPING_HOST: 0.0.0.0
+      EASYADB_MAPPING_PORT: 8001
+      EASYADB_MAPPING_EXTERNAL_PORT: ${EASYADB_MAPPING_PORT:-8766}
+      EASYADB_MAPPING_PUBLIC_URL: ${EASYADB_MAPPING_PUBLIC_URL:-}
     ports:
       - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+      # M1 maps to loopback unless explicitly bound to a trusted LAN interface.
+      - "${EASYADB_MAPPING_BIND_IP:-127.0.0.1}:${EASYADB_MAPPING_PORT:-8766}:8001"
     volumes:
       - ./data/adb:/root/.android
       - ./data/storage:/app/data
