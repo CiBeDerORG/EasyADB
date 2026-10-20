@@ -56,3 +56,15 @@ def test_single_oversized_access_unit_never_enters_queue(monkeypatch):
         t.stop()
         await asyncio.sleep(0)
     asyncio.run(run())
+
+
+def test_start_concurrency_config_validation(tmp_path):
+    import pytest
+    from server.core.config import load_settings
+    env = {"EASYADB_TOKEN": "local-test-token-123",
+           "EASYADB_DB": str(tmp_path / "resources.sqlite3")}
+    assert load_settings(env).max_starting == 3
+    assert load_settings({**env, "EASYADB_MAX_STARTING": "5"}).max_starting == 5
+    for value in ("0", "21", "many", "-1"):
+        with pytest.raises(RuntimeError, match="EASYADB_MAX_STARTING"):
+            load_settings({**env, "EASYADB_MAX_STARTING": value})

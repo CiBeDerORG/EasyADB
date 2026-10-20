@@ -10,6 +10,7 @@ class Settings:
     token: str
     root: Path
     db_path: str
+    max_starting: int = 3
 
 
 def load_settings(environ=None) -> Settings:
@@ -20,6 +21,12 @@ def load_settings(environ=None) -> Settings:
     token = env.get("EASYADB_TOKEN", "").strip()
     if len(token) < 12 or token == "REPLACE_WITH_RANDOM_LONG_TOKEN":
         raise RuntimeError("Set EASYADB_TOKEN to a unique token of at least 12 characters")
+    try:
+        max_starting = int(env.get("EASYADB_MAX_STARTING", "3"))
+    except ValueError:
+        raise RuntimeError("EASYADB_MAX_STARTING must be an integer 1..20") from None
+    if not 1 <= max_starting <= 20:
+        raise RuntimeError("EASYADB_MAX_STARTING must be an integer 1..20")
     root = Path(__file__).resolve().parents[2]
     return Settings(engine, token, root,
-                    env.get("EASYADB_DB", str(root / "data" / "devices.sqlite3")))
+                    env.get("EASYADB_DB", str(root / "data" / "devices.sqlite3")), max_starting)

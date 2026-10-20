@@ -32,6 +32,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     manager = source.manager
     live_registry = source.live_registry
     session_manager = source.session_manager
+    resource_budget = source.resource_budget
     display_lab = source.display_lab
     LiveVideo = source.LiveVideo
     resolve_live_quality = source.resolve_live_quality
@@ -64,6 +65,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     touch_ready = asyncio.Event()
     manual_stop = False
     worker_launch_attempted = False
+    budget_claimed = False
     try:
         try:
             initial = await asyncio.wait_for(websocket.receive_json(), timeout=8)
@@ -199,6 +201,15 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         if error:
             await websocket.send_json({"type": "error", "message": error})
             return
+        # Bound parallel SDP/ICE and scrcpy startup without a global device lock.
+        if not resource_budget.acquire_start(device_id, stream.session_id):
+            await websocket.send_json({
+                "type": "error", "code": "start_budget_full",
+                "session_id": stream.session_id,
+                "message": "当前 WebRTC 启动并发已满，请稍后手动重试"
+            })
+            return
+        budget_claimed = True
         session_manager.starting(device_id, stream)
         if experiment:
             display_lab._log(device_id, {"new": "A1", "new_settings": "A2",
@@ -523,6 +534,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     "type": "diagnostic", "session_id": stream.session_id,
                     **stream.diagnostics(),
                     "session_phase": (session_manager.snapshot(device_id, stream) or {}).get("phase"),
+                    "start_budget": resource_budget.snapshot(),
                     "ws_video_bytes": ws_video_bytes,
                     "ws_video_chunks": ws_video_chunks,
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
@@ -552,6 +564,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             except queue.Empty:
                 continue
             if kind == "init":
+                if budget_claimed:
+                    resource_budget.release_start(device_id, stream.session_id)
+                    budget_claimed = False
                 session_manager.running(device_id, stream)
                 # Publish control readiness BEFORE exposing init to the browser.
                 # Otherwise a fast auto-control/unlock request races with this
