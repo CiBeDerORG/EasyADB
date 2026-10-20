@@ -50,7 +50,8 @@ from .api.schemas import (Target, PairTarget, PairExisting, DeviceInput, RouteIn
 from .api.validation import clean_group, address, clean_input
 from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .api.live_handler import handle_live_video
-from .api import lab_handlers
+from .api import lab_handlers, screenshots, legacy_handlers
+from .services.live_coordination import confirm_adb_loss, close_webrtc_peer
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
@@ -121,17 +122,7 @@ def is_connected(serial):
 
 
 def capture(serial):
-    try:
-        result = subprocess.run(["adb", "-s", serial, "exec-out", "screencap", "-p"],
-                                capture_output=True, timeout=20, check=False)
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "截图超时") from None
-    except FileNotFoundError:
-        raise HTTPException(503, "服务器未安装 ADB") from None
-    if result.returncode != 0 or not result.stdout.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise HTTPException(502, "截图失败，请检查手机屏幕或 ADB 连接")
-    return Response(result.stdout, media_type="image/png",
-                    headers={"Cache-Control": "no-store"})
+    return screenshots.capture_screen(sys.modules[__name__], serial)
 
 
 def pair_at(ip, port, code):
@@ -375,27 +366,7 @@ def castplus_restore(device_id: str):
     return lab_handlers.castplus_restore(sys.modules[__name__], device_id)
 
 async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
-    """One event-triggered check after a running stream fails, NEVER polling.
-
-    A scrcpy video/control EOF alone does not prove ADB is offline (the
-    Android encoder or scrcpy process may also fail). Change M1's cached
-    device status only after get-state confirms the selected serial is gone.
-    Recheck the route under its device lock so stale sessions cannot mark a
-    newly chosen IP disconnected.
-    """
-    try:
-        still_online = await asyncio.to_thread(is_connected, serial)
-    except (HTTPException, OSError):
-        return False  # unknown is NOT a confirmed offline device
-    if still_online:
-        return False
-    with device_lock(manager, device_id):
-        current = store.get(device_id)
-        if (current and selected_address(current) == serial
-                and manager.serial_for(current) == serial):
-            manager._set_state(device_id, "disconnected",
-                               "当前 ADB 地址已断开；请手动检查连接并重新连接")
-    return True
+    return await confirm_adb_loss(sys.modules[__name__], device_id, serial)
 
 
 def m2_video_engine():
@@ -404,23 +375,7 @@ def m2_video_engine():
 
 
 async def _close_webrtc_peer(pc, stream, device_id, registry):
-    """Keep the original aiortc close alive beyond the WS wait deadline.
-
-    Cancelling pc.close() halfway can leave aiortc internally marked closed
-    without finishing its transport teardown. Reuse this slot only when both
-    peer and scrcpy/ADB worker cleanup have been confirmed.
-    """
-    try:
-        await pc.close()
-    except Exception:
-        logging.getLogger(__name__).exception(
-            "WebRTC peer close failed for device %s session %s; keeping slot",
-            device_id, stream.session_id)
-        return False
-    stream.peer_cleanup_complete = True
-    if registry.is_cleaned(stream):
-        registry.release(device_id, stream)
-    return True
+    return await close_webrtc_peer(pc, stream, device_id, registry)
 
 
 async def m2_live_video(websocket: WebSocket, device_id: str):
@@ -428,43 +383,20 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     return await handle_live_video(websocket, device_id, sys.modules[__name__])
 
 def device_screenshot(device_id: str):
-    with device_lock(manager, device_id):
-        device = get_device(device_id)
-        serial = manager.serial_for(device)
-        if not serial or not is_connected(serial):
-            manager._set_state(device_id, "disconnected", "当前 ADB 地址已断开")
-            raise HTTPException(409, "设备未连接，请重新连接后再截图")
-        return capture(serial)
+    return screenshots.screenshot_device(sys.modules[__name__], device_id)
 
 
 # Backward-compatible MVP routes (not used by the M1 page).
 def connect(target: Target):
-    global _legacy_serial
-    serial = address(target.ip, target.port)
-    result = adb("connect", serial, timeout=18)
-    if result.returncode != 0 or not is_connected(serial):
-        raise HTTPException(502, "ADB 连接失败，请确认已配对、端口可达且无线调试已开启")
-    with _legacy_lock:
-        _legacy_serial = serial
-    return {"connected": True, "serial": serial, "message": "连接成功"}
+    return legacy_handlers.connect_legacy(sys.modules[__name__], target)
 
 
 def status():
-    with _legacy_lock:
-        serial = _legacy_serial
-    if not serial or not is_connected(serial):
-        return {"connected": False, "serial": serial, "model": None}
-    model = adb("-s", serial, "shell", "getprop", "ro.product.model", timeout=6)
-    return {"connected": True, "serial": serial,
-            "model": model.stdout.strip() if model.returncode == 0 else None}
+    return legacy_handlers.legacy_status(sys.modules[__name__])
 
 
 def screenshot():
-    with _legacy_lock:
-        serial = _legacy_serial
-    if not serial or not is_connected(serial):
-        raise HTTPException(409, "设备未连接")
-    return capture(serial)
+    return legacy_handlers.legacy_screenshot(sys.modules[__name__])
 
 
 # Register all API presentation contracts after importing the original handlers.
