@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .devices import DeviceManager, selected_address
@@ -31,19 +31,17 @@ from .m2_touch import InvalidTouch
 from .m2_unlock import validate_password, automatic_unlock
 from .display_lab import DisplayLab, LabError
 from .castplus_lab import CastError
+from .core.config import load_settings
+from .core.runtime import build_runtime
+from .api.static import router as static_router
 
-VIDEO_ENGINE = os.getenv("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
-if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
-    raise RuntimeError("EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs")
-
-TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
-if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
-    raise RuntimeError("Set EASYADB_TOKEN to a unique token of at least 12 characters")
-
-ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = os.getenv("EASYADB_DB", str(ROOT / "data" / "devices.sqlite3"))
-store = DeviceStore(DB_PATH)
-discovery_client = RpcdDiscovery()
+# Module-level aliases remain during incremental migration: existing tests and
+# integrations replace app.store/manager/live_registry directly.
+settings = load_settings()
+VIDEO_ENGINE = settings.video_engine
+TOKEN = settings.token
+ROOT = settings.root
+DB_PATH = settings.db_path
 _discovery_guard = threading.RLock()
 _discovery_locks = {}
 
@@ -58,9 +56,12 @@ def adb(*args, timeout=15, input_text=None):
         raise HTTPException(503, "服务器未安装 ADB") from None
 
 
-manager = DeviceManager(store, adb)
-live_registry = LiveRegistry()
-display_lab = DisplayLab(adb, DB_PATH + '.display-lab.json')
+runtime = build_runtime(DB_PATH, adb)
+store = runtime.store
+discovery_client = runtime.discovery_client
+manager = runtime.manager
+live_registry = runtime.live_registry
+display_lab = runtime.display_lab
 
 # Only active, user-started WebSocket sessions have a watchdog. The client
 # acknowledges existing diagnostic events rather than running a hidden timer.
@@ -79,6 +80,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(static_router)
 
 # Retain the first MVP endpoints for compatibility; M1 routes always use device IDs.
 _legacy_serial = None
@@ -204,59 +206,6 @@ def capture(serial):
         raise HTTPException(502, "截图失败，请检查手机屏幕或 ADB 连接")
     return Response(result.stdout, media_type="image/png",
                     headers={"Cache-Control": "no-store"})
-
-
-@app.get("/")
-def home():
-    return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-player.js")
-def m2_player_script():
-    return FileResponse(ROOT / "web" / "m2-player.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-webrtc.js")
-def m2_webrtc_script():
-    return FileResponse(ROOT / "web" / "m2-webrtc.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-traffic.js")
-def m2_traffic_script():
-    return FileResponse(ROOT / "web" / "m2-traffic.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-touch.js")
-def m2_touch_script():
-    return FileResponse(ROOT / "web" / "m2-touch.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-metrics.js")
-def m2_metrics_script():
-    return FileResponse(ROOT / "web" / "m2-metrics.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/display-lab.js")
-def display_lab_script():
-    return FileResponse(ROOT / "web" / "display-lab.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-multi.js")
-def m2_multi_script():
-    return FileResponse(ROOT / "web" / "m2-multi.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
-
-
-@app.get("/m2-group.js")
-def m2_group_script():
-    return FileResponse(ROOT / "web" / "m2-group.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
 
 
 def pair_at(ip, port, code):
