@@ -38,6 +38,8 @@ from .core.lifecycle import managed_resources
 from .core.exceptions import DomainError
 from .services.group_discovery import run_group_scan
 from .services.device_service import create_device_record, update_device_record, delete_device_record
+from .services.device_control import (unlock_state_record, set_unlock_record, set_temporary_record,
+                                      select_route_record, probe_device_record)
 from .services.group_service import (create_group_record, update_group_record, delete_group_record,
                              configure_group_discovery_record, clear_group_discovery_record)
 from .api.static import router as static_router
@@ -262,25 +264,16 @@ def update_device(device_id: str, payload: DeviceInput):
         raise HTTPException(exc.status_code, exc.detail) from None
 
 def unlock_state(device_id: str):
-    get_device(device_id)
-    return {"configured": store.unlock_configured(device_id)}
-
+    try:
+        return unlock_state_record(device_id, store=store)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def set_unlock_state(device_id: str, payload: UnlockInput):
-    with device_lock(manager, device_id):
-        get_device(device_id)
-        if payload.password is None:
-            return {"configured": store.unlock_configured(device_id)}
-        if payload.password == "":
-            store.clear_unlock_secret(device_id)
-            return {"configured": False}
-        try:
-            validate_password(payload.password)
-            store.save_unlock_secret(device_id, payload.password)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from None
-        return {"configured": True}
-
+    try:
+        return set_unlock_record(device_id, payload.password, store=store, manager=manager)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def delete_device(device_id: str):
     try:
@@ -292,75 +285,34 @@ def delete_device(device_id: str):
         raise HTTPException(exc.status_code, exc.detail) from None
 
 def set_device_temp_address(device_id: str, payload: TempAddressInput):
-    # Persist only; editing/removing the selected route invalidates cached ADB.
-    # Reject while a server-side live slot is owned (including cleanup).
-    with device_lock(manager, device_id):
-        if display_lab.has_pending(device_id):
-            raise HTTPException(409, "请先恢复该设备的副屏实验，再修改线路")
-        original = get_device(device_id)
-        with live_registry.lock:
-            session = live_registry.sessions.get(device_id)
-            if session is not None and not live_registry.is_cleaned(session):
-                raise HTTPException(409, "该设备正在投屏或清理，请结束后修改临时地址")
-        if payload.ip is None:
-            if payload.port is not None:
-                raise HTTPException(400, "移除临时 IP 时不可单独修改共用端口")
-            ip, port = None, original["port"]
-        else:
-            # Omitted port retains the current shared value (existing API clients).
-            # An explicitly supplied port changes mesh/LAN/temp together.
-            port = original["port"] if payload.port is None else payload.port
-            serial = address(payload.ip, port)
-            ip = serial.rsplit(":", 1)[0]
-        try:
-            result = store.set_temp_address(device_id, ip, port)
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, "共用 ADB 地址已存在") from None
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from None
-        if result is None:
-            raise HTTPException(404, "找不到该设备")
-        if selected_address(original) != selected_address(result):
-            manager.clear(device_id)
-        return manager.snapshot(result)
-
+    try:
+        return set_temporary_record(
+            device_id, payload.ip, payload.port, address, store=store, manager=manager,
+            display_lab=display_lab, live_registry=live_registry,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def select_device_route(device_id: str, payload: RouteInput):
-    # Use the same lock as connect, refresh and screenshot. Switching changes
-    # persisted preference only; no hidden adb connect or automatic fallback.
-    with device_lock(manager, device_id):
-        if display_lab.has_pending(device_id):
-            raise HTTPException(409, "请先恢复该设备的副屏实验，再切换线路")
-        if payload.route not in ("mesh", "lan", "temp"):
-            raise HTTPException(400, "请选择组网 IP、内网 IP 或临时 IP")
-        try:
-            result = store.select_route(device_id, payload.route)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from None
-        if not result:
-            raise HTTPException(404, "找不到该设备")
-        live_registry.stop_for(device_id)
-        manager.clear(device_id)
-        return manager.snapshot(result)
-
+    try:
+        return select_route_record(
+            device_id, payload.route, store=store, manager=manager,
+            display_lab=display_lab, live_registry=live_registry,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def connect_device(device_id: str):
-    get_device(device_id)
-    result = manager.probe(device_id, force_connect=True)
-    if result is None:
-        raise HTTPException(404, "找不到该设备")
-    if result["status"] != "connected":
-        raise HTTPException(502, result["last_error"] or "ADB 连接失败")
-    return result
-
+    try:
+        return probe_device_record(device_id, store=store, manager=manager, force_connect=True)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def refresh_device(device_id: str):
-    get_device(device_id)
-    result = manager.probe(device_id)
-    if result is None:
-        raise HTTPException(404, "找不到该设备")
-    return result
-
+    try:
+        return probe_device_record(device_id, store=store, manager=manager, force_connect=False)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def m2_device_preflight(device_id: str):
     """User-initiated M2-00 capability check; no connect or scrcpy process."""
