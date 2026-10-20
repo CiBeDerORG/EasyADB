@@ -2,7 +2,7 @@
 set -eu
 
 # Update a known EasyADB development branch before doing Docker work.
-# Keep the M2 branch as the default, but NEVER silently switch an explicitly
+# Keep the M2 branch as the historical default, but NEVER silently switch an explicitly
 # checked-out display-lab experiment back to old M2 during normal builds.
 # EASYADB_SOURCE_BRANCH is an optional, strict allowlist override.
 # Keep Git under the original login user: root may not have their GitHub SSH key.
@@ -37,11 +37,15 @@ case "$SOURCE" in
     TARGET_BRANCH=feat/display-mode-lab ;;
   feat/m3-openwrt-discovery)
     TARGET_BRANCH=feat/m3-openwrt-discovery ;;
+  refactor/foundation-v1)
+    TARGET_BRANCH=refactor/foundation-v1 ;;
+  refactor/session-v2)
+    TARGET_BRANCH=refactor/session-v2 ;;
   feat/m2-web-control|"")
     TARGET_BRANCH=feat/m2-web-control ;;
   *)
     if [ -n "${EASYADB_SOURCE_BRANCH:-}" ]; then
-      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2, display-lab and m3-openwrt-discovery branches are allowed." >&2
+      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2, display-lab, M3, V1 and V2 branches are allowed." >&2
       exit 2
     fi
     # An unrelated checkout retains the original M2 default on an ordinary build.
