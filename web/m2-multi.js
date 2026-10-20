@@ -249,24 +249,31 @@ class MultiView{
   }
   if(this.launchQueue.some(item=>item.device.id===id))
    return {code:'queued',label:'排队中',active:true};
-  return {code:'idle',label:this.lastLiveStatus.get(id)||'未开启',active:false};
+  const last=this.lastLiveStatus.get(id)||'未开启';
+  return {code:/异常结束|清理未确认|启动失败/.test(last)?'error':'idle',
+   label:last,active:false};
  }
  projectionButton(d){
-  // The sole single-device stream control is rendered next to the ADB port.
-  // This is an owned, per-device session action; it does not modify batch selections.
-  const live=this.liveState(d.id);
-  const button=make('button','device-projector '+live.code,live.active?'■':'▶');
+  // The ADB port chip is the ONLY individual projection toggle; no extra
+  // adjacent icon, no bulk-selection mutation and no new ADB connection.
+  const live=this.liveState(d.id),adbReady=this.isAdbReady(d);
+  const state=live.active||adbReady?live.code:(d.connect_failed?'error':'disconnected');
+  const button=make('button','device-port device-projector '+state,'ADB '+d.port);
   button.type='button';
-  button.title=live.active?'关闭此设备投屏 · '+live.label:'开启此设备投屏 · '+live.label;
-  button.setAttribute('aria-label',d.name+' '+button.title);
+  button.title=live.active?'关闭此设备投屏 · '+live.label:
+   adbReady?'开启此设备投屏 · '+live.label:'ADB 未连接，请先连接设备';
+  button.setAttribute('aria-label',d.name+' · ADB '+d.port+' · '+button.title);
   button.setAttribute('aria-pressed',String(live.active));
+  button.setAttribute('data-projection-state',state);
   button.disabled=live.active
    ?live.code==='stopping'
-   :!this.isAdbReady(d)||this.opening||this.getManagementBusy?.()||
+   :!adbReady||this.opening||this.getManagementBusy?.()||
     this.checking.has(d.id)||this.cards.size>=MAX_DEVICES;
   button.addEventListener('click',()=>{
    if(button.disabled)return;
-   if(live.active)this.stopFor(d.id);else this.startFor(d.id);
+   // Re-read the live session at click time, not the state captured by render.
+   // This avoids stale buttons opening duplicate media sessions.
+   if(this.liveState(d.id).active)this.stopFor(d.id);else this.startFor(d.id);
   });
   return button;
  }
