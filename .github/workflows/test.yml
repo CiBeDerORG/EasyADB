@@ -1,4 +1,4 @@
-name: EasyADB M2/M3/V2 and OpenWrt regression
+name: EasyADB M2/M3/V2/V4 and OpenWrt regression
 on:
   push:
     branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery, refactor/foundation-v1, refactor/v2-session-governance, refactor/v4-frontend-standards]
@@ -26,13 +26,7 @@ jobs:
       - name: Verify V4 frontend standards
         if: github.ref == 'refs/heads/refactor/v4-frontend-standards'
         run: |
-          npm install --ignore-scripts --no-audit --no-fund
-          echo V4_LOCK_START
-          base64 -w 120 package-lock.json
-          echo V4_LOCK_END
-          echo V4_FORMAT_START
-          npx --no-install prettier tests/v4_frontend_standards.cjs | base64 -w 120
-          echo V4_FORMAT_END
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
           npm run format:check
           node tests/v4_frontend_standards.cjs

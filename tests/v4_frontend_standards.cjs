@@ -20,6 +20,7 @@ const kebabCase = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.(?:js|css)$/;
 const prettierIgnore = fs.readFileSync(path.join(root, '.prettierignore'), 'utf8');
 const eslintConfig = fs.readFileSync(path.join(root, 'eslint.config.mjs'), 'utf8');
 const packageInfo = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/test.yml'), 'utf8');
 
 function visit(directory) {
@@ -39,14 +40,19 @@ function visit(directory) {
     assert(!/^m[0-9]+-/.test(entry.name), `historical version in filename: ${relative}`);
     if (entry.name.endsWith('.js')) {
       const source = fs.readFileSync(absolute, 'utf8');
-      assert(!/\b(?:window|globalThis)\.EasyADB\w*\s*=/.test(source),
-        `new module must not publish window globals: ${relative}`);
+      assert(
+        !/\b(?:window|globalThis)\.EasyADB\w*\s*=/.test(source),
+        `new module must not publish window globals: ${relative}`,
+      );
     }
   }
 }
 
 assert.deepEqual(
-  fs.readdirSync(webRoot).filter((name) => name.endsWith('.js')).sort(),
+  fs
+    .readdirSync(webRoot)
+    .filter((name) => name.endsWith('.js'))
+    .sort(),
   [...legacyScripts].sort(),
   'root-level legacy script allowlist changed; move new scripts into named modules',
 );
@@ -61,18 +67,29 @@ visit(webRoot);
 assert.equal(packageInfo.private, true);
 assert.equal(packageInfo.devDependencies.eslint, '10.13.0');
 assert.equal(packageInfo.devDependencies.prettier, '3.9.10');
+assert.deepEqual(packageLock.packages[''].devDependencies, packageInfo.devDependencies);
 for (const script of ['lint', 'format:check', 'test:architecture']) {
   assert(packageInfo.scripts[script], `missing frontend check: ${script}`);
 }
 assert(workflow.includes('refactor/v4-frontend-standards'));
+assert(workflow.includes('npm ci --ignore-scripts --no-audit --no-fund'));
 assert(workflow.includes('npm run lint'));
 assert(workflow.includes('npm run format:check'));
 assert(workflow.includes('node tests/v4_frontend_standards.cjs'));
 assert(workflow.includes('run: python -m pytest -q'), 'must retain complete V2 Python suite');
 
 const standards = fs.readFileSync(path.join(root, 'docs/V4-FRONTEND-STANDARDS.md'), 'utf8');
-for (const rule of ['LiveSessionController', 'requestStopSession', 'dispose', 'sessionId',
-  'kebab-case', 'PascalCase', 'camelCase', 'UPPER_SNAKE_CASE', 'DIRTY']) {
+for (const rule of [
+  'LiveSessionController',
+  'requestStopSession',
+  'dispose',
+  'sessionId',
+  'kebab-case',
+  'PascalCase',
+  'camelCase',
+  'UPPER_SNAKE_CASE',
+  'DIRTY',
+]) {
   assert(standards.includes(rule), `missing architecture convention: ${rule}`);
 }
 console.log('V4-01 frontend naming and CI boundary gate passed');
