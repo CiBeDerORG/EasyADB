@@ -106,7 +106,7 @@ def test_ws_screen_off_is_boolean_and_wake_requires_same_session(monkeypatch, tm
                         json={"name": "Mate30", "ip": "10.10.10.2", "port": 5555}).json()
         mod.manager._set_state(d["id"], "connected", serial=d["selected_serial"], route="mesh")
         path = "/api/devices/" + d["id"] + "/m2/live"
-        initial = {"token": "local-test-token-123", "player": "mse", "profile": "baseline",
+        initial = {"token": "local-test-token-123", "player": "webrtc", "profile": "baseline",
                    "selected_serial": d["selected_serial"]}
         # Reject malformed settings before any stream or additional ADB work.
         with client.websocket_connect(path, headers=ORIGIN) as ws:

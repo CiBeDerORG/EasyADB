@@ -131,7 +131,7 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
             headers={"origin": "http://testserver"}
         ) as ws:
             ws.send_json({"token": "local-test-token-123", "profile": "baseline",
-                          "player": "mse", "selected_serial": device["selected_serial"]})
+                          "player": "webrtc", "selected_serial": device["selected_serial"]})
             msg = ws.receive_json()
             assert msg["type"] == "error" and "未能启动" in msg["message"]
         assert not app.live_registry.sessions
@@ -169,7 +169,7 @@ def test_unverified_cleanup_fails_closed_and_never_reports_ended(monkeypatch, tm
                                serial=device["selected_serial"], route="mesh")
         path = f"/api/devices/{device['id']}/m2/live"
         auth = {"token": "local-test-token-123", "profile": "baseline",
-                "player": "mse", "selected_serial": device["selected_serial"]}
+                "player": "webrtc", "selected_serial": device["selected_serial"]}
         with client.websocket_connect(path, headers={"origin": "http://testserver"}) as ws:
             ws.send_json(auth)
             for _ in range(8):

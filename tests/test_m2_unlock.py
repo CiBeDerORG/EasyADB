@@ -173,7 +173,7 @@ def test_manual_unlock_websocket_uses_current_saved_secret(monkeypatch, tmp_path
     with TestClient(mod.app) as client:
         with client.websocket_connect("/api/devices/"+device["id"]+"/m2/live",
                 headers={"origin":"http://testserver"}) as ws:
-            ws.send_json({"token":"local-test-token-123","player":"mse",
+            ws.send_json({"token":"local-test-token-123","player":"webrtc",
                           "profile":"baseline","selected_serial":device["ip"]+":5555"})
             sid=None
             for _ in range(10):

@@ -123,7 +123,7 @@ def test_two_device_sessions_and_controls_are_not_cross_routed(monkeypatch,tmp_p
                 headers={"origin":"http://testserver"})
         with open_ws(devices[0]) as a,open_ws(devices[1]) as b:
             for ws,d in zip((a,b),devices):
-                ws.send_json({"token":"local-test-token-123","player":"mse",
+                ws.send_json({"token":"local-test-token-123","player":"webrtc",
                               "profile":"baseline","selected_serial":d["selected_serial"]})
             aid=next_type(a,"starting")["session_id"]
             bid=next_type(b,"starting")["session_id"]

@@ -62,7 +62,7 @@ def register_device(mod, client):
     mod.manager._set_state(device["id"], "connected",
                            serial=device["selected_serial"], route="mesh")
     path = f"/api/devices/{device['id']}/m2/live"
-    auth = {"token": "local-test-token-123", "player": "mse",
+    auth = {"token": "local-test-token-123", "player": "webrtc",
             "profile": "baseline", "selected_serial": device["selected_serial"]}
     return device, path, auth
 

@@ -144,7 +144,7 @@ def test_invalid_ws_quality_is_rejected_before_adb_or_worker(monkeypatch, tmp_pa
                 "/api/devices/nonexistent/m2/live",
                 headers={"origin": "http://testserver"},
             ) as ws:
-                ws.send_json({"token": "local-test-token-123", "player": "mse",
+                ws.send_json({"token": "local-test-token-123", "player": "webrtc",
                               "selected_serial": "none", **case})
                 assert ws.receive_json()["type"] == "error"
 
@@ -193,7 +193,7 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
             f"/api/devices/{device['id']}/m2/live",
             headers={"origin": "http://testserver"},
         ) as ws:
-            ws.send_json({"token": "local-test-token-123", "player": "mse",
+            ws.send_json({"token": "local-test-token-123", "player": "webrtc",
                           "profile": "custom", "quality": quality, "selected_serial": serial,
                           **({"display_experiment": display} if virtual else {})})
             for _ in range(12):
