@@ -92,11 +92,8 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:19px}
 .modal-status{min-height:0;margin-top:12px}
 .modal-status:empty{display:none}
-.item{position:relative;border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(305px,.9fr);align-items:start;gap:18px;width:100%}
+.item{position:relative;border:1px solid #40536f;border-radius:10px;padding:14px;background:#101a2a;display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:12px;width:100%}
 .device-primary{min-width:0}.device-primary>.muted{margin-top:6px}
-.device-quality{min-width:0;border-left:1px solid #34445e;padding-left:16px}
-.device-quality .multi-choice{border:0;background:transparent;padding:0}
-.device-quality .adb-badge{justify-self:start;margin-left:0}
 .item.active{border-color:#80a4ff;background:#1b2c47}.item-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
 .management-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 3px}
 .management-bar label,.management-check{margin:0;display:inline-flex;align-items:center;gap:7px;color:#c5d9f6;cursor:pointer}
@@ -111,7 +108,14 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-tooltip-line+.device-tooltip-line{margin-top:3px}
 .device-edit-icon{position:absolute;right:-3px;top:-5px;z-index:2;width:20px;height:20px;min-height:20px;padding:0;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:50%;font-size:12px;line-height:1}
 .device-port{display:inline-flex;align-items:center;gap:5px;border:1px solid #536c90;background:#263951;color:#bdd3f3;font-weight:650;font-size:11px;padding:5px 10px;border-radius:20px;white-space:nowrap;min-height:28px}
-.device-port::before{content:"";display:inline-block;width:7px;height:7px;background:currentColor;border-radius:50%;flex:none}
+.device-port::before{content:"";display:inline-block;width:7px;height:7px;background:#8698b2;border-radius:50%;flex:none;box-shadow:0 0 0 1px #0004}
+.device-port.device-projector.adb-connected::before{background:#54d995}
+.device-port.device-projector.adb-failed::before{background:#ff7584}
+.device-port.device-projector.adb-connecting::before,.device-port.device-projector.adb-checking::before{background:#f4c05d}
+.device-port.device-projector.adb-idle::before{background:#8794a8}
+.device-port-wrap{position:relative;display:inline-flex;align-items:center;flex:none;margin-right:8px}
+.projection-settings-edit{position:absolute;z-index:3;right:-8px;top:-9px;width:21px;height:21px;min-height:21px;padding:0;border:1px solid #7899c8;border-radius:50%;background:#26446e;color:#e0efff;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px #0009}
+.projection-settings-edit:focus-visible{outline:2px solid #adc9ff;outline-offset:2px}
 .device-port.device-projector{position:static;flex:none;transition:background .15s,border-color .15s,color .15s}
 .device-port.device-projector.starting,.device-port.device-projector.queued{background:#574424;border-color:#aa8743;color:#ffe09c}
 .device-port.device-projector.ready,.device-port.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
@@ -119,8 +123,26 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-port.device-projector.error{background:#49252e;border-color:#92505c;color:#ffbbc4}
 .device-port.device-projector.disconnected{background:#293444;border-color:#526179;color:#a5b1c3}
 .device-port.device-projector:hover:not(:disabled){filter:brightness(1.15)}
-.device-port.device-projector.stopping:disabled{opacity:1}
+.device-port.device-projector:disabled{opacity:1;cursor:not-allowed}
 .device-port.device-projector:focus-visible{outline:2px solid #a7c6ff;outline-offset:2px}
+dialog.quality-settings-dialog{border:1px solid #58759e;border-radius:14px;padding:0;background:#17263b;color:#edf4ff;width:min(530px,calc(100vw - 28px));max-height:90dvh;overflow:auto;box-shadow:0 20px 70px #000b}
+dialog.quality-settings-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
+.quality-settings-form{padding:19px;display:grid;gap:14px}
+.quality-settings-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.quality-settings-head h2{margin:0;font-size:18px}
+.quality-settings-head button{font-size:21px;padding:2px 9px}
+.quality-settings-form>.muted{margin:0}
+.quality-settings-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
+.quality-settings-fields label{display:grid;gap:6px;margin:0;min-width:0}
+.quality-settings-fields select{width:100%;height:38px;min-width:0;border-radius:7px;border:1px solid #526d91;background:#111d30;color:#e5f0ff;padding:0 7px}
+.quality-playback{border:1px solid #405779;border-radius:9px;padding:10px 12px}
+.quality-playback legend{font-weight:650;color:#bcd9ff;padding:0 5px}
+.quality-setting-check{display:flex;gap:9px;align-items:center;margin:9px 0;cursor:pointer}
+.quality-setting-check input{width:17px;height:17px;padding:0;flex:none;accent-color:#6a9cf0}
+.quality-setting-check input:disabled{cursor:not-allowed}
+.quality-playback>.muted{margin:8px 0 0}
+.quality-settings-form .modal-actions{margin-top:2px}
+@media(max-width:480px){.quality-settings-fields{grid-template-columns:minmax(0,1fr)}}
 .muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
 .adb-badge{display:inline-flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:3px;max-width:100%;border:1px solid #49617e;border-radius:9px;padding:6px 10px;font-size:12px;background:#25344d;color:#c9d5e6;overflow-wrap:anywhere;margin-left:auto}
@@ -601,13 +623,10 @@ function successfulBatchIds(candidates,results){
 }
 function select(id){selected=id;render();}
 function render(){
- // Build a fresh set of per-device quality controls in the hidden staging
- // container, then MOVE each control into its corresponding full-width row.
- // Do not touch the independent live grid on any device-status redraw.
+ // Keep the existing per-device quality state in the hidden staging picker;
+ // only the ADB port's edit button exposes these options through a modal.
+ // The device list no longer repeats ADB address/status or inline settings.
  if(multiView)multiView.updatePicker(false);
- const qualityRows=new Map();
- if(multiView)for(const node of Array.from($('multiPicker').children))
-  qualityRows.set(node.getAttribute('data-device-id'),node);
  const list=$('devices');list.replaceChildren();
  const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,discovery_configured:g.discovery_configured,discovery_needs_password:g.discovery_needs_password,items:[]}]));
  for(const d of devices){
@@ -666,8 +685,16 @@ function render(){
     model.setAttribute('role','tooltip');name.append(model);
    }
    title.append(name);
-   // Click the ADB port chip itself; do not render a separate projection icon.
-   title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port));
+   // The ADB status dot and projection-background color are independent.
+   const portWrap=elem('span','device-port-wrap');
+   portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port));
+   if(multiView){
+    const configure=action('✎',()=>multiView.openSettings(d),'projection-settings-edit');
+    configure.title='设置 '+d.name+' 的投屏参数与播放选项';
+    configure.setAttribute('aria-label',configure.title);
+    portWrap.append(configure);
+   }
+   title.append(portWrap);
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':route==='mesh'?' has-edit':''));
@@ -716,11 +743,7 @@ function render(){
    const labButton=action('电脑模式实验',()=>displayLabView.open(d.id),'secondary');
    actions.append(labButton);
    labButton.disabled=loading||!loaded;
-   primary.append(actions);item.append(primary);
-   const quality=elem('div','device-quality');
-   const row=qualityRows.get(d.id);
-   if(row){row.prepend(adbStatusBadge(d));quality.append(row);}
-   item.append(quality);wrapper.append(item);
+   primary.append(actions);item.append(primary);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
   section.append(wrapper);shell.append(section);
