@@ -1,7 +1,7 @@
 # Standalone deployment for hosts using Docker/OpenWrt networking directly.
 # Pass explicitly: docker compose -f compose.no-proxy.yaml up -d --no-build
 # Do not merge with compose.yaml: its proxy-net attachment is intentionally absent.
-# Same Compose project directory, image, port and persistent bind mounts.
+# Same Compose project directory, host networking, image and persistent bind mounts.
 services:
   easyadb:
     image: easyadb:local
@@ -9,9 +9,11 @@ services:
     environment:
       EASYADB_TOKEN: ${EASYADB_TOKEN:?Set EASYADB_TOKEN in .env}
       EASYADB_DB: /app/data/devices.sqlite3
-      EASYADB_VIDEO_ENGINE: ${EASYADB_VIDEO_ENGINE:-mse}
-    ports:
-      - "${EASYADB_BIND_IP:-127.0.0.1}:${EASYADB_PORT:-8765}:8000"
+      EASYADB_VIDEO_ENGINE: ${EASYADB_VIDEO_ENGINE:-webrtc}
+      EASYADB_BIND_IP: ${EASYADB_BIND_IP:-127.0.0.1}
+      EASYADB_PORT: ${EASYADB_PORT:-8765}
+    network_mode: host
+    command: ["sh", "-c", "exec uvicorn server.app:app --host ${EASYADB_BIND_IP:-127.0.0.1} --port ${EASYADB_PORT:-8765} --workers 1 --ws wsproto"]
     volumes:
       - ./data/adb:/root/.android
       - ./data/storage:/app/data
