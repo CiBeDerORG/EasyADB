@@ -1,7 +1,7 @@
 name: EasyADB M2/M3/V2 and OpenWrt regression
 on:
   push:
-    branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery, refactor/foundation-v1, refactor/v2-session-governance]
+    branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery, refactor/foundation-v1, refactor/v2-session-governance, refactor/v4-frontend-standards]
 permissions:
   contents: read
 jobs:
@@ -19,6 +19,21 @@ jobs:
           python -m pip install pytest httpx
       - name: Compile code
         run: python -m compileall -q server tests
+      - uses: actions/setup-node@v4
+        if: github.ref == 'refs/heads/refactor/v4-frontend-standards'
+        with:
+          node-version: '22'
+      - name: Verify V4 frontend standards
+        if: github.ref == 'refs/heads/refactor/v4-frontend-standards'
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run lint
+          npm run format:check
+          node tests/v4_frontend_standards.cjs
+          echo V4_LOCK_START
+          base64 -w0 package-lock.json
+          echo
+          echo V4_LOCK_END
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done

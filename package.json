@@ -1,0 +1,18 @@
+{
+  "name": "easyadb-frontend-quality",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Build-time frontend standards; no runtime bundler or framework.",
+  "scripts": {
+    "lint": "eslint web eslint.config.mjs tests/v4_frontend_standards.cjs",
+    "format:check": "prettier --check \"web/**/*.js\" eslint.config.mjs tests/v4_frontend_standards.cjs .prettierrc.json package.json",
+    "test:architecture": "node tests/v4_frontend_standards.cjs"
+  },
+  "devDependencies": {
+    "eslint": "9.39.1",
+    "prettier": "3.6.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
