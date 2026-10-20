@@ -12,6 +12,9 @@ MODULES = (
     "shared/ui/dialog.js",
     "shared/ui/toast.js",
     "features/live/live-session-controller.js",
+    "features/live/live-card-view.js",
+    "features/live/live-batch-scheduler.js",
+    "features/live/live-quality-settings.js",
 )
 
 

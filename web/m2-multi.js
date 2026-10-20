@@ -7,8 +7,12 @@
 'use strict';
 // One-time ES Module dependency injection; no new window global.
 let createSessionController=null;
+let createQualitySettings=null,createBatchScheduler=null,createCardView=null;
 root.document.addEventListener?.('easyadb:frontend-modules-ready',event=>{
  createSessionController=event.detail?.createLiveSessionController||null;
+ createQualitySettings=event.detail?.createLiveQualitySettings||null;
+ createBatchScheduler=event.detail?.createLiveBatchScheduler||null;
+ createCardView=event.detail?.createLiveCardView||null;
 });
 const MAX_DEVICES=20;
 const KEYS=[['back','返回'],['home','主页'],['recents','最近任务'],['enter','回车'],['backspace','退格']];
@@ -96,17 +100,56 @@ class MultiView{
   this.qualityChoices=new Map();this.probeResults=new Map();this.qualityHistory=new Map();
   this.playbackOpen=new Set();
   this.checking=new Set();this.lastLiveStatus=new Map();
+  this.qualitySettings=null;this.batchScheduler=null;this.cardView=null;
   startButton.addEventListener('click',()=>this.start());
   stopButton.addEventListener('click',()=>this.stopSelected());
   this.updatePicker(false);
  }
  status(msg,error=false){this.info.textContent=msg;this.info.className='status'+(error?' error':'');}
  isCurrentCard(card){return this.cards.get(card.id)===card&&!card.closed;}
+ ensureFeatureModules(){
+  // MultiView exists before the deferred ES module loads. Preserve page choices.
+  if(!this.qualitySettings&&createQualitySettings){
+   this.qualitySettings=createQualitySettings({
+    documentRef:root.document,initialChoices:this.qualityChoices
+   });
+   this.qualityChoices=this.qualitySettings.choices;
+  }
+  if(!this.cardView&&createCardView)
+   this.cardView=createCardView({documentRef:root.document});
+  if(!this.batchScheduler&&createBatchScheduler){
+   const scheduler=createBatchScheduler({
+    launch:(next,finished)=>this.open(next.device,next.quality,finished,
+     next.lowLatency,next.experiment,next.screenOff),
+    onLaunchFailure:(next,error)=>{
+     this.lastLiveStatus.set(next.device.id,'启动失败');
+     this.status(next.device.name+'：'+error.message,true);
+    },
+    onIdle:()=>{for(const card of this.cards.values())card.refresh?.();},
+    onChange:()=>this.updatePicker(),
+    maxStarting:this.maxStarting,opening:this.opening,
+    launchQueue:this.launchQueue,launchInFlight:this.launchInFlight,
+    launchGeneration:this.launchGeneration
+   });
+   this.batchScheduler=scheduler;
+   for(const key of ['maxStarting','opening','launchQueue','launchInFlight','launchGeneration']){
+    Object.defineProperty(this,key,{configurable:true,enumerable:true,
+     get:()=>scheduler[key],set:value=>{scheduler[key]=value;}});
+   }
+  }
+ }
  getChoice(id){
-  if(!this.qualityChoices.has(id))this.qualityChoices.set(id,defaults());
+  this.ensureFeatureModules();
+  if(this.qualitySettings)return this.qualitySettings.getChoice(id);
+  if(!this.qualityChoices.has(id)this.qualityChoices.set(id,defaults());
   return this.qualityChoices.get(id);
  }
- setChoice(id,part){this.qualityChoices.set(id,{...this.getChoice(id),...part});this.updatePicker();}
+ setChoice(id,part){
+  this.ensureFeatureModules();
+  if(this.qualitySettings)this.qualitySettings.setChoice(id,part);
+  else this.qualityChoices.set(id,{...this.getChoice(id),...part});
+  this.updatePicker();
+ }
  recordCheck(id,text){
   const previous=(this.probeResults.get(id)||'').split('\n').filter(x=>x&&!x.includes('正在执行'));
   previous.push((new Date()).toLocaleTimeString()+' · '+text);
@@ -300,6 +343,8 @@ class MultiView{
   return button;
  }
  openSettings(d){
+  this.ensureFeatureModules();
+  if(this.qualitySettings)return this.qualitySettings.openSettings(this,d);
   // Native modal with a draft: do not mutate a running/queued session or
   // rebuild the hidden per-device picker until Save is pressed.
   if(this.settingsDialog?.open)return false;
@@ -440,13 +485,18 @@ class MultiView{
      !this.engineReady||!this.engineSupported)return false;
   if(!experiment||!["new","new_settings","display"].includes(experiment.mode))return false;
   const choice=this.getChoice(id);
+  this.ensureFeatureModules();
+  if(!this.cardView)return false;
   this.lastLiveStatus.delete(id);
-  this.open(d,qualityPayload(choice),null,choice.low_latency===true,experiment,false);
+  this.open(d,this.qualitySettings?this.qualitySettings.qualityPayload(choice):qualityPayload(choice),
+   null,choice.low_latency===true,experiment,false);
   this.updatePicker();
   this.onProjectionStarted?.();
   return true;
  }
  _startDevices(additions){
+  this.ensureFeatureModules();
+  if(!this.cardView){this.status('前端画面模块尚未加载，请重试。',true);return false;}
   if(this.opening||this.getManagementBusy?.())return false;
   if(!additions.length||new Set(additions.map(d=>d&&d.id)).size!==additions.length||
      additions.length>MAX_DEVICES-this.cards.size||
@@ -456,18 +506,18 @@ class MultiView{
   }
   if(!this.engineReady||!this.engineSupported){this.status('当前视频引擎未就绪或尚未实现。',true);return false;}
   if(!this.getToken()){this.status('请先填写访问密钥并加载设备。',true);return false;}
-  const batch=additions.map(d=>({device:d,quality:qualityPayload(this.getChoice(d.id)),
-   experiment:resolutionExperiment(this.getChoice(d.id)),
+  const qualityTools=this.qualitySettings||{qualityPayload,resolutionExperiment};
+  const batch=additions.map(d=>({device:d,quality:qualityTools.qualityPayload(this.getChoice(d.id)),
+   experiment:qualityTools.resolutionExperiment(this.getChoice(d.id)),
    lowLatency:this.getChoice(d.id).low_latency===true,
    screenOff:this.getChoice(d.id).screen_off===true&&!this.getChoice(d.id).experimental_resolution}));
   const isAppend=this.cards.size>0;
   for(const d of additions)this.lastLiveStatus.delete(d.id);
-  this.opening=true;
-  // Reserve the complete logical batch, dispatch only a bounded number.
-  // A ready/error callback frees one startup slot and starts the next device.
-  this.launchGeneration++;
-  this.launchInFlight=0;
-  this.launchQueue=batch;
+  // Reserve all logical targets, then dispatch at the server-supplied budget.
+  if(this.batchScheduler)this.batchScheduler.begin(batch);
+  else{
+   this.opening=true;this.launchGeneration++;this.launchInFlight=0;this.launchQueue=batch;
+  }
   this.status((isAppend?'正在追加 ':'正在启动 ')+additions.length+
    ' 路；每批最多 '+this.maxStarting+' 台进入启动阶段，其他设备等待。');
   this._launchNext();
@@ -476,6 +526,7 @@ class MultiView{
   return true;
  }
  _launchNext(){
+  if(this.batchScheduler){this.batchScheduler.pump();return;}
   if(!this.opening)return;
   const generation=this.launchGeneration;
   while(this.launchInFlight<this.maxStarting&&this.launchQueue.length){
@@ -503,6 +554,8 @@ class MultiView{
   this.updatePicker();
  }
  open(d,quality,nextLaunch,lowLatency=false,experiment=null,screenOff=false){
+  this.ensureFeatureModules();
+  if(!this.cardView)throw Error('前端画面模块尚未加载，请重试。');
   if(this.cards.has(d.id)){ // Never create a second video/WS for this device.
    if(nextLaunch)nextLaunch();
    return;
@@ -542,57 +595,12 @@ class MultiView{
     });
    }
   }
-  const box=make('article','multi-card'),header=make('div','heading');
-  header.append(make('strong','',d.name+(experiment?.mode==='new_resolution'?' · 实验性虚拟屏幕':
-  experiment?' · 电脑模式实验':'')),
-   make('span','muted',d.selected_serial+(experiment?.mode==='display'?' · Display '+experiment.display_id:'')));
-  const screen=make('div','multi-screen');
-  const video=make('video','multi-video');video.autoplay=true;video.muted=true;
-  video.playsInline=true;video.setAttribute('aria-label',d.name+' 实时画面');
-  screen.append(video);
-  // Each live card follows the stream's encoded pixel width, not a grid
-  // column or a height-based heuristic. Padding/border total 26 CSS px.
-  // max-width:100% only scales a card down when its parent is narrower.
-  const fitScreen=(width,height)=>{
-   if(!(Number.isInteger(width)&&Number.isInteger(height)&&width>0&&height>0))return;
-   screen.style.aspectRatio=width+' / '+height;
-   screen.setAttribute('data-orientation',width>height?'landscape':'portrait');
-   screen.style.width='100%';
-   box.style.width=(width+26)+'px';
-  };
-  fitScreen(360,640); // neutral placeholder until stream metadata arrives
-  video.addEventListener('loadedmetadata',()=>{
-   if(this.isCurrentCard(card)&&video.videoWidth>0&&video.videoHeight>0)
-    fitScreen(video.videoWidth,video.videoHeight);
-  });
-  const state=make('div','status','正在建立本轮会话…');
-  const stats=make('div','muted','等待浏览器诊断…');
-  const qualityLine=make('div','muted','视频引擎：WebRTC'+
-   ' / 本设备画质：'+briefQuality(this.getChoice(d.id))+
-   (lowLatency?' / 低延迟播放实验已开启':'')+
-   (card.screenOff?' / 已请求投屏时关闭物理屏幕':'')+'（本轮固定）');
-  const detail=make('div','multi-log');
-  const initInfo=make('div','muted',this.probeResults.get(d.id)||'尚未执行本设备能力预检或视频实验');
-  const diagnostic=make('div','multi-check-log','等待本轮视频统计…');
-  const eventLog=make('div','multi-check-log','等待本轮会话日志…');
-  const history=make('div','muted','本设备暂无历史画质采样（仅在本页内存保留）');
-  const xiaomi=make('details','multi-help'),
-   xiaomiTitle=make('summary','','小米 / 澎湃 OS：画面正常但无法控制？'),
-   xiaomiHelp=make('div','muted','在手机开发者选项中，除普通 USB 调试和无线调试外，还须检查「USB 调试（安全设置）」是否启用；按手机要求完成授权后重启，再手动连接。单纯显示控制通道已开启，只说明指令写入成功，不代表 Android 已接受点击。先试“主页”，再试屏幕触控。');
-  xiaomi.append(xiaomiTitle,xiaomiHelp);
-  detail.append(make('h4','','会话与画质'),qualityLine,state,stats,initInfo,
-   make('h4','','WebRTC / 资源详情'),diagnostic,
-   make('h4','','本轮事件日志'),eventLog,
-   make('h4','','本页历史'),history,xiaomi);
-  const logPanel=make('section','multi-log-panel');logPanel.hidden=true;
-  logPanel.setAttribute('role','dialog');logPanel.setAttribute('aria-label',d.name+' 悬浮日志');
-  const logHead=make('div','multi-log-head'),logClose=make('button','secondary multi-log-close','×');
-  logClose.type='button';logClose.title='关闭悬浮日志';logClose.setAttribute('aria-label','关闭悬浮日志');
-  const stop=make('button','danger','停止此路');stop.type='button';
-  logHead.append(make('strong','','本设备诊断日志'),stop,logClose);
-  logPanel.append(logHead,detail);screen.append(logPanel);
-  const fab=make('div','multi-fab');
-  fab.setAttribute('aria-label',d.name+' 画面悬浮控制');
+  const {box,header,screen,video,fitScreen,state,stats,qualityLine,detail,
+   initInfo,diagnostic,eventLog,history,logPanel,logHead,logClose,stop,fab}=
+   this.cardView.createShell({d,card,experiment,lowLatency,
+    qualityText:this.qualitySettings?this.qualitySettings.briefQuality(this.getChoice(d.id)):briefQuality(this.getChoice(d.id)),
+    probeText:this.probeResults.get(d.id),
+    isCurrent:()=>this.isCurrentCard(card)});
   const icon=(cls,glyph,label)=>{
    const b=make('button','fab-action '+cls,glyph);b.type='button';
    b.title=label;b.setAttribute('aria-label',label);return b;

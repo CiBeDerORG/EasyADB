@@ -4,6 +4,9 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {createLiveSessionController}=require('../web/features/live/live-session-controller.js');
+const {createLiveQualitySettings}=require('../web/features/live/live-quality-settings.js');
+const {createLiveBatchScheduler}=require('../web/features/live/live-batch-scheduler.js');
+const {createLiveCardView}=require('../web/features/live/live-card-view.js');
 class El{
  constructor(tag){this.tagName=tag;this.children=[];this.events={};this.style={};this.classList={add(){}};this.value='';this.disabled=false;this.textContent='';this.checked=false;this.open=false;}
  addEventListener(name,fn){(this.events[name]??=[]).push(fn);}
@@ -80,7 +83,8 @@ assert.match(productionSource,/const MAX_DEVICES=20;/,'production supports 20 si
 vm.runInNewContext(productionSource.replace('const MAX_DEVICES=20;','const MAX_DEVICES=4;'),
  root,{filename:'m2-multi.js'});
 assert.equal(frontendModuleListeners.length,1);
-frontendModuleListeners[0]({detail:{createLiveSessionController}});
+frontendModuleListeners[0]({detail:{createLiveSessionController,
+ createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
 const page=fs.readFileSync('web/index.html','utf8');
 assert.match(page,/最多20路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
@@ -339,6 +343,10 @@ assert.equal(pa.selected_serial,devices[0].selected_serial);
 assert.equal(pa.screen_off,true,'single-device choice is pinned in handshake');
 assert.equal(multi.cards.size,1);
 assert.equal(grid.children.length,1);
+assert(multi.batchScheduler,'production startup scheduler is installed');
+assert(multi.cardView,'production card view is installed');
+assert(multi.qualitySettings,'production quality settings are installed');
+assert.equal(multi.batchScheduler.launchQueue,multi.launchQueue);
 assert(multi.cards.get('id-1').sessionController,'actual card owns new controller');
 assert.equal(multi.cards.get('id-1').sessionController.ws,a);
 a.emit('starting',{session_id:'only-one'});

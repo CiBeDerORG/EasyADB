@@ -1,6 +1,9 @@
 /* Production (not test-overridden) 20-session browser capacity contract. */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const {createLiveQualitySettings}=require('../web/features/live/live-quality-settings.js');
+const {createLiveBatchScheduler}=require('../web/features/live/live-batch-scheduler.js');
+const {createLiveCardView}=require('../web/features/live/live-card-view.js');
 class El{
  constructor(tag){this.tagName=tag;this.children=[];this.handlers={};this.value='';this.checked=false;this.disabled=false;this.textContent='';this.style={};this.open=false;}
  addEventListener(name,fn){(this.handlers[name]??=[]).push(fn);}
@@ -9,10 +12,15 @@ class El{
  setAttribute(key,value){this[key]=value;}
  fire(event){for(const handler of this.handlers[event]||[])handler({preventDefault(){}});}
 }
-const root={document:{createElement:tag=>new El(tag)},EasyADBMetrics:{fmt:v=>String(v)}};
+const frontendModuleListeners=[];
+const root={document:{createElement:tag=>new El(tag),addEventListener(type,fn){
+ if(type==='easyadb:frontend-modules-ready')frontendModuleListeners.push(fn);
+}},EasyADBMetrics:{fmt:v=>String(v)}};
 root.window=root;
 const source=fs.readFileSync('web/m2-multi.js','utf8');
 vm.runInNewContext(source,root,{filename:'m2-multi.js'});
+assert.equal(frontendModuleListeners.length,1);
+frontendModuleListeners[0]({detail:{createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
 assert.equal(root.EasyADBMulti.MAX_DEVICES,20,'browser production maximum is twenty');
 const server=fs.readFileSync('server/m2_live.py','utf8');
 assert.match(server,/MAX_LIVE_SESSIONS = 20/,'server authoritative maximum matches UI');
@@ -37,6 +45,7 @@ selected.delete('phone-21');view.updatePicker();
 assert.equal(startButton.disabled,false,'any subset up to twenty can start');
 assert.match(startButton.textContent,/待新增 20 台 \/ 剩余 20 路/);
 startButton.fire('click');
+assert(view.batchScheduler,'20-slot fixture exercises extracted scheduler');
 assert.equal(view.cards.size,3,'only three devices enter startup concurrently');
 assert.equal(view.launchQueue.length,17,'remaining 17 retain a queued place');
 for(let i=0;i<20;i++){

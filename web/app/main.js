@@ -3,11 +3,17 @@ import { createDomHelpers } from '../shared/dom.js';
 import { createDialogController } from '../shared/ui/dialog.js';
 import { createToastController } from '../shared/ui/toast.js';
 import { createLiveSessionController } from '../features/live/live-session-controller.js';
+import { createLiveQualitySettings } from '../features/live/live-quality-settings.js';
+import { createLiveBatchScheduler } from '../features/live/live-batch-scheduler.js';
+import { createLiveCardView } from '../features/live/live-card-view.js';
 
 // One-time dependency injection into the existing inline compatibility adapter.
 // No additional business global, automatic ADB connection or page polling.
 const modules = {
   createLiveSessionController,
+  createLiveQualitySettings,
+  createLiveBatchScheduler,
+  createLiveCardView,
   api: createApiClient({
     getToken: () => document.getElementById('token').value,
     request: (path, options) => fetch(path, options),
