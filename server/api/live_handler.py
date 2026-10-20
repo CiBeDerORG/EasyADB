@@ -463,7 +463,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
                 if requested_stop.is_set():
                     return
-                if stream.thread is None and time.monotonic() - stream._born > 25:
+                if hasattr(stream, "thread") and stream.thread is None and time.monotonic() - stream._born > 25:
                     requested_stop.set()
                     await asyncio.to_thread(stream.stop)
                     return
@@ -591,7 +591,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         "WebRTC peer close still pending for device %s session %s; "
                         "will release only after verified late cleanup",
                         device_id, stream.session_id)
-            if getattr(stream, "thread", None) is None:
+            if hasattr(stream, "thread") and stream.thread is None:
                 # SDP failure never launched ADB or allocated a worker resource.
                 stream.cleanup_complete = True
                 stream.finished.set()
