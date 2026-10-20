@@ -490,7 +490,7 @@ class MultiView{
   const card={id:d.id,serial:d.selected_serial,name:d.name,quality,lowLatency,experiment,
    engine:this.videoEngine,
    screenOff:screenOff===true&&!experiment,reconnectRequested:false,wakePending:false,
-   stopTimer:null,
+   stopTimer:null,unlockPending:false,
    ws:null,session:null,
    state:'connecting',closed:false,enabled:false,pending:false,ready:false,size:null,
    keepSelected:false,
@@ -565,6 +565,7 @@ class MultiView{
   // Remote control is enabled automatically when this session's control
   // socket becomes ready; there is no manual on/off button in the FAB.
   const textButton=icon('fab-text','⌨','文字与按键输入');textButton.disabled=true;
+  const unlockButton=icon('fab-unlock','🔓','主动解锁（使用本设备已保存密码）');unlockButton.disabled=true;
   const fullscreenButton=icon('fab-fullscreen','⛶','全屏展示');
   fullscreenButton.disabled=typeof screen.requestFullscreen!=='function';
   fullscreenButton.setAttribute('aria-pressed','false');
@@ -598,12 +599,12 @@ class MultiView{
   form.append(textHead,textEntry,textKeys);
   const keyStatus=make('div','muted','默认只观看，不会全局捕获键盘。');
   detail.append(make('h4','','远控输入状态'),keyStatus);
-  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,textButton,fullscreenButton,main,form);
+  fab.append(logButton,wakeButton,reconnectButton,closeStreamButton,textButton,unlockButton,fullscreenButton,main,form);
   screen.append(fab);box.append(header,screen);this.grid.append(box);
   Object.assign(card,{box,screen,fitScreen,video,stateEl:state,statsEl:stats,
    qualityLine,form,fab,main,logButton,wakeButton,reconnectButton,closeStreamButton,fullscreenButton,
    logPanel,logClose,stop,
-   textButton,textClose,textKeys,input,submit,nav,keyStatus,
+   textButton,unlockButton,textClose,textKeys,input,submit,nav,keyStatus,
    initInfo,diagnostic,eventLog,historyEl:history,menuOpen:false,textOpen:false,
    menuTimer:null});
   // Browser handles Escape natively; this event keeps the icon synchronized
@@ -662,6 +663,7 @@ class MultiView{
   reconnectButton.addEventListener('pointerdown',resetMenuTimer);
   closeStreamButton.addEventListener('pointerdown',resetMenuTimer);
   fullscreenButton.addEventListener('pointerdown',resetMenuTimer);
+  unlockButton.addEventListener('pointerdown',resetMenuTimer);
   card.refreshMenu=()=>{
    fab.className='multi-fab'+(card.menuOpen?' is-open':'')+
     (card.enabled?' is-control-enabled':'');
@@ -698,6 +700,10 @@ class MultiView{
    wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
    reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
    closeStreamButton.disabled=!sessionReady||card.reconnectRequested;
+   // Manual unlock does not depend on decoder playback nor the browser's
+   // general control_enabled latch; the server validates THIS session.
+   unlockButton.disabled=!sessionReady||!card.ready||Boolean(card.experiment)||
+    card.unlockPending||card.reconnectRequested;
    const controlReady=!card.closed&&card.ready&&!card.permissionWarningShown&&!card.autoControlRejected&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
@@ -780,7 +786,12 @@ class MultiView{
     }else if(m.type==='screen_power_notice'){
      mark(m.message||'已发送显示屏电源指令');
     }else if(m.type==='unlock_notice'){
-     mark(m.message||'本次自动解锁流程结束',m.error===true);
+     card.unlockPending=m.status==='running';
+     mark((m.source==='manual'?'主动解锁：':'自动解锁：')+
+      (m.message||'本次解锁操作结束'),m.error===true);
+     if(m.source==='manual'&&m.status!=='running')
+      this.status(d.name+'：'+(m.message||'解锁操作结束'),m.error===true);
+     refresh();
     }else if(m.type==='wake_accepted'){
      card.wakePending=false;mark(m.message||'已发送唤醒请求');refresh();
     }else if(m.type==='wake_error'){
@@ -942,6 +953,9 @@ class MultiView{
    card.frameCallback=video.requestVideoFrameCallback(track);
   }
   video.addEventListener('click',()=>{if(!card.closed&&card.player)card.player.resume();});
+  unlockButton.addEventListener('click',()=>{
+   if(this.requestUnlock(card))resetMenuTimer();
+  });
   wakeButton.addEventListener('click',()=>{
    if(wakeButton.disabled||!card.session||card.closed)return;
    card.wakePending=true;refresh();resetMenuTimer();
@@ -979,6 +993,22 @@ class MultiView{
    this.sendInput(card,'input_text',{text:value});
   });
   refresh();
+ }
+ requestUnlock(card){
+  // No plaintext, credential ID or user input in browser payload.
+  if(!card||card.closed||card.unlockButton.disabled||!card.session||!card.ws||
+   card.ws.readyState!==WebSocket.OPEN||!card.ready||card.experiment||
+   card.state==='stopping'||card.unlockPending)return false;
+  card.unlockPending=true;card.refresh();
+  try{
+   card.ws.send(JSON.stringify({type:'unlock',session_id:card.session}));
+   card.keyStatus.textContent='已请求主动解锁，等待服务端确认。';
+   return true;
+  }catch{
+   card.unlockPending=false;card.refresh();
+   this.status(card.name+'：主动解锁请求发送失败',true);
+   return false;
+  }
  }
  sendInput(card,type,body){
   if(card.closed||!card.enabled||card.pending||card.lastInput||
