@@ -208,11 +208,8 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-screen[data-orientation="landscape"] .fab-up-wake{bottom:52px;right:52px}
 .multi-screen[data-orientation="landscape"] .fab-up-reconnect{bottom:52px;right:104px}
 .multi-screen[data-orientation="landscape"] .fab-up-stop{bottom:52px;right:156px}
-.multi-screen[data-orientation="landscape"] .fab-nav-home{top:52px;right:52px}
-.multi-screen[data-orientation="landscape"] .fab-nav-recents{top:52px;right:104px}
-.multi-fab .fab-remote{right:52px;top:0}
-.multi-fab .fab-text{right:104px;top:0}
-.multi-fab .fab-fullscreen{right:156px;top:0;font-size:21px}
+.multi-fab .fab-text{right:52px;top:0}
+.multi-fab .fab-fullscreen{right:104px;top:0;font-size:21px}
 .multi-screen:fullscreen{width:100vw;max-width:none;height:100dvh;aspect-ratio:auto;border-radius:0;background:#000}
 /* Video controls stay above the video within its fullscreen top layer;
    the OUTER inventory drawer alone is hidden in fullscreen. */
@@ -220,11 +217,13 @@ details{margin-top:16px;border-top:1px solid #34445e;padding-top:14px}summary{cu
 .multi-screen:fullscreen .multi-fab{right:14px;top:50%;transform:translateY(-50%);z-index:20;visibility:visible}
 .multi-screen:fullscreen .multi-fab .fab-main{visibility:visible;opacity:1;pointer-events:auto}
 .multi-screen:fullscreen .multi-log-panel{z-index:30}
+/* Both solo and group menus keep the three navigation keys directly below
+   their main icon; only .is-open reveals them and the whole menu hides as one. */
 .multi-fab .fab-nav-back{top:48px;right:0}
 .multi-fab .fab-nav-home{top:94px;right:0}
 .multi-fab .fab-nav-recents{top:140px;right:0}
 .multi-fab .fab-down{background:#234c41;border-color:#73b69d}
-.multi-text-panel{position:absolute;z-index:6;right:0;top:52px;width:min(242px,calc(100cqw - 20px));padding:10px;background:#1b2b42;border:1px solid #6685b3;border-radius:11px;box-shadow:0 10px 30px #000b;display:grid;gap:9px}
+.multi-text-panel{position:absolute;z-index:6;right:52px;top:52px;width:min(242px,calc(100cqw - 20px));padding:10px;background:#1b2b42;border:1px solid #6685b3;border-radius:11px;box-shadow:0 10px 30px #000b;display:grid;gap:9px}
 .multi-text-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;font-weight:700}
 .multi-text-head button{min-width:28px;min-height:28px;font-size:18px;padding:0;border-radius:6px}
 .multi-text-entry{display:flex;gap:6px;min-width:0}
