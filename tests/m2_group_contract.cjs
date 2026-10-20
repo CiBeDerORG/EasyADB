@@ -13,7 +13,10 @@ assert.match(page,/\.group-fab\{position:fixed;z-index:28;right:-22px/);
 assert.match(page,/body\.video-fullscreen-active \.group-fab/);
 assert.match(server,/@app\.get\("\/m2-group\.js"\)/);
 assert.match(multiSource,/this\.groupControl\?\.refresh\(\)/);
-assert.doesNotMatch(groupSource,/requestFullscreen|fab-fullscreen|exitFullscreen/);
+assert.doesNotMatch(groupSource,/requestFullscreen|fab-fullscreen|exitFullscreen|fab-remote|control_enable|control_disable/);
+assert.match(page,/\.multi-fab \.fab-nav-back\{top:48px;right:0\}/);
+assert.match(page,/\.multi-fab \.fab-nav-home\{top:94px;right:0\}/);
+assert.match(page,/\.multi-fab \.fab-nav-recents\{top:140px;right:0\}/);
 class El{
  constructor(tag){
   this.tagName=tag;this.children=[];this.events={};this.hidden=false;
@@ -41,18 +44,17 @@ root.window=root;
 vm.runInNewContext(groupSource,root,{filename:'m2-group.js'});
 function card(id,opts={}){
  const c={id,name:id,state:'ready',closed:false,session:'session-'+id,
-  ready:true,enabled:false,pending:false,lastInput:false,
+  ready:true,enabled:true,pending:false,lastInput:false,
   ws:{readyState:1},logLines:['stream started '+id],keyStatus:{textContent:'ready'},
-  toggle:new El('button'),wakeButton:new El('button'),
+  wakeButton:new El('button'),
   reconnectButton:new El('button'),textButton:new El('button'),
   ...opts};
- c.toggle.addEventListener('click',()=>{c.enabled=!c.enabled;c.textButton.disabled=!c.enabled;});
  c.wakeButton.addEventListener('click',()=>{c.woken=(c.woken||0)+1;});
  c.textButton.disabled=!c.enabled;
  return c;
 }
 const a=card('A'),b=card('B'),denied=card('DENIED');
-denied.toggle.disabled=true;denied.textButton.disabled=true;denied.permissionWarningShown=true;
+denied.enabled=false;denied.textButton.disabled=true;denied.permissionWarningShown=true;
 const sent=[],reconnected=[],reported=[];
 const view={
  cards:new Map(),status:(msg,err)=>reported.push([msg,err]),
@@ -70,16 +72,18 @@ view.cards.set(a.id,a);view.cards.set(b.id,b);view.cards.set(denied.id,denied);
 group.refresh();
 assert.equal(group.fab.hidden,false);
 assert.equal(host.children.length,2);
-assert.equal(group.toggle.disabled,false);
-assert.equal(group.toggle.attrs['aria-pressed'],'false');
+assert.equal(group.fab.children.some(node=>node.className.includes('fab-remote')),false,
+ 'group remote toggle no longer exists');
+assert.equal(group.nav.slice(0,3).every(button=>button.hidden!==true),true,
+ 'navigation is permanently mounted beneath group FAB');
+assert.equal(group.menuOpen,false);
+assert.equal(group.nav.slice(0,3).every(button=>!button.disabled),true);
 group.main.click();
 assert.equal(group.main.attrs['aria-expanded'],'true');
 assert.equal(timers.size,1);
-group.toggle.click();
 assert.equal(a.enabled,true);assert.equal(b.enabled,true);
 assert.equal(denied.enabled,false,'Android-denied card is skipped');
 group.refresh();
-assert.equal(group.toggle.attrs['aria-pressed'],'true');
 group.nav[1].click();
 assert.deepEqual(sent.map(x=>x.id),['A','B'],'home is sent to both enabled cards');
 assert(sent.every(x=>x.type==='nav_key'&&x.key==='home'&&x.session==='session-'+x.id));
@@ -107,6 +111,8 @@ group.main.click();
 assert.equal(timers.size,1);
 const [timer]=timers.values();timers.clear();timer();
 assert.equal(group.menuOpen,false,'menu folds after 5 seconds');
+assert.equal(group.nav.slice(0,3).every(button=>button.hidden!==true),true,
+ 'fixed navigation is hidden by parent menu collapse rather than removed');
 group.main.click();
 group.stop.click();
 assert.deepEqual(view.stopped,['A','B','DENIED']);
