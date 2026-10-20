@@ -107,15 +107,20 @@ dialog.device-dialog::backdrop{background:#030816b8;backdrop-filter:blur(3px)}
 .device-model-tooltip{display:none;position:absolute;z-index:18;bottom:calc(100% + 9px);left:0;max-width:min(300px,70vw);min-width:max-content;padding:6px 10px;border-radius:7px;border:1px solid #7691ba;background:#263b57;color:#d9e8ff;font-weight:500;font-size:12px;line-height:1.3;white-space:normal;box-shadow:0 5px 18px #0009;pointer-events:none}
 .device-title:hover .device-model-tooltip,.device-title:focus-within .device-model-tooltip{display:block}
 .device-model-tooltip::after{content:"";position:absolute;left:14px;top:100%;border:5px solid transparent;border-top-color:#7691ba}
-.device-android{display:inline-flex;align-items:center;gap:5px;border:1px solid #39668e;background:#19364e;color:#a8d8ff;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
-.device-android::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
+.device-tooltip-line{display:block;white-space:normal}
+.device-tooltip-line+.device-tooltip-line{margin-top:3px}
 .device-edit-icon{position:absolute;right:-3px;top:-5px;z-index:2;width:20px;height:20px;min-height:20px;padding:0;border:1px solid #536e95;background:#233b5d;color:#c6dbff;border-radius:50%;font-size:12px;line-height:1}
-.device-projector{position:static;flex:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #536c90;background:#263951;color:#b9cbe3;border-radius:8px;min-width:30px;min-height:27px;padding:2px 7px;font-size:15px}
-.device-projector.starting,.device-projector.queued,.device-projector.stopping{background:#574424;border-color:#aa8743;color:#ffe09c}
-.device-projector.ready,.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
-.device-projector:disabled{opacity:.55;cursor:not-allowed}
-.device-port{display:inline-flex;align-items:center;gap:5px;border:1px solid #7b6437;background:#3b3020;color:#ffe0a0;font-weight:650;font-size:11px;padding:3px 8px;border-radius:20px;white-space:nowrap}
-.device-port::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;flex:none}
+.device-port{display:inline-flex;align-items:center;gap:5px;border:1px solid #536c90;background:#263951;color:#bdd3f3;font-weight:650;font-size:11px;padding:5px 10px;border-radius:20px;white-space:nowrap;min-height:28px}
+.device-port::before{content:"";display:inline-block;width:7px;height:7px;background:currentColor;border-radius:50%;flex:none}
+.device-port.device-projector{position:static;flex:none;transition:background .15s,border-color .15s,color .15s}
+.device-port.device-projector.starting,.device-port.device-projector.queued{background:#574424;border-color:#aa8743;color:#ffe09c}
+.device-port.device-projector.ready,.device-port.device-projector.playing{background:#174b38;border-color:#3c9b70;color:#b6f4d1}
+.device-port.device-projector.stopping{background:#633e29;border-color:#bb8650;color:#ffe1b4}
+.device-port.device-projector.error{background:#49252e;border-color:#92505c;color:#ffbbc4}
+.device-port.device-projector.disconnected{background:#293444;border-color:#526179;color:#a5b1c3}
+.device-port.device-projector:hover:not(:disabled){filter:brightness(1.15)}
+.device-port.device-projector.stopping:disabled{opacity:1}
+.device-port.device-projector:focus-visible{outline:2px solid #a7c6ff;outline-offset:2px}
 .muted{font-size:12px;color:#a2b4ce;line-height:1.6;overflow-wrap:anywhere}
 .pill{border-radius:20px;padding:4px 8px;font-size:11px;white-space:nowrap;height:max-content;background:#314359;color:#c9d5e6}
 .adb-badge{display:inline-flex;align-items:center;flex-wrap:wrap;column-gap:7px;row-gap:3px;max-width:100%;border:1px solid #49617e;border-radius:9px;padding:6px 10px;font-size:12px;background:#25344d;color:#c9d5e6;overflow-wrap:anywhere;margin-left:auto}
@@ -645,16 +650,24 @@ function render(){
    const primary=elem('div','device-primary'),addressRows=[];
    const title=elem('div','device-title');
    const name=elem('span','item-name',d.name);
-   if(d.model){
+   if(d.model||d.android_version){
     name.tabIndex=0;
-    name.setAttribute('aria-label',d.name+'，设备型号 '+d.model);
-    const model=elem('span','device-model-tooltip','型号：'+d.model);
+    const descriptions=[];
+    const model=elem('span','device-model-tooltip');
+    if(d.model){
+     descriptions.push('设备型号 '+d.model);
+     model.append(elem('span','device-tooltip-line','型号：'+d.model));
+    }
+    if(d.android_version){
+     descriptions.push('Android '+d.android_version);
+     model.append(elem('span','device-tooltip-line','Android：'+d.android_version));
+    }
+    name.setAttribute('aria-label',d.name+'，'+descriptions.join('，'));
     model.setAttribute('role','tooltip');name.append(model);
    }
    title.append(name);
-   if(d.android_version)title.append(elem('span','device-android','Android '+d.android_version));
-   title.append(elem('span','device-port','ADB '+d.port));
-   if(multiView)title.append(multiView.projectionButton(d));
+   // Click the ADB port chip itself; do not render a separate projection icon.
+   title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port));
    info.append(title);
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':route==='mesh'?' has-edit':''));
