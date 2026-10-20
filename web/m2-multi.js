@@ -67,6 +67,7 @@ class MultiView{
   Object.assign(this,{picker,grid,startButton,stopButton,info,getDevices,getToken,onChange,runPreflight,runVideoProbe,onDeviceDisconnected,getManagementBusy,getBatchSelection,onBatchSelectionRemove,readUnlockSettings,saveUnlockSettings});
   this.onProjectionStarted=onProjectionStarted;this.onOpenManagement=onOpenManagement;
   this.selected=new Set();this.cards=new Map();this.opening=false;this.launchQueue=[];
+  this.maxStarting=3;this.launchInFlight=0;this.launchGeneration=0;
   this.stopBatch=null; // independent per-device acknowledgements, no global stop wait
   this.videoEngine='webrtc';this.engineReady=true;this.engineSupported=true;
   if(typeof root.fetch==='function'){
@@ -452,12 +453,13 @@ class MultiView{
   const isAppend=this.cards.size>0;
   for(const d of additions)this.lastLiveStatus.delete(d.id);
   this.opening=true;
-  // Reserve the complete batch before creating cards. Every device opens
-  // its OWN WS immediately; each synchronous FastAPI startup / scrcpy worker
-  // proceeds concurrently. Do not wait for device A's first frame to start B.
+  // Reserve the complete logical batch, dispatch only a bounded number.
+  // A ready/error callback frees one startup slot and starts the next device.
+  this.launchGeneration++;
+  this.launchInFlight=0;
   this.launchQueue=batch;
-  this.status((isAppend?'正在并发追加 ':'正在并发启动 ')+additions.length+
-   ' 路独立投屏；最多同时 '+MAX_DEVICES+' 路，已经运行的设备保持原会话与远控。');
+  this.status((isAppend?'正在追加 ':'正在启动 ')+additions.length+
+   ' 路；每批最多 '+this.maxStarting+' 台进入启动阶段，其他设备等待。');
   this._launchNext();
   this.updatePicker();
   this.onProjectionStarted?.();
@@ -465,22 +467,30 @@ class MultiView{
  }
  _launchNext(){
   if(!this.opening)return;
-  // A single JS event-loop turn atomically reserves and dispatches the batch.
-  // The sessions, offers, ADB processes and results then progress independently.
-  const pending=this.launchQueue.splice(0);
-  try{
-   for(const next of pending){
-    try{this.open(next.device,next.quality,null,next.lowLatency,next.experiment,next.screenOff);}
-    catch(error){
-     this.lastLiveStatus.set(next.device.id,'启动失败');
-     this.status(next.device.name+'：'+error.message,true);
-    }
+  const generation=this.launchGeneration;
+  while(this.launchInFlight<this.maxStarting&&this.launchQueue.length){
+   const next=this.launchQueue.shift();
+   this.launchInFlight++;
+   let settled=false;
+   const finished=()=>{
+    if(settled)return;
+    settled=true;
+    if(generation!==this.launchGeneration)return; // canceled/replaced batch
+    this.launchInFlight=Math.max(0,this.launchInFlight-1);
+    this._launchNext();
+   };
+   try{this.open(next.device,next.quality,finished,next.lowLatency,next.experiment,next.screenOff);}
+   catch(error){
+    this.lastLiveStatus.set(next.device.id,'启动失败');
+    this.status(next.device.name+'：'+error.message,true);
+    finished();
    }
-  }finally{
+  }
+  if(!this.launchQueue.length&&!this.launchInFlight){
    this.opening=false;
    for(const card of this.cards.values())card.refresh?.();
-   this.updatePicker();
   }
+  this.updatePicker();
  }
  open(d,quality,nextLaunch,lowLatency=false,experiment=null,screenOff=false){
   if(this.cards.has(d.id)){ // Never create a second video/WS for this device.
@@ -676,7 +686,7 @@ class MultiView{
   card.settleLaunch=()=>{
    if(card.startSettled)return;
    card.startSettled=true;
-   if(this.opening&&card.nextLaunch)card.nextLaunch();
+   if(card.nextLaunch)card.nextLaunch();
   };
   const mark=(msg,error=false)=>{
    state.textContent=msg;state.className='status'+(error?' error':'');
@@ -1056,14 +1066,17 @@ class MultiView{
   const picked=new Set(this.getBatchSelection());
   const targets=[...this.cards.values()].filter(c=>picked.has(c.id)&&
    !c.closed&&c.state!=='stopping');
-  if(!targets.length)return;
+  const beforeQueued=this.launchQueue.length;
+  this.launchQueue=this.launchQueue.filter(item=>!picked.has(item.device.id));
+  if(beforeQueued!==this.launchQueue.length)this._launchNext();
+  if(!targets.length){this.updatePicker();return;}
   this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
   for(const card of targets)this.stop(card,true);
   this.status('已并发发送 '+targets.length+' 路停止请求；各设备独立清理，不互相等待。');
   this.updatePicker();
  }
  stopAll(){
-  this.opening=false;this.launchQueue=[];
+  this.opening=false;this.launchQueue=[];this.launchInFlight=0;this.launchGeneration++;
   const targets=[...this.cards.values()].filter(c=>!c.closed&&c.state!=='stopping');
   if(targets.length&&!this.stopBatch)
    this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
