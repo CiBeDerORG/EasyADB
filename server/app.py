@@ -770,7 +770,8 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
 @app.get("/api/m2/video-engine")
 def m2_video_engine():
     # Public capability metadata contains no token, serial, network or device data.
-    return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
+    return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs",
+            "mapping_enabled": MAPPING_ENABLED}
 
 
 def mapping_summary(record):
