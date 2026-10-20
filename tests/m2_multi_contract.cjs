@@ -75,7 +75,7 @@ assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be del
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);
 assert.match(page,/class="workspace"/);
 assert.match(page,/class="panel inventory-panel"/);
-assert.match(page,/elem\('div','device-quality'\)/);
+assert.doesNotMatch(page,/elem\('div','device-quality'\)/,'settings no longer consume inline row space');
 assert.match(page,/class="stage-view"/);
 assert.doesNotMatch(page,/class="stage-main"|class="stage-settings"/);
 assert.match(page,/id="multiPicker" hidden aria-hidden="true"/);
@@ -85,7 +85,7 @@ assert.doesNotMatch(page,/class="panel access-panel"/);
 assert.match(page,/<h2>设备管理<\/h2>[\s\S]*id="token"[\s\S]*id="load"/);
 assert.match(page,/\/temp-address/);
 assert.match(page,/id="devices"[\s\S]*id="multiGrid"/);
-assert.match(page,/qualityRows\.get\(d\.id\)/);
+assert.doesNotMatch(page,/qualityRows\.get\(d\.id\)/,'settings stay in hidden picker and editor modal');
 assert.match(page,/\.multi-grid\{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:flex-start/);
 assert.doesNotMatch(page,/\.multi-grid\[data-count="(?:1|3)"\]|\.multi-grid\{display:grid/);
 assert.match(page,/\.multi-card\{flex:0 1 auto;width:386px;max-width:100%/);
@@ -117,7 +117,7 @@ assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deleti
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
-assert(page.includes("title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"),
+assert(page.includes("portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"),
  'shared ADB port itself is the single title-mounted projection toggle');
 assert(!page.includes("primary.append(elem('div','common-adb-port'"),'no separate shared-port row');
 assert(page.includes("addressList.append(...addressRows)"),'addresses use wrapping compact layout');
@@ -133,8 +133,10 @@ assert(page.includes("change.title='编辑 '+d.name"),'single-device edit is a c
 assert(!page.includes("const connect=action('连接'"),'no single-device connect button');
 assert(page.includes("$('load').addEventListener('click',loadAndConnect)"),'explicit reload connects once');
 assert(page.includes("if(current.selected_route!==route)"),'clicking current IP can reconnect without route mutation');
-assert.match(page,/title\.append\(multiView\?multiView\.projectionButton\(d\):elem\('span','device-port','ADB '\+d\.port\)\)/,
+assert.match(page,/portWrap\.append\(multiView\?multiView\.projectionButton\(d\):elem\('span','device-port','ADB '\+d\.port\)\)/,
  'clickable ADB port replaces the separate adjacent streaming icon');
+assert.match(page,/const configure=action\('✎',\(\)=>multiView\.openSettings\(d\),'projection-settings-edit'\)/);
+assert.match(page,/title\.append\(portWrap\)/);
 assert.doesNotMatch(page,/if\(multiView\)title\.append\(multiView\.projectionButton\(d\)\)/,
  'no second adjacent projection button');
 assert(page.includes("if(route==='mesh'){"),'mesh IP owns per-device editing');
@@ -164,8 +166,11 @@ assert.match(page,/\.device-title\{display:flex;align-items:center;flex-wrap:wra
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','Android '\+d\.android_version\)\)/,'Android version is not repeated below the title');
 
 assert.match(page,/top\.append\(managementLabel,info\);primary\.append\(top,addressList\)/);
-assert.match(page,/row\.prepend\(adbStatusBadge\(d\)\)/);
-assert.match(page,/\.device-quality \.adb-badge\{justify-self:start;margin-left:0\}/);
+assert.doesNotMatch(page,/row\.prepend\(adbStatusBadge\(d\)\)/,
+ 'ADB IP/port row is no longer rendered below device title');
+assert.match(page,/\.device-port\.device-projector\.adb-connected::before\{background:#54d995\}/);
+assert.match(page,/\.device-port\.device-projector\.adb-failed::before\{background:#ff7584\}/);
+assert.match(page,/\.device-port\.device-projector\.adb-connecting::before/);
 assert.doesNotMatch(page,/primary\.append\(elem\('div','muted','ADB 已连接：'/,
  'success address is in the header badge, not repeated below it');
 assert.match(page,/\.adb-badge\.connected\{background:#183e31/,'green successful ADB');
@@ -232,7 +237,8 @@ assert.match(liveStatus(0),/未开启/);
 assert.equal(liveButton(0).disabled,false);
 assert.equal(liveButton(0).tagName,'button');
 assert.equal(liveButton(0).textContent,'ADB '+devices[0].selected_serial.split(':')[1]);
-assert.match(liveButton(0).className,/device-port device-projector idle/);
+assert.match(liveButton(0).className,/device-port device-projector idle adb-connected/);
+assert.equal(liveButton(0)['data-adb-state'],'connected');
 assert.equal(liveButton(0)['aria-pressed'],'false');
 assert.match(liveStatus(1),/未开启/);
 select(0);
