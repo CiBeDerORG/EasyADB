@@ -24,13 +24,13 @@
 | V2-F05 | P1 | [x] | **启动配额配置端到端贯通**：三份 Compose 均传递 `EASYADB_MAX_STARTING: ${EASYADB_MAX_STARTING:-3}`；独立新进程测试验证未设置默认 3、显式 1/3/5 与 `/api/m2/video-engine` 的返回和预算一致；0/21/负数/非整数拒绝启动，逻辑 Session 上限仍为 20。提交 [45be7f3](https://github.com/CiBeDerORG/EasyADB/commit/45be7f30f42c4013314dcb8080694cf3ce22f185)，[CI #39447296064](https://github.com/CiBeDerORG/EasyADB/actions/runs/39447296064) success。 |
 | V2-F06 | P1 | [x] | **Peer 超时后的迟到清理**：`session_cleanup.py` 区分 Worker 错误与 Peer 待确认；Peer 超时不再错误地重置已验证的 Worker `cleanup_complete`，Peer 迟到成功可经 `_close_webrtc_peer` 与 `SessionManager` 将 DIRTY 转为 RELEASED。补完整生命周期测试及 Peer/Worker 失败、未启动 Worker 停止异常、关闭包装异常和旧会话不误释放新会话回归；未验证资源继续保留占位。提交 [d9727d7](https://github.com/CiBeDerORG/EasyADB/commit/d9727d7622c293ce90296a515fa00192303470e7)，[CI #39448241074](https://github.com/CiBeDerORG/EasyADB/actions/runs/39448241074) success。 |
 | V2-F07 | P1 | [x] | **视频数据提交背压**：`ScrcpyH264Track.submit()` 在 ADB 线程经锁先预留独立的待调度回调数（48）及载荷字节数（16MiB），再向事件循环提交；超额帧不被回调捕获，并合并无载荷的断帧通知清除旧帧、等待新 IDR。停止立即拒绝新提交，已关闭事件循环仍能完成轨道停止；轨道原有 48 帧/16MiB 队列预算保留。并发高压、超大帧、IDR 恢复、停止竞态、关闭事件循环定向回归均通过。提交 [5a30215](https://github.com/CiBeDerORG/EasyADB/commit/5a3021572419db39faf418615b5622a9b4f619a9)、[f461bf3](https://github.com/CiBeDerORG/EasyADB/commit/f461bf3058a2608a7403d578acc87afd78e0f4a4)，[CI #39449405916](https://github.com/CiBeDerORG/EasyADB/actions/runs/39449405916) success。 |
-| V2-F08 | P2 | [ ] | **退役 MSE 尾项**：移除服务端旧 `mux_chunks/media_fragments` 和废弃 WebSocket 视频字节分支（须先确认没有活跃调用）；清理 `web/m2-webrtc.js`、`web/m2-metrics.js`、`web/m2-multi.js`、旧 JS Mock 中无意义的 MSE `append/buffer/queue` 指标；同步修正 `docs/M2-WEBRTC.md` 的旧 MSE 默认、四路上限等过期叙述。保留有效 WebRTC 诊断与历史文档。 |
+| V2-F08 | P2 | [x] | **退役 MSE 尾项**：确认当前生产 WebRTC 视频数据不经 WebSocket 二进制路径，删除废弃的 `mux_chunks/media_fragments/mux_idle_ms` 计数及旧视频字节事件；移除 `web/m2-webrtc.js`、`web/m2-metrics.js`、`web/m2-multi.js` 和 JS Mock 的无意义 MSE append/buffer/queue 字段，同时保留有效 WebRTC RTP、解码帧、丢帧和控制诊断。现行 `docs/M2-WEBRTC.md` 已同步 WebRTC-only、20 路逻辑上限、默认启动并发 3 和 Host 网络部署；历史 M2 文档保留。新增旧路径防回退测试。提交 [6bdf3c5](https://github.com/CiBeDerORG/EasyADB/commit/6bdf3c54cded2b6e41ae6764640455b93b1d80e3)，[CI #39450723826](https://github.com/CiBeDerORG/EasyADB/actions/runs/39450723826) success。 |
 | V2-F09 | P1 | [ ] | **最终自动化回归与防回退门禁**：核对全套 Python/Node/Shell/OpenWrt 测试覆盖升级、配置、并发、异常释放与 WebRTC-only；在分支最新 HEAD 上 CI 成功，进度文档登记证据。不得用旧提交的绿色 CI 替代。 |
 | V2-F10 | 人工验收 | [ ] | **真实环境验收**：按 [V2-ACCEPTANCE.md](V2-ACCEPTANCE.md) 单独执行备份、FNOS/NAS、Android、OpenWrt、EasyTier ICE UDP、1/2/5/10/20 路和长时/异常/回退演练；记录硬件、日志、CPU/RSS、带宽、丢帧与结果。未执行前不称“生产验收通过”。 |
 
 ## 当前停点
 
-- **已完成：V2-F01、V2-F02、V2-F03、V2-F04、V2-F05、V2-F06、V2-F07**。
-- **下一步只做：V2-F08（退役 MSE 尾项）**，收到用户明确“继续”后才开始。
-- F08～F10 不因前序任务完成而视为已启动或已完成。
+- **已完成：V2-F01、V2-F02、V2-F03、V2-F04、V2-F05、V2-F06、V2-F07、V2-F08**。
+- **下一步只做：V2-F09（最终自动化回归与防回退门禁）**，收到用户明确“继续”后才开始。
+- F09～F10 不因前序任务完成而视为已启动或已完成。
 - 原 V2-00～V2-07 的历史 CI 通过记录不被此整改清单覆盖；当前发现的问题按上表分别复验。
