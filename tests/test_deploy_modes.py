@@ -2,12 +2,16 @@
 import os
 import shutil
 import subprocess
+
+import pytest
+
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build-with-mihomo.sh"
 DIRECT_COMPOSE = ROOT / "compose.no-proxy.yaml"
+WEBRTC_COMPOSE = ROOT / "compose.webrtc.yaml"
 PROXY_COMPOSE = ROOT / "compose.yaml"
 
 
@@ -17,6 +21,7 @@ def setup_fake_deploy(tmp_path):
     scripts.mkdir(parents=True)
     shutil.copyfile(SCRIPT, scripts / "build-with-mihomo.sh")
     shutil.copyfile(DIRECT_COMPOSE, project / "compose.no-proxy.yaml")
+    shutil.copyfile(WEBRTC_COMPOSE, project / "compose.webrtc.yaml")
     # This deliberately invalid entry must NEVER be read in direct mode.
     (project / ".env").write_text("EASYADB_BUILD_PROXY=not-a-valid-Mihomo-URL\n")
     (scripts / "update-m2.sh").write_text(
@@ -28,7 +33,7 @@ def setup_fake_deploy(tmp_path):
     docker.write_text("""#!/bin/sh
 printf '%s\\n' "$*" >> "$EASYADB_TEST_LOG"
 case "$*" in
-  "compose version"|"build --progress=plain --tag easyadb:local ."|"compose -f compose.no-proxy.yaml up -d --no-build")
+  "compose version"|"build --progress=plain --tag easyadb:local ."|"compose -f compose.webrtc.yaml up -d --no-build")
     exit 0 ;;
   *)
     echo "Unexpected Docker invocation" >&2
@@ -38,6 +43,7 @@ esac
     docker.chmod(0o755)
     env = os.environ.copy()
     env.pop("EASYADB_UPDATED", None)
+    env.pop("EASYADB_VIDEO_ENGINE", None)
     env.update({
         "PATH": str(bindir) + os.pathsep + env.get("PATH", ""),
         "EASYADB_TEST_LOG": str(tmp_path / "calls.log"),
@@ -61,7 +67,7 @@ def test_no_proxy_mode_survives_auto_update_and_skips_mihomo(tmp_path):
         "update-m2",
         "compose version",
         "build --progress=plain --tag easyadb:local .",
-        "compose -f compose.no-proxy.yaml up -d --no-build",
+        "compose -f compose.webrtc.yaml up -d --no-build",
     ]
     assert not any("mihomo" in call or "proxy-net" in call for call in calls)
     assert "without a scripted proxy" in result.stdout
@@ -136,7 +142,7 @@ case "$1" in
   image)
     [ "$2" = inspect ] && exit 0 ;;
   compose)
-    [ "$2" = up ] && exit 0 ;;
+    [ "$*" = "compose -f compose.webrtc.yaml up -d --no-build" ] && exit 0 ;;
 esac
 exit 74
 """)
@@ -150,5 +156,42 @@ exit 74
     assert "image inspect moby/buildkit:buildx-stable-1" in calls
     assert any(call.startswith("buildx create --name easyadb-proxy ") for call in calls)
     assert any(call.startswith("buildx build --builder easyadb-proxy ") for call in calls)
-    assert calls[-1] == "compose up -d --no-build"
-    assert not any("compose.no-proxy.yaml" in call for call in calls)
+    assert calls[-1] == "compose -f compose.webrtc.yaml up -d --no-build"
+    assert not any("compose.no-proxy.yaml" in call or call == "compose up -d --no-build"
+                   for call in calls)
+
+
+def test_explicit_webrtc_engine_overrides_legacy_env_file(tmp_path):
+    project, env = setup_fake_deploy(tmp_path)
+    (project / ".env").write_text("EASYADB_VIDEO_ENGINE=mse\n")
+    env["EASYADB_VIDEO_ENGINE"] = "webrtc"
+    result = invoke(project, env, "--no-proxy")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "compose -f compose.webrtc.yaml up -d --no-build" in (
+        tmp_path / "calls.log").read_text()
+
+
+@pytest.mark.parametrize("engine", ("mse", "webcodecs", "ffmpeg", "unknown"))
+@pytest.mark.parametrize("from_env", (False, True))
+@pytest.mark.parametrize("args", (("--no-proxy",), ()))
+def test_invalid_engine_rejected_before_git_or_docker(tmp_path, engine, from_env, args):
+    project, env = setup_fake_deploy(tmp_path)
+    if from_env:
+        env["EASYADB_VIDEO_ENGINE"] = engine
+    else:
+        (project / ".env").write_text(f"EASYADB_VIDEO_ENGINE={engine}\n")
+    result = invoke(project, env, *args)
+    assert result.returncode == 2
+    assert "webrtc" in result.stderr.lower()
+    assert not (tmp_path / "calls.log").exists()
+
+
+def test_invalid_engine_not_hidden_by_if_changed_short_circuit(tmp_path):
+    project, env = setup_fake_deploy(tmp_path)
+    env["EASYADB_VIDEO_ENGINE"] = "mse"
+    env["EASYADB_UPDATED"] = "1"
+    (project / "data/storage").mkdir(parents=True)
+    (project / "data/storage/.easyadb-last-deployed-tree").write_text("dummy\n")
+    result = invoke(project, env, "--no-proxy", "--if-changed")
+    assert result.returncode == 2
+    assert not (tmp_path / "calls.log").exists()

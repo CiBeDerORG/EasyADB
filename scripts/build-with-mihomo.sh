@@ -25,6 +25,21 @@ for arg do
 done
 
 cd "$(dirname "$0")/.."
+# Validate V2 runtime before Git update, no-change short circuit or Docker.
+# An explicit environment variable wins over the local, Git-ignored .env.
+VIDEO_ENGINE="${EASYADB_VIDEO_ENGINE:-}"
+if [ -z "$VIDEO_ENGINE" ] && [ -f .env ]; then
+  VIDEO_ENGINE="$(sed -n 's/^[[:space:]]*EASYADB_VIDEO_ENGINE[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | tr -d '\r' | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//;s/^"//;s/"$//')"
+fi
+VIDEO_ENGINE="${VIDEO_ENGINE:-webrtc}"
+case "$VIDEO_ENGINE" in
+  webrtc) ;;
+  mse) echo 'ERROR: FFmpeg + MSE was removed in V2; set EASYADB_VIDEO_ENGINE=webrtc in .env.' >&2; exit 2 ;;
+  webcodecs) echo 'ERROR: WebCodecs is reserved and unimplemented; set EASYADB_VIDEO_ENGINE=webrtc.' >&2; exit 2 ;;
+  *) echo 'ERROR: unsupported EASYADB_VIDEO_ENGINE; V2 supports only webrtc.' >&2; exit 2 ;;
+esac
+echo 'WebRTC: Linux host networking; allow NAS ICE dynamic UDP ports over EasyTier.'
+
 DEPLOY_MARKER=data/storage/.easyadb-last-deployed-tree
 deploy_git() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
@@ -70,26 +85,8 @@ if [ "$IF_CHANGED" = 1 ] && [ -f "$DEPLOY_MARKER" ]; then
   fi
 fi
 
-# Docker Compose reads .env automatically, but the build helper must also
-# select the matching runtime topology BEFORE invoking compose.
-VIDEO_ENGINE="${EASYADB_VIDEO_ENGINE:-}"
-if [ -z "$VIDEO_ENGINE" ] && [ -f .env ]; then
-  VIDEO_ENGINE="$(sed -n 's/^[[:space:]]*EASYADB_VIDEO_ENGINE[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | tr -d '\r' | sed 's/[[:space:]]*#.*$//;s/[[:space:]]*$//;s/^"//;s/"$//')"
-fi
-VIDEO_ENGINE="${VIDEO_ENGINE:-mse}"
-case "$VIDEO_ENGINE" in
-  mse|webcodecs) WEBRTC_RUNTIME=0 ;;
-  webrtc) WEBRTC_RUNTIME=1 ;;
-  *) echo "ERROR: EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs." >&2; exit 2 ;;
-esac
-if [ "$WEBRTC_RUNTIME" = 1 ]; then
-  echo "WebRTC: Linux host networking; allow NAS ICE dynamic UDP ports over EasyTier."
-fi
-
 if [ "$MODE" = direct ]; then
-  # This compose file is self-contained: it does NOT mention proxy-net, Mihomo
-  # or proxy build args. It retains the same Compose project, image, volumes
-  # and published ports as the default mode.
+  # Build without Mihomo; the V2 runtime remains WebRTC host-networked.
   if ! docker compose version >/dev/null 2>&1; then
     echo 'ERROR: Docker Compose v2 is required.' >&2
     exit 1
@@ -98,21 +95,14 @@ if [ "$MODE" = direct ]; then
   # No Mihomo bridge IP, --add-host, BuildKit proxy builder or custom proxy args.
   # External Docker daemon/network settings remain under the host's control.
   docker build --progress=plain --tag easyadb:local .
-  if [ "$WEBRTC_RUNTIME" = 1 ]; then
-    docker compose -f compose.webrtc.yaml up -d --no-build
-  else
-    docker compose -f compose.no-proxy.yaml up -d --no-build
-  fi
+  docker compose -f compose.webrtc.yaml up -d --no-build
   write_deployed_tree
   exit 0
 fi
 
-# FNOS / Linux: original Mihomo path, unchanged below this point.
-# BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves
-# a temporary bridge IP; no host networking.
-
-# Both the dedicated BuildKit container and EasyADB runtime join proxy-net.
-# BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
+# FNOS / Linux: retain the Mihomo-assisted BuildKit path.
+# Only the BuildKit builder joins proxy-net; EasyADB uses WebRTC host-network
+# Compose. Buildx resolves the builder's transient bridge IP as before.
 NETWORK=proxy-net
 MIHOMO_CONTAINER="${MIHOMO_CONTAINER:-mihomo}"
 BUILDER=easyadb-proxy
@@ -202,9 +192,5 @@ docker buildx build --builder "$BUILDER" --load --progress=plain \
   --build-arg 'NO_PROXY=localhost,127.0.0.1' \
   --build-arg 'no_proxy=localhost,127.0.0.1' \
   .
-if [ "$WEBRTC_RUNTIME" = 1 ]; then
-  docker compose -f compose.webrtc.yaml up -d --no-build
-else
-  docker compose up -d --no-build
-fi
+docker compose -f compose.webrtc.yaml up -d --no-build
 write_deployed_tree

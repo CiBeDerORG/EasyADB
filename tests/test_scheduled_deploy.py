@@ -21,7 +21,7 @@ def setup_project(tmp_path):
     for name in ("scheduled-deploy.sh", "build-with-mihomo.sh", "update-m2.sh"):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
     shutil.copyfile(ROOT / ".gitignore", project / ".gitignore")
-    shutil.copyfile(ROOT / "compose.no-proxy.yaml", project / "compose.no-proxy.yaml")
+    shutil.copyfile(ROOT / "compose.webrtc.yaml", project / "compose.webrtc.yaml")
     (project / "README.md").write_text("initial\n")
     shell("git", "init", "-b", "feat/m3-openwrt-discovery", cwd=project)
     shell("git", "config", "user.email", "fixture@example.invalid", cwd=project)
@@ -48,7 +48,7 @@ esac
 printf '%s\\n' "$*" >> "$EASYADB_TEST_LOG"
 if [ "${EASYADB_DOCKER_FAIL:-0}" = 1 ] && [ "$1" = build ]; then exit 42; fi
 case "$*" in
- "compose version"|"build --progress=plain --tag easyadb:local ."|"compose -f compose.no-proxy.yaml up -d --no-build")
+ "compose version"|"build --progress=plain --tag easyadb:local ."|"compose -f compose.webrtc.yaml up -d --no-build")
    exit 0 ;;
 esac
 exit 74
@@ -57,6 +57,7 @@ exit 74
     env = os.environ.copy()
     env.pop("EASYADB_UPDATED", None)
     env.pop("EASYADB_SOURCE_BRANCH", None)
+    env.pop("EASYADB_VIDEO_ENGINE", None)
     env.update({
         "PATH": str(bindir) + os.pathsep + env.get("PATH", ""),
         "FAKE_CRONTAB": str(tmp_path / "cron.txt"),
@@ -145,7 +146,7 @@ def test_changed_tree_skips_rebuild_then_deploys_and_retries_failure(tmp_path):
     assert after != before
     calls = (tmp_path / "docker.log").read_text().splitlines()
     assert calls == ["compose version", "build --progress=plain --tag easyadb:local .",
-                     "compose -f compose.no-proxy.yaml up -d --no-build"]
+                     "compose -f compose.webrtc.yaml up -d --no-build"]
     unchanged = invoke(project, env, *build_args)
     assert unchanged.returncode == 0 and "skipping Docker" in unchanged.stdout
     assert (tmp_path / "docker.log").read_text().splitlines() == calls
