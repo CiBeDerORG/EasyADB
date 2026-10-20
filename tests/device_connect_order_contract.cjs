@@ -41,8 +41,14 @@ assert.match(render,/const ac=grouped\.get\(a\)\.items\.some\(hasConnectedAdb\),
  'groups containing live connections appear ahead of disconnected groups');
 const handler=html.slice(html.indexOf("$('bulkConnect').addEventListener"),
  html.indexOf("$('bulkDelete').addEventListener"));
-assert.match(handler,/const succeeded=successfulBatchIds\(candidates,results\);\s*managementSelected\.clear\(\);\s*for\(const id of succeeded\)managementSelected\.add\(id\);/,
- 'bulk connect replaces old selection with successful connections only');
-assert.match(handler,/render\(\);\s*message\('批量连接完成/,
- 'selection is redrawn after the successful-only update');
+const progressive=html.slice(html.indexOf('async function connectProgressively('),
+ html.indexOf('async function loadAndConnect('));
+assert.match(handler,/await connectProgressively\(candidates,skipped,true,'批量连接',connectGeneration\)/,
+ 'bulk connect uses the same progressive per-device pipeline');
+assert.match(progressive,/if\(selectSuccessful\)managementSelected\.clear\(\)/,
+ 'old selection cleared when a successful-only batch starts');
+assert.match(progressive,/if\(selectSuccessful\)managementSelected\.add\(d\.id\)/,
+ 'only successful devices are selected as they finish');
+assert.match(progressive,/connectingDevices\.delete\(d\.id\);[\s\S]*?applyConnectionResult\(d,result\);[\s\S]*?render\(\)/,
+ 'each completed device is independently unlocked and redrawn');
 console.log('Connected-first group sorting and successful-only batch selection: OK');
