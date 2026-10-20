@@ -6,7 +6,6 @@ recording. Every stream is owned by exactly one authenticated WebSocket.
 import os
 import queue
 import secrets
-import select
 import socket
 import struct
 import subprocess
@@ -348,7 +347,7 @@ class LiveVideo:
         raise StreamStopped()
 
     def _stream_to_webrtc(self, video, first_header, width, height, name):
-        """Forward scrcpy's complete encoded access units, without FFmpeg/MSE."""
+        """Forward scrcpy H.264 access units directly to the WebRTC track."""
         if self.webrtc_track is None:
             raise VideoProbeError("WebRTC 视频轨道尚未绑定")
         header = first_header
@@ -501,90 +500,6 @@ class LiveVideo:
                     self.touch_size = (width, height)
                 self._phase_set("等待 WebRTC H.264 关键帧")
                 self._stream_to_webrtc(video, first_header, width, height, name)
-        except StreamStopped:
-                        pass
-                    except VideoProbeError as exc:
-                        if not self.stop_event.is_set():
-                            try:
-                                self._emit(("error", str(exc)))
-                            except (VideoProbeError, StreamStopped):
-                                pass
-                            finally:
-                                # Do not wait for FFmpeg stdout/EOF to eventually
-                                # notice a dead ADB media socket. Stop all input
-                                # immediately; the owner thread runs final cleanup.
-                                self.stop_event.set()
-                    finally:
-                        if mux.stdin:
-                            try:
-                                mux.stdin.close()
-                            except OSError:
-                                pass
-
-                feeder = threading.Thread(target=feed, daemon=True, name="easyadb-m2-feeder")
-                feeder.start()
-                init_buffer = bytearray()
-                fragmenter = Fmp4FragmentAssembler()
-                has_init = False
-                init_started = time.monotonic()
-                while not self.stop_event.is_set():
-                    if adb_proc.poll() is not None:
-                        raise VideoProbeError("本轮 ADB/scrcpy 视频进程已退出")
-                    if not has_init and time.monotonic() - init_started > 25:
-                        raise VideoProbeError("FFmpeg 25 秒内未生成 MP4 初始化段，请检查编码器或屏幕状态")
-                    # Avoid indefinitely blocking on a quiet/failed encoder,
-                    # so stop/route switch can release its session promptly.
-                    ready, _, _ = select.select([mux.stdout], [], [], 0.5)
-                    if not ready:
-                        continue
-                    data = os.read(mux.stdout.fileno(), 32768)
-                    if not data:
-                        if not self.stop_event.is_set():
-                            mux_log.flush()
-                            mux_log.seek(0)
-                            raw = mux_log.read(10000).decode("utf-8", "replace").lower()
-                            msg = ("FFmpeg H.264 转封装失败，请重新开始实验"
-                                   if "error" in raw or mux.poll() not in (0, None)
-                                   else "视频编码流已结束")
-                            raise VideoProbeError(msg)
-                        break
-                    self._record_mux_chunk()
-                    if not has_init:
-                        init_buffer.extend(data)
-                        if len(init_buffer) > MAX_INIT_BYTES:
-                            raise VideoProbeError("MP4 初始化信息过大")
-                        parsed = parse_init_segments(init_buffer)
-                        if parsed is None:
-                            continue
-                        end, init, mime = parsed
-                        with self._metric_lock:
-                            self._ready_at = time.monotonic()
-                            self._phase = "已生成 MP4 初始化段"
-                        if self.screen_off:
-                            # Wake clicked before first frame wins over deferred off.
-                            if self.set_display_power(False, skip_if_wake=True):
-                                self._emit(("screen_power_notice", {"on": False,
-                                    "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
-                        self._emit(("init", {"mime": mime, "width": width, "height": height,
-                                             "profile": self.profile, "requested": dict(self.settings),
-                                             "codec": "h264", "control_available": True,
-                                             "device": name.decode("utf-8", "replace")}))
-                        self._emit(("bytes", init))
-                        remainder = bytes(init_buffer[end:])
-                        init_buffer.clear()
-                        fragments = fragmenter.feed(remainder)
-                        for fragment in fragments:
-                            self._emit(("bytes", fragment))
-                        if fragments:
-                            self._record_media_fragments(len(fragments))
-                        has_init = True
-                        self._phase_set("持续传输")
-                    else:
-                        fragments = fragmenter.feed(data)
-                        for fragment in fragments:
-                            self._emit(("bytes", fragment))
-                        if fragments:
-                            self._record_media_fragments(len(fragments))
         except StreamStopped:
             pass
         except VideoProbeError as exc:
