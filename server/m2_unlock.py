@@ -13,10 +13,10 @@ from cryptography.fernet import Fernet, InvalidToken
 from .m2_touch import InvalidTouch
 from .m2_video_probe import _run_adb, VideoProbeError
 
-PASSWORD_PATTERN = re.compile(r"[A-Za-z0-9]{4,32}\\Z")
-LOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\\s*[:=]\\s*true\\b", re.I)
-UNLOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\\s*[:=]\\s*false\\b", re.I)
-SIZE_PATTERN = re.compile(r"(?:Physical size|Override size):\\s*(\\d+)x(\\d+)")
+PASSWORD_PATTERN = re.compile(r"[A-Za-z0-9]{4,32}\Z")
+LOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\s*[:=]\s*true\b", re.I)
+UNLOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\s*[:=]\s*false\b", re.I)
+SIZE_PATTERN = re.compile(r"(?:Physical size|Override size):\s*(\d+)x(\d+)")
 
 def validate_password(value):
     if type(value) is not str or not PASSWORD_PATTERN.fullmatch(value):
