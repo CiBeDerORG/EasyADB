@@ -197,7 +197,9 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "this.lastLiveStatus.set(card.id" in multi_js
         assert "projectionButton(d)" in multi_js
         assert "开启此设备投屏" in multi_js and "关闭此设备投屏" in multi_js
-        assert ".device-projector.ready,.device-projector.playing" in html
+        assert ".device-port.device-projector.ready,.device-port.device-projector.playing" in html
+        assert "title.append(multiView?multiView.projectionButton(d)" in html
+        assert "model.append(elem('span','device-tooltip-line','Android：'+d.android_version))" in html
         assert "item.append(liveRow,playback)" not in multi_js
         assert "getManagementBusy:()=>loading" in html
         # The existing batch-management checkboxes now also drive at-most-four
