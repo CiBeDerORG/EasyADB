@@ -257,12 +257,23 @@ class MultiView{
   // The ADB port chip is the ONLY individual projection toggle; no extra
   // adjacent icon, no bulk-selection mutation and no new ADB connection.
   const live=this.liveState(d.id),adbReady=this.isAdbReady(d);
-  const state=live.active||adbReady?live.code:(d.connect_failed?'error':'disconnected');
-  const button=make('button','device-port device-projector '+state,'ADB '+d.port);
+  const state=live.code;
+  const adbTone=adbReady?'connected':
+   ['checking','connecting'].includes(d.status)?d.status:
+   d.connect_failed===true||d.status==='error'?'failed':'idle';
+  const adbAddress=adbReady?d.active_serial:d.selected_serial;
+  const adbLabel=adbReady?'ADB 已连接':
+   adbTone==='failed'?'ADB 连接失败':
+   adbTone==='connecting'?'ADB 连接中':
+   adbTone==='checking'?'ADB 检查中':'ADB 未连接';
+  const button=make('button','device-port device-projector '+state+' adb-'+adbTone,'ADB '+d.port);
   button.type='button';
-  button.title=live.active?'关闭此设备投屏 · '+live.label:
-   adbReady?'开启此设备投屏 · '+live.label:'ADB 未连接，请先连接设备';
-  button.setAttribute('aria-label',d.name+' · ADB '+d.port+' · '+button.title);
+  const projectionLabel=live.active?'关闭此设备投屏 · '+live.label:
+   adbReady?'开启此设备投屏 · '+live.label:'请先连接 ADB 再投屏';
+  button.title=adbLabel+(adbAddress?' · '+adbAddress:'')+'\n'+projectionLabel;
+  button.setAttribute('aria-label',d.name+' · '+adbLabel+
+   (adbAddress?' · '+adbAddress:'')+' · '+projectionLabel);
+  button.setAttribute('data-adb-state',adbTone);
   button.setAttribute('aria-pressed',String(live.active));
   button.setAttribute('data-projection-state',state);
   button.disabled=live.active
@@ -276,6 +287,73 @@ class MultiView{
    if(this.liveState(d.id).active)this.stopFor(d.id);else this.startFor(d.id);
   });
   return button;
+ }
+ openSettings(d){
+  // Native modal with a draft: do not mutate a running/queued session or
+  // rebuild the hidden per-device picker until Save is pressed.
+  if(this.settingsDialog?.open)return false;
+  const previous=this.getChoice(d.id),dialog=make('dialog','quality-settings-dialog');
+  const form=make('form','quality-settings-form');
+  const head=make('div','quality-settings-head'),close=make('button','secondary','×');
+  close.type='button';close.setAttribute('aria-label','关闭投屏参数设置');
+  head.append(make('h2','','投屏参数 · '+d.name),close);
+  const description=make('p','muted','四项画质参数与播放设置按设备独立保存（本页面会话内）。'+
+   '正在投屏时可编辑，但当前会话不热切换，保存后仅对下一次投屏生效。');
+  const fields=make('div','quality-settings-fields');
+  const selectors={};
+  for(const [key,label] of [['max_size','分辨率上限'],['video_bit_rate','目标码率'],
+   ['max_fps','最高帧率'],['dpi','DPI']]){
+   const field=make('label','',label);
+   const selected=key==='max_size'?
+    (previous.experimental_resolution?'exp:'+previous.experimental_resolution:previous.max_size):
+    previous[key];
+   const select=key==='max_size'?resolutionChoice(selected):choice(CUSTOM[key],selected);
+   select.setAttribute('aria-label',d.name+' '+label);
+   selectors[key]=select;field.append(select);fields.append(field);
+  }
+  const section=make('fieldset','quality-playback');
+  section.append(make('legend','','播放设置'));
+  const latency=make('label','quality-setting-check'),low=make('input');
+  low.type='checkbox';low.checked=previous.low_latency===true;
+  latency.append(low,make('span','','低延迟播放实验（仅浏览器追帧，不改变手机编码）'));
+  const screenLabel=make('label','quality-setting-check'),screenOff=make('input');
+  screenOff.type='checkbox';screenOff.checked=previous.screen_off===true&&!previous.experimental_resolution;
+  screenLabel.append(screenOff,make('span','','投屏时关闭手机物理屏幕（远端画面继续显示）'));
+  const experimentHint=make('p','muted','实验性虚拟分辨率使用所选 DPI，不改变手机原有系统 DPI；此模式不支持关闭物理屏幕。');
+  const syncExperiment=()=>{
+   const experimental=selectors.max_size.value.startsWith('exp:');
+   screenOff.disabled=experimental;
+   if(experimental)screenOff.checked=false;
+   experimentHint.hidden=!experimental;
+  };
+  selectors.max_size.addEventListener('change',syncExperiment);syncExperiment();
+  section.append(latency,screenLabel,experimentHint);
+  const footer=make('div','modal-actions'),cancel=make('button','secondary','取消'),
+   save=make('button','','保存设置');
+  cancel.type='button';save.type='submit';footer.append(cancel,save);
+  form.append(head,description,fields,section,footer);dialog.append(form);
+  const dismiss=()=>{if(dialog.open)dialog.close();else dialog.remove();};
+  close.addEventListener('click',dismiss);cancel.addEventListener('click',dismiss);
+  dialog.addEventListener('close',()=>{
+   dialog.remove();if(this.settingsDialog===dialog)this.settingsDialog=null;
+  });
+  form.addEventListener('submit',event=>{
+   event.preventDefault();
+   const resolution=selectors.max_size.value;
+   const experiment=resolution.startsWith('exp:')?resolution.slice(4):null;
+   this.setChoice(d.id,{
+    profile:'custom',
+    max_size:experiment?previous.max_size:Number(resolution),
+    experimental_resolution:experiment,
+    video_bit_rate:Number(selectors.video_bit_rate.value),
+    max_fps:Number(selectors.max_fps.value),dpi:Number(selectors.dpi.value),
+    low_latency:low.checked,screen_off:!experiment&&screenOff.checked
+   });
+   this.status(d.name+'：投屏参数已保存，下次投屏生效。');
+   dismiss();
+  });
+  root.document.body.append(dialog);this.settingsDialog=dialog;dialog.showModal();
+  return true;
  }
  startFor(id){
   // Only this target. Never inherit the other checked devices from the batch
