@@ -27,8 +27,6 @@ class GroupControl{
   const wake=icon('fab-up-wake','☀','唤醒全部可操作设备屏幕');
   const reconnect=icon('fab-up-reconnect','↻','重连全部当前实时画面');
   const stop=icon('fab-up-stop','✕','关闭全部实时画面并展开设备管理');
-  const toggle=icon('fab-remote','⏻','启用群控远控');
-  toggle.setAttribute('aria-pressed','false');
   const text=icon('fab-text','⌨','群控文字与按键输入');
   const form=make('form','multi-text-panel group-text-panel');form.hidden=true;
   form.setAttribute('aria-label','群控文字与按键输入');
@@ -38,7 +36,7 @@ class GroupControl{
   head.append(make('span','','群控文字输入'),textClose);
   const entry=make('div','multi-text-entry'),input=make('input'),submit=make('button','','发送');
   input.type='text';input.maxLength=300;input.autocomplete='off';
-  input.placeholder='仅 ASCII，发送到已启用远控的画面';
+  input.placeholder='仅 ASCII，发送到控制已就绪的画面';
   submit.type='submit';entry.append(input,submit);
   const keys=make('div','multi-text-keys');
   const nav=[];
@@ -50,12 +48,12 @@ class GroupControl{
    const button=cls?icon('fab-down '+cls,glyph,label):
     make('button','secondary',glyph+' '+label);
    button.type='button';button.disabled=true;button.setAttribute('aria-label','群控'+label);
-   if(cls){button.hidden=true;fab.append(button);}else keys.append(button);
+   if(cls)fab.append(button);else keys.append(button);
    button.addEventListener('click',()=>{if(!button.disabled)this.sendInput('nav_key',{key});this.resetTimer();});
    nav.push(button);
   }
   form.append(head,entry,keys);
-  fab.append(log,wake,reconnect,stop,toggle,text,main,form);
+  fab.append(log,wake,reconnect,stop,text,main,form);
   const panel=make('section','group-log-panel');
   panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','群控日志');
   const panelHead=make('div','multi-log-head'),panelClose=make('button','secondary multi-log-close','×');
@@ -64,7 +62,7 @@ class GroupControl{
   const logContent=make('pre','group-log-content');
   panel.append(panelHead,logContent);
   host.append(fab,panel);
-  Object.assign(this,{fab,main,log,wake,reconnect,stop,toggle,text,form,input,submit,
+  Object.assign(this,{fab,main,log,wake,reconnect,stop,text,form,input,submit,
    textClose,nav,panel,panelClose,logContent});
   main.addEventListener('click',()=>{
    if(fab.hidden)return;
@@ -93,18 +91,8 @@ class GroupControl{
    e.addEventListener('keydown',()=>this.resetTimer());
   }
   input.addEventListener('input',()=>this.resetTimer());
-  for(const b of [log,wake,reconnect,stop,toggle,text])
+  for(const b of [log,wake,reconnect,stop,text])
    b.addEventListener('pointerdown',()=>this.resetTimer());
-  toggle.addEventListener('click',()=>{
-   if(toggle.disabled)return;
-   const candidates=this.targets().filter(c=>!c.toggle.disabled);
-   const enable=candidates.some(c=>!c.enabled);
-   const targets=candidates.filter(c=>c.enabled!==enable);
-   // Use the same listener and validation as a card's individual remote button.
-   for(const card of targets)card.toggle.click();
-   this.report((enable?'启用':'关闭')+'远控：已向 '+targets.length+' 路发送请求，其他未就绪设备已跳过。');
-   this.resetTimer();this.refresh();
-  });
   wake.addEventListener('click',()=>{
    if(wake.disabled)return;
    const targets=this.targets().filter(c=>!c.wakeButton.disabled);
@@ -149,7 +137,7 @@ class GroupControl{
  sendInput(type,payload){
   const targets=this.targets().filter(card=>this.canInput(card));
   for(const card of targets)this.view.sendInput(card,type,payload);
-  this.report('群控指令已尝试发送至 '+targets.length+' 路已启用远控的画面；其他设备跳过。',
+  this.report('群控指令已尝试发送至 '+targets.length+' 路控制已就绪的画面；其他设备跳过。',
    targets.length===0);
   this.refresh();return targets.length;
  }
@@ -181,15 +169,11 @@ class GroupControl{
   this.log.disabled=!has;this.stop.disabled=!has;
   this.wake.disabled=!targets.some(c=>!c.wakeButton.disabled);
   this.reconnect.disabled=!targets.some(c=>!c.reconnectButton.disabled);
-  const togglable=targets.filter(c=>!c.toggle.disabled);
-  this.toggle.disabled=!togglable.length;
-  const allEnabled=!!togglable.length&&togglable.every(c=>c.enabled);
-  this.toggle.title=allEnabled?'关闭群控远控':'启用群控远控';
-  this.toggle.setAttribute('aria-label',this.toggle.title);
-  this.toggle.setAttribute('aria-pressed',String(allEnabled));
   const canInput=targets.some(c=>this.canInput(c));
   this.text.disabled=!canInput;this.input.disabled=!canInput;this.submit.disabled=!canInput;
-  for(const b of this.nav){b.disabled=!canInput;if(b.className.includes('fab-down'))b.hidden=!canInput;}
+  // Navigation stays mounted beneath the main FAB; only the menu's
+  // expanded/collapsed state controls its visibility.
+  for(const b of this.nav)b.disabled=!canInput;
   if(!canInput){this.textOpen=false;this.form.hidden=true;}
   this.updateLog();
  }
