@@ -129,7 +129,7 @@ def test_same_websocket_must_opt_in_before_touch_and_reject_stale_size(monkeypat
         mod.manager._set_state(d["id"], "connected", serial=d["selected_serial"], route="mesh")
         path = f"/api/devices/{d['id']}/m2/live"
         with client.websocket_connect(path, headers={"origin": "http://testserver"}) as ws:
-            ws.send_json({"token": "local-test-token-123", "player": "mse",
+            ws.send_json({"token": "local-test-token-123", "player": "webrtc",
                           "profile": "baseline", "selected_serial": d["selected_serial"]})
             while (msg := ws.receive_json())["type"] != "init":
                 assert msg["type"] in ("starting", "diagnostic")
