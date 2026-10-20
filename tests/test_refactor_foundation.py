@@ -222,3 +222,39 @@ def test_group_discovery_validates_group_only_after_acquiring_operation_mutex():
         )
     assert exc.value.status_code == 404
     assert not mutex.locked()
+
+
+def test_unrelated_device_update_is_not_blocked_by_other_device_lock(monkeypatch, tmp_path):
+    """A connected/live operation on A must not serialize an ordinary edit on B."""
+    monkeypatch.setenv("EASYADB_TOKEN", TOKEN)
+    mod = importlib.import_module("server.app")
+    store = DeviceStore(str(tmp_path / "parallel.sqlite3"))
+    store.initialize()
+    manager = DeviceManager(store, lambda *a, **kw: pytest.fail("no ADB allowed"))
+    monkeypatch.setattr(mod, "store", store)
+    monkeypatch.setattr(mod, "manager", manager)
+    monkeypatch.setattr(mod, "live_registry", LiveRegistry())
+    a = store.create({"name": "A", "group_name": "", "ip": "10.2.0.1", "port": 5555})
+    b = store.create({"name": "B", "group_name": "", "ip": "10.2.0.2", "port": 5555})
+    update = mod.DeviceInput(name="B2", group_name="", ip="10.2.0.2", port=5555)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with manager._device_lock(a["id"]):
+            future = pool.submit(mod.update_device, b["id"], update)
+            result = future.result(timeout=2)
+            assert result["name"] == "B2", "unrelated device may not wait for A"
+    assert store.get(a["id"])["name"] == "A"
+    assert store.get(b["id"])["name"] == "B2"
+
+
+def test_runtime_preserves_an_existing_sqlite_database(tmp_path):
+    """V1 composition may initialize an existing DB but never replace its data."""
+    path = tmp_path / "existing.sqlite3"
+    before = DeviceStore(str(path))
+    before.initialize()
+    saved = before.create({"name": "Persist", "group_name": "",
+                           "ip": "10.7.7.7", "port": 5555})
+    runtime = build_runtime(str(path), lambda *a, **kw: pytest.fail("no ADB on startup"))
+    runtime.store.initialize()
+    assert runtime.store.get(saved["id"])["name"] == "Persist"
+    assert runtime.store.get(saved["id"])["ip"] == "10.7.7.7"
