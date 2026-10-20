@@ -78,8 +78,21 @@ def test_m3_http_and_websocket_routes_unchanged(monkeypatch):
             for method in (getattr(route, "methods", None) or ())}
     ws = {route.path for route in mod.app.routes
           if isinstance(route, APIWebSocketRoute)}
-    assert http == EXPECTED_HTTP
+    # API paths are registered directly. Public static assets are validated
+    # with actual requests because their router representation is framework-
+    # version-specific; preserving the served paths is the real contract.
+    assert {(method, path) for method, path in http if path.startswith("/api/")} == {
+        (method, path) for method, path in EXPECTED_HTTP if path.startswith("/api/")
+    }
     assert ws == EXPECTED_WS
+    with TestClient(mod.app) as client:
+        for method, path in EXPECTED_HTTP:
+            if not path.startswith("/api/"):
+                response = client.request(method, path)
+                assert response.status_code == 200, path
+                assert response.headers["cache-control"] == "no-store"
+                if path.endswith(".js"):
+                    assert response.headers["content-type"].startswith("application/javascript")
 
 
 def test_m3_auth_and_public_capability_boundary(monkeypatch):
