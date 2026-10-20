@@ -11,7 +11,7 @@
 
 | ID | 优先级 | 状态 | 最小交付与验收 |
 | --- | --- | --- | --- |
-| V4-01 | P0 | [ ] | 前端架构/命名/CSS/生命周期标准；EditorConfig、ESLint、Prettier 与独立 V4 CI 门禁；保留逐文件历史豁免，新代码自动受检，不修改原业务脚本。 |
+| V4-01 | P0 | [x] | **前端架构、命名及代码规范门禁**：新增 `V4-FRONTEND-STANDARDS.md`、EditorConfig、ESLint、Prettier、锁定 npm 依赖及 Node 架构测试；增量约束新模块的目录/文件命名、camelCase、禁止新增 window 全局业务导出。旧七份 IIFE 和 `index.html` 显式豁免，不批量格式化；`node_modules/` 从 Git/Docker 构建上下文排除。V4 CI 独立执行 `npm ci`、lint、format 和命名门禁，原 Python/Node/Shell/OpenWrt 回归继续运行。最终代码提交 [3548925](https://github.com/CiBeDerORG/EasyADB/commit/3548925e1fe0343ff86cd255a7a643e335fdc061)，[CI #39456125975](https://github.com/CiBeDerORG/EasyADB/actions/runs/39456125975) success；未修改原业务脚本。 |
 | V4-02 | P0 | [ ] | 公共 API Client、DOM、Toast、Dialog 逐项迁移到显式模块，补现有静态资源路由/Node VM 兼容契约，禁止新增 window 全局业务入口。 |
 | V4-03 | P0 | [ ] | 单路 LiveSessionController 拥有本轮 WS/WebRTC/Touch/诊断的前端生命周期；旧 session_id 回调不能释放新会话；全量停止回归。 |
 | V4-04 | P0 | [ ] | MultiView 拆出 LiveBatchScheduler/LiveCardView/画质配置，维持服务器下发并发配额、设备选择和批量停止语义。 |
@@ -20,4 +20,4 @@
 
 ## 当前停点
 
-- V4-01 执行中；V4-02～V4-06 未启动。每轮按上面的复杂度规则推进。
+- **已完成：V4-01**，最终代码提交 `3548925`、CI #39456125975 success。下一步 **V4-02**；V4-02～V4-06 尚未开始。本轮不自动推进。每轮按上面的复杂度规则继续。
