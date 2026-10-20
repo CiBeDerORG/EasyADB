@@ -1,4 +1,4 @@
-> **架构重构进度（仅基于 M3）**：本分支 `refactor/foundation-v1` 的目标、已完成内容、CI 和下次继续步骤，统一记录于 [重构进度](docs/REFACTOR-PROGRESS.md) 与 [重构报告](docs/REFACTOR-ROADMAP.md)。V1 尚未全部完成，不包含 M4 画面映射分支。
+> **架构重构进度（仅基于 M3）**：本分支 `refactor/foundation-v1` 的 V1 **代码改造与自动化验收已通过**；真实设备验证待按 [V1 实机验收清单](docs/V1-ACCEPTANCE.md) 执行。详情见 [重构进度](docs/REFACTOR-PROGRESS.md) 与 [重构报告](docs/REFACTOR-ROADMAP.md)。不包含 M4 画面映射分支。
 
 ## EasyADB 定时更新部署（FNOS / Linux）
 
