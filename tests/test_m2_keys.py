@@ -184,7 +184,13 @@ def test_keyboard_ui_is_explicit_and_never_global_key_capture():
     assert "const textButton=icon('fab-text'" in multi
     assert "const main=make('button','fab-main'" in multi
     assert "card.menuOpen=true" in multi and "root.setTimeout" in multi
-    assert "for(const b of nav.slice(0,3))b.hidden=!card.enabled" in multi
+    assert "for(const b of nav.slice(0,3))b.hidden=!card.enabled" not in multi
+    assert "else fab.append(btn);" in multi
+    assert "ws.send(JSON.stringify({type:'control_enable',session_id:card.session}))" in multi
+    assert "const toggle=icon('fab-remote'" not in multi
+    assert ".multi-fab .fab-nav-back{top:48px;right:0}" in html
+    assert ".multi-fab .fab-nav-home{top:94px;right:0}" in html
+    assert ".multi-fab .fab-nav-recents{top:140px;right:0}" in html
     assert "logPanel.hidden=false" in multi and "logPanel.hidden=true" in multi
     assert "['recents','最近任务']" in multi
     assert "m.type==='input_accepted'" in multi
