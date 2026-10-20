@@ -223,6 +223,7 @@ class MultiView{
   this.startButton.textContent=(this.cards.size?'批量追加投屏':'批量投屏')+
    '（待新增 '+available.length+' 台 / 剩余 '+remaining+' 路）';
   this.grid.setAttribute('data-count',String(this.cards.size));
+  this.groupControl?.refresh();
   if(notify)this.onChange();
  }
 
@@ -550,6 +551,7 @@ class MultiView{
    card.logLines.push((new Date()).toLocaleTimeString()+' · '+msg);
    if(card.logLines.length>24)card.logLines.shift();
    eventLog.textContent=card.logLines.join('\n');
+   this.groupControl?.updateLog();
   };
   if(this.qualityHistory.has(d.id)){
    history.textContent='本页该设备最近画质：'+card.history.map(v=>
@@ -578,6 +580,7 @@ class MultiView{
    nav.forEach(b=>b.disabled=!canInput);
    card.refreshMenu();
    stop.disabled=card.closed||card.state==='stopping';
+   this.groupControl?.refresh();
   };
   card.refresh=refresh;
   try{
