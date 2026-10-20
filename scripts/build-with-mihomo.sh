@@ -1,32 +1,73 @@
 #!/bin/sh
 set -eu
 
-# Default: preserve the existing authenticated Mihomo/BuildKit path.
-# --no-proxy: use Docker's own networking (e.g. OpenWrt transparent proxy),
-# without reading EASYADB_BUILD_PROXY or requiring mihomo/proxy-net.
-case "$#" in
-  0) MODE=mihomo ;;
-  1)
-    case "$1" in
-      --no-proxy) MODE=direct ;;
-      --help|-h)
-        echo "Usage: sudo sh scripts/build-with-mihomo.sh [--no-proxy]"
-        echo "  (default)   Existing Mihomo/proxy-net authenticated Buildx workflow"
-        echo "  --no-proxy  Docker's normal build/network; no Mihomo or proxy-net required"
-        exit 0 ;;
-      *) echo "ERROR: unsupported option: $1" >&2; exit 2 ;;
-    esac ;;
-  *) echo "ERROR: expected no options or --no-proxy" >&2; exit 2 ;;
-esac
+# Existing manual calls always rebuild. --if-changed is for the scheduler:
+# compare tracked Git FILE TREES against the last successful deployment.
+MODE=mihomo
+IF_CHANGED=0
+SEEN_DIRECT=0
+for arg do
+  case "$arg" in
+    --no-proxy)
+      if [ "$SEEN_DIRECT" = 1 ]; then echo 'ERROR: duplicate --no-proxy' >&2; exit 2; fi
+      MODE=direct;SEEN_DIRECT=1 ;;
+    --if-changed)
+      if [ "$IF_CHANGED" = 1 ]; then echo 'ERROR: duplicate --if-changed' >&2; exit 2; fi
+      IF_CHANGED=1 ;;
+    --help|-h)
+      echo "Usage: sudo sh scripts/build-with-mihomo.sh [--no-proxy] [--if-changed]"
+      echo '  (default)     Existing Mihomo/proxy-net authenticated Buildx workflow'
+      echo '  --no-proxy    Docker normal build/network; no Mihomo or proxy-net required'
+      echo '  --if-changed  After safe Git update, build ONLY if tracked files differ'
+      exit 0 ;;
+    *) echo "ERROR: unsupported option: $arg" >&2; exit 2 ;;
+  esac
+done
 
-# Update first, then re-exec the freshly pulled script with the SAME mode.
-# The old script previously dropped positional arguments at this boundary.
 cd "$(dirname "$0")/.."
+DEPLOY_MARKER=data/storage/.easyadb-last-deployed-tree
+deploy_git() {
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
+    sudo -H -u "#${SUDO_UID}" git "$@"
+  else
+    git "$@"
+  fi
+}
+git_tree() { deploy_git rev-parse 'HEAD^{tree}' 2>/dev/null || :; }
+write_deployed_tree() {
+  tree="$(git_tree)"
+  if [ -n "$tree" ]; then
+    mkdir -p data/storage
+    printf '%s\n' "$tree" > "$DEPLOY_MARKER.tmp.$$"
+    mv -f "$DEPLOY_MARKER.tmp.$$" "$DEPLOY_MARKER"
+  fi
+}
+
+# update-m2.sh refuses dirty checkouts, protects .env/data and pulls ff-only.
+# Seed the first scheduled check with the existing checkout as its baseline:
+# that checkout is assumed to be the already running deployment.
+# Do NOT overwrite a marker after a failed Docker build; retry next schedule.
 if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
+  if [ "$IF_CHANGED" = 1 ] && [ ! -f "$DEPLOY_MARKER" ]; then
+    before="$(git_tree)"
+    if [ -n "$before" ]; then
+      mkdir -p data/storage
+      printf '%s\n' "$before" > "$DEPLOY_MARKER.tmp.$$"
+      mv -f "$DEPLOY_MARKER.tmp.$$" "$DEPLOY_MARKER"
+    fi
+  fi
   sh scripts/update-m2.sh
   EASYADB_UPDATED=1
   export EASYADB_UPDATED
   exec sh scripts/build-with-mihomo.sh "$@"
+fi
+if [ "$IF_CHANGED" = 1 ] && [ -f "$DEPLOY_MARKER" ]; then
+  current_tree="$(git_tree)"
+  deployed_tree="$(cat "$DEPLOY_MARKER")"
+  if [ -n "$current_tree" ] && [ "$current_tree" = "$deployed_tree" ]; then
+    echo "No tracked Git file changes since the last successful deployment ($current_tree); skipping Docker."
+    exit 0
+  fi
 fi
 
 # Docker Compose reads .env automatically, but the build helper must also
@@ -62,6 +103,7 @@ if [ "$MODE" = direct ]; then
   else
     docker compose -f compose.no-proxy.yaml up -d --no-build
   fi
+  write_deployed_tree
   exit 0
 fi
 
@@ -165,3 +207,4 @@ if [ "$WEBRTC_RUNTIME" = 1 ]; then
 else
   docker compose up -d --no-build
 fi
+write_deployed_tree

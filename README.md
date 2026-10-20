@@ -1,3 +1,30 @@
+## EasyADB 定时更新部署（FNOS / Linux）
+
+沿用原有部署脚本，不创建第二套 Docker 构建链路。**首次启用前，建议先手动成功部署当前检出的分支一次**，以保证本地 Git 文件树就是当前运行版本。定时任务通过原 Git 登录用户安全执行 `fetch` 与 `pull --ff-only`，只比较已跟踪文件的 Git tree SHA；无文件变化（即使有空提交）则跳过整个 Docker 构建和 Compose 更新。仅在构建和启动成功后记录新版本，失败则保留旧标记供下轮重试。不会覆盖未提交修改、改写 `.env`、删除 `data/`、自动切换到别的实验分支，或执行 `down -v`。
+
+```sh
+cd /vol3/1000/software/EasyADB
+# 当前分支为 feat/m3-openwrt-discovery 时，先完成一次现有手动部署：
+sudo sh scripts/build-with-mihomo.sh
+# 如果使用原来的无代理部署模式，请改为：
+# sudo sh scripts/build-with-mihomo.sh --no-proxy
+
+# 开启：频率在 start 后传入，可写 15m / 2h / 1d，裸数字按分钟
+sudo sh scripts/scheduled-deploy.sh start 15m
+# 无代理版本：
+# sudo sh scripts/scheduled-deploy.sh start 15m --no-proxy
+
+sudo sh scripts/scheduled-deploy.sh status  # 是否启用、频率、分支、最后结果
+sudo sh scripts/scheduled-deploy.sh logs    # 最近 60 行日志
+sudo sh scripts/scheduled-deploy.sh stop    # 关闭定时任务，不中断正在进行的构建
+```
+
+同一方式使用 `sudo` 管理启停和状态，否则会访问不同用户的 crontab。需要系统提供并启动 `cron/crond`、`crontab`、`flock`，并确保 Docker 和登录用户的 Git/SSH 权限可用。创建的定时任务在重启后由 cron 继续执行；按设定间隔到期才拉取 Git，同一时刻至多执行一轮。首次启用会将当前 Git 文件树作为基线，**不会立即重建**；使用 `start` 修改频率会重新开始计时。
+
+调度文件、受限日志与成功部署标记存放于已忽略的 `data/storage/.easyadb-*`。定时部署不会后台操作或重连任何手机；仅在远端 Git 文件内容发生变化时才重建已有 EasyADB 服务。原手动 `build-with-mihomo.sh` 不带 `--if-changed` 时仍然每次构建；`--if-changed` 是定时任务调用的增量模式。
+
+---
+
 ## M3 · 按分组接入 OpenWrt 授权发现（开发分支）
 
 在设备分组设置中可选择性配置 `http://<OpenWrt-EasyTier-IP>/ubus`、专用 `easyadb` 用户名与 LuCI 中生成的一次性密钥。只有配置的分组会展示「立即发现 ADB」。NAS 通过 RPCD 登录并执行 OpenWrt 端已有的固定扫描命令，不增加独立接口/Hook 或后台轮询；结果精确匹配**当前组内网 IP**，仅更新相应设备的公共 ADB 端口，不覆盖组网/内网 IP 和原有临时地址，也不自动连接或投屏。活跃连接或投屏中的设备本轮跳过更新，避免影响当前会话。
