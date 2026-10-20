@@ -48,6 +48,7 @@ function card(id,opts={}){
   ws:{readyState:1},logLines:['stream started '+id],keyStatus:{textContent:'ready'},
   wakeButton:new El('button'),
   reconnectButton:new El('button'),textButton:new El('button'),
+  unlockButton:new El('button'),
   ...opts};
  c.wakeButton.addEventListener('click',()=>{c.woken=(c.woken||0)+1;});
  c.textButton.disabled=!c.enabled;
@@ -55,10 +56,12 @@ function card(id,opts={}){
 }
 const a=card('A'),b=card('B'),denied=card('DENIED');
 denied.enabled=false;denied.textButton.disabled=true;denied.permissionWarningShown=true;
-const sent=[],reconnected=[],reported=[];
+denied.unlockButton.disabled=true;
+const sent=[],reconnected=[],reported=[],unlocked=[];
 const view={
  cards:new Map(),status:(msg,err)=>reported.push([msg,err]),
  reconnectFor:id=>{reconnected.push(id);return true;},
+ requestUnlock:c=>{unlocked.push([c.id,c.session]);c.unlockButton.disabled=true;return true;},
  sendInput:(c,type,payload)=>{
   sent.push({id:c.id,type,session:c.session,...payload});c.lastInput=true;
  },
@@ -78,7 +81,14 @@ assert.equal(group.nav.slice(0,3).every(button=>button.hidden!==true),true,
  'navigation is permanently mounted beneath group FAB');
 assert.equal(group.menuOpen,false);
 assert.equal(group.nav.slice(0,3).every(button=>!button.disabled),true);
+assert.match(page,/\.multi-fab \.fab-unlock\{right:104px;top:0/);
+assert.equal(group.unlock.disabled,false);
 group.main.click();
+group.unlock.click();
+assert.deepEqual(unlocked,[['A','session-A'],['B','session-B']],
+ 'group unlock invokes the per-device session entry for each eligible card');
+assert.equal(group.unlock.disabled,true,'already-requested devices are not retriggered');
+assert.equal(group.menuOpen,true);
 assert.equal(group.main.attrs['aria-expanded'],'true');
 assert.equal(timers.size,1);
 assert.equal(a.enabled,true);assert.equal(b.enabled,true);
