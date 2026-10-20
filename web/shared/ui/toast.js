@@ -7,8 +7,8 @@ export function createToastController({ host, documentRef, windowRef }) {
       typeof windowRef.getSelection === 'function' ? windowRef.getSelection() : null;
     return Boolean(
       selection &&
-        !selection.isCollapsed &&
-        (card.contains(selection.anchorNode) || card.contains(selection.focusNode)),
+      !selection.isCollapsed &&
+      (card.contains(selection.anchorNode) || card.contains(selection.focusNode)),
     );
   }
 
