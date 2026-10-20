@@ -69,8 +69,8 @@ assert.ok(js.includes("function message(text,kind=''){showToast(text,{key:'statu
 for(const state of ['updated','unchanged','unmatched','busy','ambiguous','conflicting','route_conflict'])
   assert.ok(js.includes(state+':'));
 assert.ok(js.includes("endpoint.ip+':'+endpoint.port"));
-assert.ok(js.includes("$('groupDialog').close();\n  message('分组设置已保存'"));
-assert.ok(js.includes("$('deviceDialog').close();message('设备已保存'"));
+assert.ok(js.includes("closeDialog('groupDialog');\n  message('分组设置已保存'"));
+assert.ok(js.includes("closeDialog('deviceDialog');message('设备已保存'"));
 assert.ok(html.includes('.device-port{display:inline-flex;'));
 assert.ok(html.includes('.device-addresses{display:flex;flex-wrap:wrap;'));
 assert.ok(html.includes('.multi-playback-options{grid-column:1/-1;'));

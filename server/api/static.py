@@ -55,3 +55,30 @@ def m2_group_script():
                         headers={"Cache-Control": "no-store"})
 
 
+
+# Exact V4 ES Module allowlist, not a wildcard file or directory mount.
+# Imported relative paths resolve under these same URL prefixes.
+FRONTEND_MODULES = (
+    "app/main.js",
+    "core/api-client.js",
+    "shared/dom.js",
+    "shared/ui/dialog.js",
+    "shared/ui/toast.js",
+)
+
+
+def _frontend_asset_handler(asset_path):
+    def serve_frontend_module():
+        return FileResponse(
+            ROOT / "web" / asset_path, media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+    return serve_frontend_module
+
+
+for _asset_path in FRONTEND_MODULES:
+    router.add_api_route(
+        "/" + _asset_path, _frontend_asset_handler(_asset_path),
+        methods=["GET"], name="frontend_" + _asset_path.replace("/", "_").replace(".", "_"),
+        include_in_schema=False,
+    )

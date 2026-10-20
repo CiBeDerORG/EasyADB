@@ -29,7 +29,7 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
           npm run format:check
-          node tests/v4_frontend_standards.cjs
+          npm run test:architecture
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done

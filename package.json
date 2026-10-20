@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "description": "Build-time frontend standards; no runtime bundler or framework.",
   "scripts": {
-    "lint": "eslint eslint.config.mjs tests/v4_frontend_standards.cjs \"web/**/*.js\" --no-error-on-unmatched-pattern",
-    "format:check": "prettier --check \"web/**/*.js\" eslint.config.mjs tests/v4_frontend_standards.cjs .prettierrc.json package.json",
-    "test:architecture": "node tests/v4_frontend_standards.cjs"
+    "lint": "eslint eslint.config.mjs tests/v4_frontend_standards.cjs tests/v4_frontend_modules.mjs \"web/**/*.js\" --no-error-on-unmatched-pattern",
+    "format:check": "prettier --check \"web/**/*.js\" eslint.config.mjs tests/v4_frontend_standards.cjs tests/v4_frontend_modules.mjs .prettierrc.json package.json",
+    "test:architecture": "node tests/v4_frontend_standards.cjs && node tests/v4_frontend_modules.mjs"
   },
   "devDependencies": {
     "eslint": "10.13.0",

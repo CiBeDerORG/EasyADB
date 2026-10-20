@@ -539,12 +539,14 @@ function adbStatusBadge(d){
  return badge;
 }
 const toastHost=$('toastHost'),toastItems=new Map();
+let frontendModules=null; // populated by a one-time ES Module bootstrap; no window global
 function toastSelected(card){
  const selection=typeof window.getSelection==='function'?window.getSelection():null;
  return Boolean(selection&&!selection.isCollapsed&&
   (card.contains(selection.anchorNode)||card.contains(selection.focusNode)));
 }
 function dismissToast(key){
+ if(frontendModules?.toast)return frontendModules.toast.dismissToast(key);
  const state=toastItems.get(key);
  if(!state)return;
  if(state.timer!==null)clearTimeout(state.timer);
@@ -563,6 +565,7 @@ function resumeToast(state){
  state.timer=setTimeout(()=>dismissToast(state.key),state.remaining);
 }
 function showToast(content,{key='status',kind=''}={}){
+ if(frontendModules?.toast)return frontendModules.toast.showToast(content,{key,kind});
  // Repeated batch progress replaces one toast instead of flooding the screen.
  dismissToast(key);
  const card=document.createElement('section');
@@ -599,16 +602,30 @@ document.addEventListener('selectionchange',()=>{
 });
 function message(text,kind=''){showToast(text,{key:'status',kind});}
 async function api(path,options={}){
+ if(frontendModules?.api)return frontendModules.api(path,options);
  const r=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,'X-EasyADB-Token':$('token').value.trim()}});
  if(!r.ok){let e={};try{e=await r.json();}catch{}throw Error(typeof e.detail==='string'?e.detail:'请求失败：HTTP '+r.status);}
  return r;
 }
 function elem(tag,className,text){
+ if(frontendModules?.dom)return frontendModules.dom.elem(tag,className,text);
  const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e;
 }
 function action(label,handler,cls='secondary'){
+ if(frontendModules?.dom)return frontendModules.dom.action(label,handler,cls);
  const b=elem('button',cls,label);b.type='button';b.addEventListener('click',handler);return b;
 }
+// The classic inline adapter runs first (existing Node VM contracts). The
+// deferred ES module installs explicit dependencies once; old toasts are
+// transferred before ownership switches, so keyed messages never duplicate.
+document.addEventListener('easyadb:frontend-modules-ready',event=>{
+ if(frontendModules)return;
+ const originalStatus=toastItems.get('status');
+ const initialText=originalStatus?.card?.children?.[0]?.textContent||'';
+ for(const key of [...toastItems.keys()])dismissToast(key);
+ frontendModules=event.detail;
+ if(initialText)message(initialText);
+});
 // Browser requests are async, while FastAPI's sync ADB endpoints execute in
 // separate server threadpool workers. Bound this batch to four concurrent
 // devices: a slow/offline phone must never block the other selected phones.
@@ -834,9 +851,18 @@ function reset(){
  $('pairCode').value='';$('pairPort').value='';$('pairIp').value='';
 }
 function modalMessage(text,kind='error',id='formMessage'){
+ if(frontendModules?.dialog)return frontendModules.dialog.modalMessage(text,kind,id);
  const el=$(id);el.hidden=false;el.textContent=text;el.className='status modal-status '+kind;
 }
-function closeModal(){if(loading)return;$('deviceDialog').close();}
+function showDialog(id,focusId){
+ if(frontendModules?.dialog)return frontendModules.dialog.showDialog(id,focusId);
+ $(id).showModal();if(focusId)$(focusId).focus();
+}
+function closeDialog(id){
+ if(frontendModules?.dialog)return frontendModules.dialog.closeDialog(id);
+ $(id).close();
+}
+function closeModal(){if(loading)return;closeDialog('deviceDialog');}
 function openModal(id=null){
  if(loading||!loaded)return;
  if(id&&deviceLocked(id)){
@@ -854,7 +880,7 @@ function openModal(id=null){
   $('ip').value=d.ip;$('port').value=d.port;
   $('formTitle').textContent='编辑设备';$('save').textContent='保存修改';$('pairIp').value=d.ip;
  }
- $('deviceDialog').showModal();$('name').focus();
+ showDialog('deviceDialog','name');
 }
 function edit(id){openModal(id);}
 function openGroup(name=null){
@@ -876,7 +902,7 @@ function openGroup(name=null){
    $('testGroupDiscovery').hidden=!g.discovery_configured;
    if(g.discovery_needs_password)modalMessage('旧版加密凭据不再使用，请重新粘贴 OpenWrt 专用密钥并保存。','error','groupMessage');
   }else{$('groupOpenWrtUser').value='easyadb';$('groupDiscoveryPanel').open=false;$('testGroupDiscovery').hidden=true;}
- $('groupDialog').showModal();$('groupName').focus();
+ showDialog('groupDialog','groupName');
 }
 function renderDiscoveryResult(last){
  const panel=elem('div','group-discovery-status'+(last.error?' error':''));
@@ -930,7 +956,7 @@ async function scanGroup(name,test=false){
  }finally{scanningGroups.delete(name);if(test)$('testGroupDiscovery').disabled=false;render();}
 }
 
-function closeGroup(){if(!loading&&!scanningGroups.has(editingGroup))$('groupDialog').close();}
+function closeGroup(){if(!loading&&!scanningGroups.has(editingGroup))closeDialog('groupDialog');}
 function openFirstPair(id){
  if(loading||!loaded)return;
  const d=devices.find(x=>x.id===id);
@@ -940,9 +966,9 @@ function openFirstPair(id){
  $('firstPairTitle').textContent='首次连接 · '+d.name;
  $('firstPairIp').value=d.selected_serial.slice(0,d.selected_serial.lastIndexOf(':'));
  $('firstPairMessage').hidden=true;$('firstPairMessage').textContent='';
- $('firstPairDialog').showModal();$('firstPairPort').focus();
+ showDialog('firstPairDialog','firstPairPort');
 }
-function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
+function closeFirstPair(){if(!loading)closeDialog('firstPairDialog');}
 async function switchRoute(id,route){
  if(loading)return;
  if(deviceConnecting(id)){message('该设备仍在连接中，请完成后再切换线路。','error');return;}
@@ -974,9 +1000,9 @@ function openTempEditor(d){
  $('tempIp').value=d.temp_ip||'';
  $('tempSharedPort').value=String(d.port);
  $('tempMessage').hidden=true;$('tempMessage').textContent='';
- $('tempDialog').showModal();$('tempIp').focus();
+ showDialog('tempDialog','tempIp');
 }
-function closeTempDialog(){if(loading)return;$('tempDialog').close();}
+function closeTempDialog(){if(loading)return;closeDialog('tempDialog');}
 $('closeTempDialog').addEventListener('click',closeTempDialog);
 $('cancelTempDialog').addEventListener('click',closeTempDialog);
 $('tempDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
@@ -987,7 +1013,7 @@ $('tempForm').addEventListener('submit',async ev=>{
  if(!id||loading)return;
  const ip=$('tempIp').value.trim(),port=Number($('tempSharedPort').value);
  const success=await saveTempAddress(id,ip,port);
- if(success)$('tempDialog').close();
+ if(success)closeDialog('tempDialog');
 });
 async function saveTempAddress(id,ip,port){
  if(deviceLocked(id))return false;
@@ -1176,7 +1202,7 @@ $('deleteGroup').addEventListener('click',async()=>{
  loading=true;render();
  try{
   const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
-  $('groupDialog').close();groupOpen.delete('named:'+name);dismissToast('discovery:'+name);
+  closeDialog('groupDialog');groupOpen.delete('named:'+name);dismissToast('discovery:'+name);
   await load(true);
   message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
@@ -1213,7 +1239,7 @@ $('groupForm').addEventListener('submit',async ev=>{
    dismissToast('discovery:'+saved.name);
   }
   $('groupOpenWrtPassword').value='';
-  $('groupDialog').close();
+  closeDialog('groupDialog');
   message('分组设置已保存','ok');
   try{await load(true);}catch(e){message('分组已保存，但列表刷新失败：'+e.message,'error');}
  }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
@@ -1235,7 +1261,7 @@ $('form').addEventListener('submit',async ev=>{
  try{
   const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
   const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
-  selected=d.id;$('deviceDialog').close();message('设备已保存','ok');
+  selected=d.id;closeDialog('deviceDialog');message('设备已保存','ok');
   try{await load(true);}catch(e){message('设备已保存，但列表刷新失败：'+e.message,'error');}
  }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
@@ -1297,5 +1323,6 @@ displayLabView=EasyADBDisplayLab.create({
 render();
 message('请展开左侧设备管理，输入访问密钥并加载设备');
 </script>
+<script type="module" src="/app/main.js"></script>
 </body>
 </html>

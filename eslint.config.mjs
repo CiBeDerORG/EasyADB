@@ -27,6 +27,7 @@ export default [
       sourceType: 'module',
       globals: {
         window: 'readonly',
+        CustomEvent: 'readonly',
         document: 'readonly',
         WebSocket: 'readonly',
         RTCPeerConnection: 'readonly',
@@ -56,6 +57,15 @@ export default [
       ecmaVersion: 'latest',
       sourceType: 'commonjs',
       globals: { require: 'readonly', __dirname: 'readonly', console: 'readonly' },
+    },
+    rules: qualityRules,
+  },
+  {
+    files: ['tests/v4_frontend_modules.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { console: 'readonly', process: 'readonly' },
     },
     rules: qualityRules,
   },
