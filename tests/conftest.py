@@ -9,6 +9,7 @@ _MOCK_SESSION_MODULES = {
     "test_m2_adb_disconnect", "test_m2_disconnect", "test_m2_keys",
     "test_m2_lifecycle", "test_m2_multi", "test_m2_quality",
     "test_m2_screen_power", "test_m2_touch", "test_m2_unlock",
+    "test_v2_admission",
 }
 
 
