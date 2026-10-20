@@ -7,6 +7,7 @@ import threading
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from server.devices import DeviceManager
 from server.store import DeviceStore
@@ -145,6 +146,10 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
                 assert msg["type"] in ("starting", "diagnostic")
             else:
                 pytest.fail("WebRTC worker launch error was not reported")
+            # Error is sent before the asynchronous worker/peer teardown.
+            # Wait for the server close frame before asserting the slot freed.
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
         assert not app.live_registry.sessions
 
 
