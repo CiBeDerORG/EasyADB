@@ -141,7 +141,7 @@ class MultiView{
  getChoice(id){
   this.ensureFeatureModules();
   if(this.qualitySettings)return this.qualitySettings.getChoice(id);
-  if(!this.qualityChoices.has(id)this.qualityChoices.set(id,defaults());
+  if(!this.qualityChoices.has(id))this.qualityChoices.set(id,defaults());
   return this.qualityChoices.get(id);
  }
  setChoice(id,part){
