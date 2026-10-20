@@ -1,7 +1,7 @@
 name: EasyADB M2 and OpenWrt discovery tests
 on:
   push:
-    branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery]
+    branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery, feat/m4-screen-mapping-m1]
 permissions:
   contents: read
 jobs:
@@ -32,6 +32,7 @@ jobs:
           node --check web/m2-touch.js
           node --check web/m2-metrics.js
           node --check web/m2-multi.js
+          node --check web/mapping.js
           node --check web/display-lab.js
           node tests/m2_quality_metrics.cjs
           node tests/m2_multi_contract.cjs
