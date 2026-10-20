@@ -1146,12 +1146,12 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                             })
                             continue
                         last_manual_unlock_at = now_unlock
-                        unlock_task = asyncio.create_task(run_unlock_attempt(manual_secret, "manual"))
                         await websocket.send_json({
                             "type": "unlock_notice", "session_id": stream.session_id,
                             "source": "manual", "status": "running",
                             "message": "已开始主动解锁：亮屏、确认锁屏、输入密码并回车"
                         })
+                        unlock_task = asyncio.create_task(run_unlock_attempt(manual_secret, "manual"))
                         continue
                     if kind == "control_enable":
                         if set(message) != {"type", "session_id"} or not touch_ready.is_set():
@@ -1307,12 +1307,12 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 if payload.get("control_available"):
                     touch_ready.set()
                     if unlock_secret and unlock_task is None and not experiment:
-                        unlock_task = asyncio.create_task(run_unlock_attempt(unlock_secret, "auto"))
                         await websocket.send_json({
                             "type": "unlock_notice", "session_id": stream.session_id,
                             "source": "auto", "status": "running",
                             "message": "正在尝试启动自动解锁；如未成功，可使用悬浮菜单的主动解锁"
                         })
+                        unlock_task = asyncio.create_task(run_unlock_attempt(unlock_secret, "auto"))
             elif kind == "screen_power_notice":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "screen_power_notice", "session_id": stream.session_id, **payload
