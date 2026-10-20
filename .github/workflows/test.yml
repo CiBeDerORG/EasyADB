@@ -32,9 +32,11 @@ jobs:
           node --check web/m2-touch.js
           node --check web/m2-metrics.js
           node --check web/m2-multi.js
+          node --check web/m2-group.js
           node --check web/display-lab.js
           node tests/m2_quality_metrics.cjs
           node tests/m2_multi_contract.cjs
+          node tests/m2_group_contract.cjs
           node tests/m2_batch_connect.cjs
           node tests/m2_player_contract.cjs
           node tests/m2_webrtc_contract.cjs
