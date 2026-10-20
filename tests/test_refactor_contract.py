@@ -6,7 +6,7 @@ An intentional API change needs explicit review of this contract.
 """
 import importlib
 
-from fastapi.routing import APIRoute, APIWebSocketRoute
+from fastapi.routing import APIWebSocketRoute
 from fastapi.testclient import TestClient
 
 
@@ -72,8 +72,10 @@ def _module(monkeypatch):
 
 def test_m3_http_and_websocket_routes_unchanged(monkeypatch):
     mod = _module(monkeypatch)
+    # Compare exposed HTTP paths regardless of whether a static route is
+    # represented as FastAPI APIRoute or Starlette Route by installed versions.
     http = {(method, route.path) for route in mod.app.routes
-            if isinstance(route, APIRoute) for method in route.methods}
+            for method in (getattr(route, "methods", None) or ())}
     ws = {route.path for route in mod.app.routes
           if isinstance(route, APIWebSocketRoute)}
     assert http == EXPECTED_HTTP
