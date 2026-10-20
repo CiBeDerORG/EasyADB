@@ -21,8 +21,10 @@ def test_settings_validate_without_importing_app(tmp_path):
     settings = load_settings(base)
     assert settings.token == TOKEN
     assert settings.db_path == str(tmp_path / "data.sqlite3")
-    assert settings.video_engine == "mse"
+    assert settings.video_engine == "webrtc"
     assert load_settings({**base, "EASYADB_VIDEO_ENGINE": " WEBRTC "}).video_engine == "webrtc"
+    with pytest.raises(RuntimeError, match="EASYADB_VIDEO_ENGINE"):
+        load_settings({**base, "EASYADB_VIDEO_ENGINE": "mse"})
     with pytest.raises(RuntimeError, match="EASYADB_VIDEO_ENGINE"):
         load_settings({**base, "EASYADB_VIDEO_ENGINE": "unknown"})
     with pytest.raises(RuntimeError, match="EASYADB_TOKEN"):

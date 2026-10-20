@@ -480,7 +480,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 await asyncio.sleep(LIVE_HEARTBEAT_CHECK_INTERVAL)
                 if requested_stop.is_set():
                     return
-                if VIDEO_ENGINE == "webrtc" and stream.thread is None and time.monotonic() - stream._born > 25:
+                if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None and time.monotonic() - getattr(stream, "_born", time.monotonic()) > 25:
                     requested_stop.set()
                     await asyncio.to_thread(stream.stop)
                     return
