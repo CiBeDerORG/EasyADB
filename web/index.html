@@ -1007,68 +1007,105 @@ function removeTempAddress(id){
  if(!d||loading||multiView&&multiView.isBusyFor(id))return;
  if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
 }
-async function loadAndConnect(){
- if(loading)return;
- loading=true;render(); // Guard rapid double-clicks before the first request.
- const ok=await load(true);
- if(!ok){loading=false;render();message('设备列表加载失败，请检查访问密钥或服务端连接','error');return;}
- const candidates=devices.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
- const skipped=devices.length-candidates.length;
- if(!candidates.length){loading=false;render();message('设备列表已刷新；没有需要连接的空闲设备','ok');return;}
- message('设备列表已刷新，正在并发连接 '+candidates.length+' 台设备（最多 4 台）…');
- let results;
+// Each connect uses its own FastAPI threadpool worker/device lock. Only an
+// individual pending phone is unavailable; completed phones can be projected,
+// selected, edited and otherwise managed while slower phones continue.
+async function connectProgressively(candidates,skipped,selectSuccessful,label,epoch){
+ if(epoch!==connectGeneration)return;
+ const controller=new AbortController();
+ connectController=controller;connectSnapshots.clear();
+ if(selectSuccessful)managementSelected.clear(); // re-check successes as they arrive
+ const ids=new Set(candidates.map(d=>d.id));
+ for(const id of ids)connectingDevices.add(id);
+ devices=devices.map(d=>ids.has(d.id)?{...d,status:'connecting',active_serial:null,
+  connect_failed:false,last_error:null}:d);
+ render();
+ let success=0,failed=0;
  try{
-  results=await runDeviceBatch(candidates,async d=>{
-   if(multiView&&multiView.isBusyFor(d.id))throw Error('已启动投屏，跳过');
-   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
-  },(done,total)=>message('本次连接：已完成 '+done+' / '+total+' 台'));
+  await runDeviceBatch(candidates,async d=>{
+   if(epoch!==connectGeneration||controller.signal.aborted)throw Error('连接任务已取消');
+   if(multiView&&multiView.isBusyFor(d.id))throw Error('设备已经开始投屏，本次跳过');
+   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{
+    method:'POST',signal:controller.signal
+   })).json();
+  },(done,total,d,result)=>{
+   if(epoch!==connectGeneration)return;
+   connectingDevices.delete(d.id);
+   const good=applyConnectionResult(d,result);
+   if(good){
+    success++;
+    if(selectSuccessful)managementSelected.add(d.id);
+   }else failed++;
+   // The first completed ADB device is immediately sorted forward and
+   // exposed to the existing projection/batch UI; never wait for all phones.
+   render();
+   message(label+'：已完成 '+done+' / '+total+' 台，成功 '+success+
+    ' 台，失败/跳过 '+failed+' 台；已完成设备可立即操作');
+  });
  }finally{
-  await load(true);loading=false;render();
+  if(epoch===connectGeneration){
+   connectingDevices.clear();
+   // Refresh server-side metadata once after all results; no global lock.
+   await load(true);
+   if(epoch===connectGeneration){
+    connectController=null;connectSnapshots.clear();connectionBatchBusy=false;
+    render();
+   }
+  }
  }
- const success=results.filter(result=>result.status==='fulfilled').length;
- message('刷新并连接完成：成功 '+success+' 台，失败 '+(results.length-success)+' 台，投屏中跳过 '+skipped+' 台；每台仅尝试一次，不自动切换线路。',success===results.length?'ok':'error');
+ if(epoch!==connectGeneration)return;
+ message(label+'完成：成功 '+success+' 台，失败/跳过 '+failed+' 台，投屏中预先跳过 '+
+  skipped+' 台；每台仅尝试一次，不自动切换线路。',failed?'error':'ok');
+}
+async function loadAndConnect(){
+ if(loading||connectionBatchBusy)return;
+ const epoch=connectGeneration;
+ connectionBatchBusy=true;
+ loading=true;render(); // Global lock lasts only for the initial list GET.
+ let ok=false;
+ try{ok=await load(true);}
+ finally{
+  if(epoch===connectGeneration){loading=false;render();}
+ }
+ if(epoch!==connectGeneration)return;
+ if(!ok){
+  connectionBatchBusy=false;render();
+  message('设备列表加载失败，请检查访问密钥或服务端连接','error');return;
+ }
+ const candidates=devices.filter(d=>!deviceLocked(d.id));
+ const skipped=devices.length-candidates.length;
+ if(!candidates.length){
+  connectionBatchBusy=false;render();
+  message('设备列表已刷新；没有需要连接的空闲设备','ok');return;
+ }
+ message('已加载设备，最多 4 台并发连接；每台完成后立即开放操作…');
+ await connectProgressively(candidates,skipped,false,'首次加载连接',epoch);
 }
 $('load').addEventListener('click',loadAndConnect);
-$('token').addEventListener('input',()=>{if(multiView)multiView.closeAll();loaded=false;devices=[];groups=[];selected=null;managementSelected.clear();render();});
+$('token').addEventListener('input',()=>{
+ connectGeneration++;connectController?.abort();connectController=null;
+ connectingDevices.clear();connectSnapshots.clear();
+ if(connectionBatchBusy)loading=false;
+ connectionBatchBusy=false;
+ if(multiView)multiView.closeAll();
+ loaded=false;devices=[];groups=[];selected=null;managementSelected.clear();render();
+});
 $('bulkSelectAll').addEventListener('change',()=>{
  if(loading||!loaded)return;
- if($('bulkSelectAll').checked)for(const d of devices)managementSelected.add(d.id);
- else managementSelected.clear();
+ const selectable=devices.filter(d=>!deviceConnecting(d.id));
+ if($('bulkSelectAll').checked)for(const d of selectable)managementSelected.add(d.id);
+ else for(const d of selectable)managementSelected.delete(d.id);
  render();
 });
 $('bulkConnect').addEventListener('click',async()=>{
- if(loading||!loaded)return;
+ if(loading||connectionBatchBusy||!loaded)return;
  const picked=devices.filter(d=>managementSelected.has(d.id));
- const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const candidates=picked.filter(d=>!deviceLocked(d.id));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
- loading=true;render();
- message('批量连接：'+candidates.length+' 台设备并发执行（最多同时 4 台）…');
- let results;
- try{
-  results=await runDeviceBatch(candidates,async d=>{
-   if(multiView&&multiView.isBusyFor(d.id))throw Error('已启动投屏，跳过');
-   // This existing per-device POST is a sync FastAPI endpoint, served by
-   // separate backend threads; DeviceManager locks ONLY this device's ID.
-   return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
-  },(done,total)=>message('批量连接中：已完成 '+done+' / '+total+' 台（最多 4 台并发）'));
- }finally{
-  await load(true);loading=false;
- }
- // A completed batch replaces the old selection with ONLY confirmed successful
- // connections from this batch. Failed, unattempted and streaming-skipped
- // devices never remain accidentally selected for the next bulk action.
- const succeeded=successfulBatchIds(candidates,results);
- managementSelected.clear();
- for(const id of succeeded)managementSelected.add(id);
- const success=succeeded.size,failed=[];
- results.forEach((result,i)=>{
-  if(!succeeded.has(candidates[i].id))
-   failed.push(candidates[i].name+'：'+(result.reason?.message||'服务端未确认 ADB 连接成功'));
- });
- render();
- message('批量连接完成：成功 '+success+' 台（已自动勾选），预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
-  (failed.length?'；'+failed.join('；'):'')+'。未自动切换线路。',failed.length?'error':'ok');
+ connectionBatchBusy=true; // no page-wide loading=true during ADB I/O
+ message('批量连接：最多 4 台并发，成功设备立即勾选并开放操作…');
+ await connectProgressively(candidates,skipped,true,'批量连接',connectGeneration);
 });
 $('bulkDelete').addEventListener('click',async()=>{
  if(loading||!loaded)return;
