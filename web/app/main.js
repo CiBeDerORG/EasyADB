@@ -2,10 +2,12 @@ import { createApiClient } from '../core/api-client.js';
 import { createDomHelpers } from '../shared/dom.js';
 import { createDialogController } from '../shared/ui/dialog.js';
 import { createToastController } from '../shared/ui/toast.js';
+import { createLiveSessionController } from '../features/live/live-session-controller.js';
 
 // One-time dependency injection into the existing inline compatibility adapter.
 // No additional business global, automatic ADB connection or page polling.
 const modules = {
+  createLiveSessionController,
   api: createApiClient({
     getToken: () => document.getElementById('token').value,
     request: (path, options) => fetch(path, options),

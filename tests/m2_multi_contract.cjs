@@ -3,6 +3,7 @@
  */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const {createLiveSessionController}=require('../web/features/live/live-session-controller.js');
 class El{
  constructor(tag){this.tagName=tag;this.children=[];this.events={};this.style={};this.classList={add(){}};this.value='';this.disabled=false;this.textContent='';this.checked=false;this.open=false;}
  addEventListener(name,fn){(this.events[name]??=[]).push(fn);}
@@ -22,7 +23,7 @@ class El{
  fire(name,ev={}){for(const fn of this.events[name]||[])fn({preventDefault(){},...ev});}
 }
 const timers=new Map();let nextTimer=1;
-const fullscreenEvents=new Set();
+const fullscreenEvents=new Set(),frontendModuleListeners=[];
 function advanceMenuTimers(){
  const due=[...timers.entries()].filter(([,timer])=>timer.ms===5000);
  for(const [id,{fn}] of due){timers.delete(id);fn();}
@@ -63,7 +64,10 @@ const root={
   summary(profile,device){return{profile,device,avgFps:24,avgReceiveMbps:1,avgCpuPct:3,avgRssMib:8,totalBytes:128};}},
   format:()=>'',fmt:(v)=>Number.isFinite(v)?String(v):'—',advice:()=> ''}
 };
-root.document.addEventListener=(type,fn)=>{if(type==='fullscreenchange')fullscreenEvents.add(fn);};
+root.document.addEventListener=(type,fn)=>{
+ if(type==='fullscreenchange')fullscreenEvents.add(fn);
+ if(type==='easyadb:frontend-modules-ready')frontendModuleListeners.push(fn);
+};
 root.document.removeEventListener=(type,fn)=>{if(type==='fullscreenchange')fullscreenEvents.delete(fn);};
 const notifyFullscreen=()=>{for(const fn of [...fullscreenEvents])fn();};
 root.document.exitFullscreen=()=>{root.document.fullscreenElement=null;notifyFullscreen();return Promise.resolve();};
@@ -75,6 +79,8 @@ assert.match(productionSource,/const MAX_DEVICES=20;/,'production supports 20 si
 // while m2_twenty_contract.cjs exercises the unmodified production limit.
 vm.runInNewContext(productionSource.replace('const MAX_DEVICES=20;','const MAX_DEVICES=4;'),
  root,{filename:'m2-multi.js'});
+assert.equal(frontendModuleListeners.length,1);
+frontendModuleListeners[0]({detail:{createLiveSessionController}});
 const page=fs.readFileSync('web/index.html','utf8');
 assert.match(page,/最多20路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
@@ -333,6 +339,8 @@ assert.equal(pa.selected_serial,devices[0].selected_serial);
 assert.equal(pa.screen_off,true,'single-device choice is pinned in handshake');
 assert.equal(multi.cards.size,1);
 assert.equal(grid.children.length,1);
+assert(multi.cards.get('id-1').sessionController,'actual card owns new controller');
+assert.equal(multi.cards.get('id-1').sessionController.ws,a);
 a.emit('starting',{session_id:'only-one'});
 assert.equal(sockets.length,1);
 const early=multi.cards.get('id-1');

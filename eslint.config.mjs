@@ -61,6 +61,15 @@ export default [
     rules: qualityRules,
   },
   {
+    files: ['tests/v4_live_session_controller.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { console: 'readonly', URL: 'readonly' },
+    },
+    rules: qualityRules,
+  },
+  {
     files: ['tests/v4_frontend_modules.mjs'],
     languageOptions: {
       ecmaVersion: 'latest',

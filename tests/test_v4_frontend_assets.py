@@ -11,6 +11,7 @@ MODULES = (
     "shared/dom.js",
     "shared/ui/dialog.js",
     "shared/ui/toast.js",
+    "features/live/live-session-controller.js",
 )
 
 

@@ -1098,7 +1098,8 @@ class MultiView{
   this.updatePicker();
  }
  end(card,clean){
-  if(card.closed)return;
+  // A delayed callback from an old device session must never delete its replacement.
+  if(card.closed||this.cards.get(card.id)!==card)return;
   card.closed=true;
   root.document.removeEventListener?.('fullscreenchange',card.syncFullscreen);
   let fullscreenExit=null;
@@ -1107,12 +1108,17 @@ class MultiView{
    catch{fullscreenExit=Promise.reject(new Error('退出全屏失败'));}
    fullscreenExit.catch(()=>{});
   }
-  if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
+  if(card.sessionController){
+   card.sessionController.dispose({clean,openSocketState:WebSocket.OPEN,video:card.video});
+  }else{
+   // Legacy inline VM fixture: production uses the ES Module controller.
+   if(card.stopTimer!==null){root.clearTimeout(card.stopTimer);card.stopTimer=null;}
+   if(card.touch){card.touch.destroy();card.touch=null;}
+   if(card.frameCallback!==undefined&&typeof card.video.cancelVideoFrameCallback==='function')
+    card.video.cancelVideoFrameCallback(card.frameCallback);
+  }
   if(card.menuTimer!==null){root.clearTimeout(card.menuTimer);card.menuTimer=null;}
   card.menuOpen=false;card.textOpen=false;
-  if(card.touch){card.touch.destroy();card.touch=null;}
-  if(card.frameCallback!==undefined&&typeof card.video.cancelVideoFrameCallback==='function')
-   card.video.cancelVideoFrameCallback(card.frameCallback);
   if(card.metrics.samples.length){
    const result=card.metrics.summary(card.quality.profile,card.name);
    const past=this.qualityHistory.get(card.id)||[];
@@ -1123,11 +1129,13 @@ class MultiView{
     fmt(v.avgCpuPct)+'% CPU / '+fmt(v.avgRssMib)+' MiB / '+
     root.EasyADBTraffic.size(v.totalBytes)).join('；');
   }
-  if(card.player){card.player.destroy();card.player=null;}
-  if(card.ws){
-   const ws=card.ws;ws.onmessage=null;ws.onerror=null;ws.onclose=null;
-   try{if(ws.readyState===WebSocket.OPEN&&!clean)ws.send('stop');ws.close();}catch{}
-   card.ws=null;
+  if(!card.sessionController){
+   if(card.player){card.player.destroy();card.player=null;}
+   if(card.ws){
+    const ws=card.ws;ws.onopen=null;ws.onmessage=null;ws.onerror=null;ws.onclose=null;
+    try{if(ws.readyState===WebSocket.OPEN&&!clean)ws.send('stop');ws.close();}catch{}
+    card.ws=null;
+   }
   }
   card.enabled=false;card.pending=false;card.lastInput=false;card.refresh();
   card.stop.disabled=true;
