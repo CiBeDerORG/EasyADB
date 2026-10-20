@@ -20,7 +20,6 @@ root.window=root;
 const source=fs.readFileSync('web/m2-multi.js','utf8');
 vm.runInNewContext(source,root,{filename:'m2-multi.js'});
 assert.equal(frontendModuleListeners.length,1);
-frontendModuleListeners[0]({detail:{createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
 assert.equal(root.EasyADBMulti.MAX_DEVICES,20,'browser production maximum is twenty');
 const server=fs.readFileSync('server/m2_live.py','utf8');
 assert.match(server,/MAX_LIVE_SESSIONS = 20/,'server authoritative maximum matches UI');
@@ -40,6 +39,14 @@ const view=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
 // Every open call reserves a unique card as the real open() does before init.
 view.open=function(device,_quality,onStartupSettled){assert(!this.cards.has(device.id));launches.push(device.id);
  this.cards.set(device.id,{id:device.id,state:'connecting',settleLaunch:onStartupSettled});};
+// The classic view is created before the deferred ES Module bootstrap.
+const earlierChoice=view.getChoice('phone-1');earlierChoice.max_fps=55;
+assert.equal(view.qualitySettings,null);
+frontendModuleListeners[0]({detail:{createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
+view.updatePicker();
+assert.equal(view.getChoice('phone-1'),earlierChoice,'late injection preserves per-device choices');
+assert.equal(view.getChoice('phone-1').max_fps,55);
+assert(view.cardView&&view.batchScheduler&&view.qualitySettings);
 assert.equal(startButton.disabled,true,'21 selected devices cannot exceed remaining 20');
 selected.delete('phone-21');view.updatePicker();
 assert.equal(startButton.disabled,false,'any subset up to twenty can start');
