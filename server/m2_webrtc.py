@@ -156,8 +156,10 @@ class ScrcpyH264Track(MediaStreamTrack):
         # Stop may race the ADB reader on a different OS thread. Block new
         # reservations immediately, and schedule teardown at most once.
         with self._submit_lock:
-            if not self._accepting or self._stop_scheduled:
+            if self._stop_scheduled:
                 return
+            # _accepting may already be false because call_soon_threadsafe
+            # observed a closed loop; stop still must finalize closed state.
             self._accepting = False
             self._stop_scheduled = True
             try:

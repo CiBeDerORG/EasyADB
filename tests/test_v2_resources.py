@@ -195,3 +195,6 @@ def test_submission_failure_returns_reserved_budget_and_does_not_touch_queue():
     assert track._pending_bytes == 0
     assert track.frames.empty()
     assert not track._accepting
+    track.stop()
+    assert track.closed
+    track.stop()  # idempotent even if the owning loop never accepted stop
