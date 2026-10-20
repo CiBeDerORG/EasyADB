@@ -717,7 +717,7 @@ class MultiView{
   };
   card.refresh=refresh;
   try{
-   card.player=(card.engine==='webrtc'?root.EasyADBWebRTC.create(video,{
+   card.player=root.EasyADBWebRTC.create(video,{
     onState:stage=>{
      if(card.closed)return;
      if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
