@@ -4,6 +4,11 @@
  */
 (function(root){
 'use strict';
+// One-time ES Module dependency injection; no new window global.
+let createSessionController=null;
+root.document.addEventListener?.('easyadb:frontend-modules-ready',event=>{
+ createSessionController=event.detail?.createLiveSessionController||null;
+});
 const MAX_DEVICES=20;
 const KEYS=[['back','返回'],['home','主页'],['recents','最近任务'],['enter','回车'],['backspace','退格']];
 const make=(tag,cls='',label)=>{
@@ -95,6 +100,7 @@ class MultiView{
   this.updatePicker(false);
  }
  status(msg,error=false){this.info.textContent=msg;this.info.className='status'+(error?' error':'');}
+ isCurrentCard(card){return this.cards.get(card.id)===card&&!card.closed;}
  getChoice(id){
   if(!this.qualityChoices.has(id))this.qualityChoices.set(id,defaults());
   return this.qualityChoices.get(id);
@@ -512,6 +518,28 @@ class MultiView{
    startSettled:false,nextLaunch,adbCheckMs:null,frameLastAt:null,frameCount:0,
    permissionWarningShown:false,autoControlRejected:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
+  if(createSessionController){
+   const controller=createSessionController({
+    deviceId:d.id,serial:d.selected_serial,
+    isCurrent:()=>this.cards.get(d.id)===card,
+    scheduleTimeout:(fn,ms)=>root.setTimeout(fn,ms),
+    cancelTimeout:id=>root.clearTimeout(id)
+   });
+   card.sessionController=controller;
+   // The old card fields are compatibility accessors, not duplicate owners.
+   for(const key of ['ws','session','player','touch','closed','stopTimer','frameCallback']){
+    Object.defineProperty(card,key,{
+     configurable:true,enumerable:true,
+     get:()=>controller[key],
+     set:value=>{
+      if(value&&key==='ws'){if(!controller.bindSocket(value))throw Error('会话 WS 所有权冲突');}
+      else if(value&&key==='player'){if(!controller.bindPlayer(value))throw Error('会话 Player 所有权冲突');}
+      else if(value&&key==='touch'){if(!controller.bindTouch(value))throw Error('会话 Touch 所有权冲突');}
+      else controller[key]=value;
+     }
+    });
+   }
+  }
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name+(experiment?.mode==='new_resolution'?' · 实验性虚拟屏幕':
   experiment?' · 电脑模式实验':'')),
@@ -532,7 +560,7 @@ class MultiView{
   };
   fitScreen(360,640); // neutral placeholder until stream metadata arrives
   video.addEventListener('loadedmetadata',()=>{
-   if(!card.closed&&video.videoWidth>0&&video.videoHeight>0)
+   if(this.isCurrentCard(card)&&video.videoWidth>0&&video.videoHeight>0)
     fitScreen(video.videoWidth,video.videoHeight);
   });
   const state=make('div','status','正在建立本轮会话…');
@@ -732,7 +760,7 @@ class MultiView{
   try{
    card.player=root.EasyADBWebRTC.create(video,{
     onState:stage=>{
-     if(card.closed)return;
+     if(!this.isCurrentCard(card))return;
      if(stage==='ready'&&card.state!=='stopping'&&card.state!=='playing'){
       card.state='ready';mark('WebRTC 已就绪，远控独立于媒体连接');refresh();this.updatePicker();
      }
@@ -741,14 +769,14 @@ class MultiView{
      }
      if(stage==='autoplay-blocked')mark('点击本卡画面允许播放');
     },
-    onError:reason=>{if(!card.closed){mark(reason,true);this.end(card,false);}}
+    onError:reason=>{if(this.isCurrentCard(card)){mark(reason,true);this.end(card,false);}}
    });
    const scheme=location.protocol==='https:'?'wss:':'ws:';
    const ws=new WebSocket(scheme+'//'+location.host+
     '/api/devices/'+encodeURIComponent(d.id)+'/m2/live');
    card.ws=ws;
    ws.onopen=()=>{
-    if(card.closed)return;
+    if(!this.isCurrentCard(card)||card.ws!==ws)return;
     const payload={token:this.getToken(),player:card.engine,selected_serial:card.serial,
       profile:quality.profile};
     if(quality.quality)payload.quality=quality.quality;
@@ -757,7 +785,7 @@ class MultiView{
     ws.send(JSON.stringify(payload));
    };
    ws.onmessage=ev=>{
-    if(card.closed)return;
+    if(!this.isCurrentCard(card)||card.ws!==ws)return;
     if(typeof ev.data!=='string'){
      if(card.state==='stopping')return;
      mark('WebRTC 信令通道收到非预期二进制数据',true);this.end(card,false);return;
@@ -767,14 +795,18 @@ class MultiView{
      mark('会话标识不匹配，已停止此路',true);this.end(card,false);return;
     }
     if(m.type==='starting'){
-     card.session=m.session_id;card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
+     if(card.sessionController&&!card.sessionController.assignSession(m.session_id)){
+      mark('本轮会话标识无效或已被替换',true);this.end(card,false);return;
+     }
+     if(!card.sessionController)card.session=m.session_id;
+     card.adbCheckMs=m.adb_check_ms;mark('已启动，正在等待手机编码…');
      refresh();this.updatePicker();
      card.player.start(ws,card.session).catch(e=>{
-      if(!card.closed){mark('WebRTC Offer 失败：'+e.message,true);this.end(card,false);}
+      if(this.isCurrentCard(card)){mark('WebRTC Offer 失败：'+e.message,true);this.end(card,false);}
      });
     }else if(m.type==='webrtc_answer'){
      card.player.answer(m.sdp).catch(e=>{
-      if(!card.closed){mark('WebRTC Answer 失败：'+e.message,true);this.end(card,false);}
+      if(this.isCurrentCard(card)){mark('WebRTC Answer 失败：'+e.message,true);this.end(card,false);}
      });
     }else if(m.type==='screen_power_notice'){
      mark(m.message||'已发送显示屏电源指令');
@@ -812,7 +844,7 @@ class MultiView{
       }
      }
      card.player.pollStats(delta=>{
-       if(!card.closed){card.meter.record(delta);card.metrics.recordBytes(delta);}
+       if(this.isCurrentCard(card)){card.meter.record(delta);card.metrics.recordBytes(delta);}
       });
       const traffic=card.meter.sample(performance.now());
      const pd=card.player.diagnostics();
@@ -855,7 +887,7 @@ class MultiView{
         m.requested.video_bit_rate/1000000+' Mbps / '+m.requested.max_fps+' FPS'):'—')));
      try{
       card.touch=root.EasyADBTouch.create(video,p=>{
-       if(!card.closed&&card.enabled&&card.session&&
+       if(this.isCurrentCard(card)&&card.enabled&&card.session&&
           (card.state==='ready'||card.state==='playing')&&
           ws.readyState===WebSocket.OPEN){
         ws.send(JSON.stringify({...p,session_id:card.session}));
@@ -929,12 +961,12 @@ class MultiView{
      this.end(card,false);
     }
    };
-   ws.onerror=()=>{if(!card.closed)mark('此路 WebSocket 发生网络错误',true);};
-   ws.onclose=()=>{if(!card.closed){mark('连接已结束；若非主动停止，请检查清理状态',true);this.end(card,false);}};
+   ws.onerror=()=>{if(this.isCurrentCard(card)&&card.ws===ws)mark('此路 WebSocket 发生网络错误',true);};
+   ws.onclose=()=>{if(this.isCurrentCard(card)&&card.ws===ws){mark('连接已结束；若非主动停止，请检查清理状态',true);this.end(card,false);}};
   }catch(e){mark('本路启动失败：'+e.message,true);this.end(card,false);}
   if(typeof video.requestVideoFrameCallback==='function'){
    const track=()=>{
-    if(card.closed)return;
+    if(!this.isCurrentCard(card))return;
     card.frameCount++;card.frameLastAt=performance.now();
     card.frameCallback=video.requestVideoFrameCallback(track);
    };
@@ -983,6 +1015,7 @@ class MultiView{
   refresh();
  }
  requestUnlock(card){
+  if(!card||!this.isCurrentCard(card))return false;
   // No plaintext, credential ID or user input in browser payload.
   if(!card||card.closed||card.unlockButton.disabled||!card.session||!card.ws||
    card.ws.readyState!==WebSocket.OPEN||!card.ready||card.experiment||
@@ -999,7 +1032,7 @@ class MultiView{
   }
  }
  sendInput(card,type,body){
-  if(card.closed||!card.enabled||card.pending||card.lastInput||
+  if(!this.isCurrentCard(card)||!card.enabled||card.pending||card.lastInput||
      (card.state!=='ready'&&card.state!=='playing')||!card.session||!card.ws||
      card.ws.readyState!==WebSocket.OPEN)return;
   card.lastInput=true;card.refresh();
@@ -1027,7 +1060,7 @@ class MultiView{
   return true;
  }
  stop(card,keepSelected=false){
-  if(card.closed||card.state==='stopping')return;
+  if(!this.isCurrentCard(card)||card.state==='stopping')return;
   // A single stopped/failed card is no longer a pending append candidate
   // while other phones remain live. Full-stop explicitly retains selections
   // for a deliberate restart of the former set.
@@ -1039,16 +1072,17 @@ class MultiView{
    // Hide controls immediately while the server is cleaning this media peer.
    // A timeout is NOT cleanup confirmation: never auto-reconnect on it.
    card.collapseMenu();card.fab.hidden=true;card.logPanel.hidden=true;
-   card.stopTimer=root.setTimeout(()=>{
-    card.stopTimer=null;
-    if(card.closed||card.state!=='stopping')return;
+   const stopTimeout=()=>{
+    if(!this.isCurrentCard(card)||card.state!=='stopping')return;
     card.reconnectRequested=false;
     card.lastFailure='WebRTC 停止确认超时；服务端资源未确认释放，请检查 NAS 日志';
     card.stateEl.textContent=card.lastFailure;
     card.stateEl.className='status error';
     this.status(card.name+'：停止确认超时，页面已移除旧画面；不代表服务端资源已释放，不会自动重连。',true);
     this.end(card,false);
-   },40000);
+   };
+   if(card.sessionController)card.sessionController.armStopTimeout(stopTimeout,40000);
+   else card.stopTimer=root.setTimeout(()=>{card.stopTimer=null;stopTimeout();},40000);
   }
   if(card.ws&&card.ws.readyState===WebSocket.OPEN){
    try{card.ws.send('stop');card.stateEl.textContent='正在请求服务端停止并清理…';}
