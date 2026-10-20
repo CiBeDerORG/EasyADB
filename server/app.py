@@ -30,10 +30,20 @@ from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS, VIRTUAL_
 from .m2_touch import InvalidTouch
 from .display_lab import DisplayLab, LabError
 from .castplus_lab import CastError
+from .mapping import MappingRegistry, build_mapping_app
 
 VIDEO_ENGINE = os.getenv("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
 if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
     raise RuntimeError("EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs")
+
+MAPPING_ENABLED = os.getenv("EASYADB_MAPPING_ENABLED", "false").lower() in ("1", "true", "yes")
+MAPPING_BIND_IP = os.getenv("EASYADB_MAPPING_HOST", "127.0.0.1").strip()
+MAPPING_PORT = int(os.getenv("EASYADB_MAPPING_PORT", "8766"))
+MAPPING_PUBLIC_URL = os.getenv("EASYADB_MAPPING_PUBLIC_URL", "").strip().rstrip("/")
+if MAPPING_ENABLED and VIDEO_ENGINE != "webrtc":
+    raise RuntimeError("M1 mapping requires EASYADB_VIDEO_ENGINE=webrtc")
+if MAPPING_ENABLED and not 1 <= MAPPING_PORT <= 65535:
+    raise RuntimeError("EASYADB_MAPPING_PORT must be a valid TCP port")
 
 TOKEN = os.getenv("EASYADB_TOKEN", "").strip()
 if len(TOKEN) < 12 or TOKEN == "REPLACE_WITH_RANDOM_LONG_TOKEN":
@@ -59,6 +69,8 @@ def adb(*args, timeout=15, input_text=None):
 
 manager = DeviceManager(store, adb)
 live_registry = LiveRegistry()
+mapping_registry = MappingRegistry()
+mapping_app = build_mapping_app(mapping_registry, ROOT / "web")
 display_lab = DisplayLab(adb, DB_PATH + '.display-lab.json')
 
 # Only active, user-started WebSocket sessions have a watchdog. The client
@@ -71,9 +83,23 @@ LIVE_WS_SEND_TIMEOUT = 10.0
 @asynccontextmanager
 async def lifespan(_app):
     store.initialize()
+    mapping_server = mapping_task = None
+    if MAPPING_ENABLED:
+        # Both listeners MUST share the same process and live_registry. Do not
+        # deploy the mapping app under a second independent Uvicorn process.
+        import uvicorn
+        mapping_server = uvicorn.Server(uvicorn.Config(
+            mapping_app, host=MAPPING_BIND_IP, port=MAPPING_PORT, workers=1,
+            ws="wsproto", lifespan="off", log_level="info"))
+        mapping_task = asyncio.create_task(mapping_server.serve())
+        await asyncio.sleep(0)
     try:
         yield
     finally:
+        mapping_registry.disable_all()
+        if mapping_server is not None:
+            mapping_server.should_exit = True
+            await asyncio.gather(mapping_task, return_exceptions=True)
         await asyncio.to_thread(live_registry.stop_all)
 
 
@@ -482,6 +508,7 @@ def delete_device(device_id: str):
     get_device(device_id)
     if not store.delete(device_id):
         raise HTTPException(404, "找不到该设备")
+    mapping_registry.disable_for(device_id)
     live_registry.stop_for(device_id)
     manager.clear(device_id)
     # Deliberately don't adb disconnect: other clients may be using the target.
@@ -746,6 +773,44 @@ def m2_video_engine():
     return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
 
 
+def mapping_summary(record):
+    return {"enabled": record is not None,
+            "mapping_id": record["id"] if record else None,
+            "port": MAPPING_PORT, "public_url": MAPPING_PUBLIC_URL}
+
+
+@app.get("/api/devices/{device_id}/m2/mapping", dependencies=[Depends(authorize)])
+async def mapping_status(device_id: str):
+    get_device(device_id)
+    return mapping_summary(mapping_registry.status(device_id))
+
+
+class MappingStart(BaseModel):
+    session_id: str
+
+
+@app.post("/api/devices/{device_id}/m2/mapping", dependencies=[Depends(authorize)])
+async def mapping_start(device_id: str, payload: MappingStart):
+    if not MAPPING_ENABLED or VIDEO_ENGINE != "webrtc":
+        raise HTTPException(409, "请在 .env 启用映射端口并选择 WebRTC 引擎")
+    get_device(device_id)
+    with live_registry.lock:
+        stream = live_registry.sessions.get(device_id)
+    if not stream or stream.session_id != payload.session_id:
+        raise HTTPException(409, "当前实时画面会话不存在或已变更")
+    try:
+        record = mapping_registry.enable(device_id, stream)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return mapping_summary(record)
+
+
+@app.delete("/api/devices/{device_id}/m2/mapping", dependencies=[Depends(authorize)])
+async def mapping_stop(device_id: str):
+    get_device(device_id)
+    return {"disabled": mapping_registry.disable_for(device_id)}
+
+
 async def _close_webrtc_peer(pc, stream, device_id, registry):
     """Keep the original aiortc close alive beyond the WS wait deadline.
 
@@ -902,6 +967,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                         # and an SDP answer has been sent to this same WS.
                         from .m2_webrtc import ScrcpyH264Track
                         stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
+                        from aiortc.contrib.media import MediaRelay
+                        stream.webrtc_relay = MediaRelay()
                     else:
                         try:
                             stream.start()
@@ -967,7 +1034,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                                                 RTCSessionDescription, RTCRtpSender)
                             pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
                             stream.peer_cleanup_complete = False
-                            sender = pc.addTrack(stream.webrtc_track)
+                            sender = pc.addTrack(stream.webrtc_relay.subscribe(stream.webrtc_track))
                             transceiver = next(t for t in pc.getTransceivers() if t.sender is sender)
                             h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
                                     if c.mimeType.lower() == "video/h264"]
@@ -1175,6 +1242,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             except queue.Empty:
                 continue
             if kind == "init":
+                stream.mapping_init = dict(payload)
                 await asyncio.wait_for(websocket.send_json({
                     "type": "init", "session_id": stream.session_id,
                     "player": VIDEO_ENGINE,
@@ -1216,6 +1284,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
         # Also suppress pc.close() connectionstatechange callbacks from trying
         # to initiate a second teardown while the first cleanup is in progress.
         requested_stop.set()
+        mapping_registry.disable_for(device_id, stream)
         if watchdog:
             watchdog.cancel()
             await asyncio.gather(watchdog, return_exceptions=True)
