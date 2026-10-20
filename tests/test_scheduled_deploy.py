@@ -116,6 +116,25 @@ def test_invalid_interval_never_modifies_crontab(tmp_path, interval):
     assert not (tmp_path / "cron.txt").exists()
 
 
+@pytest.mark.parametrize("branch", ("refactor/foundation-v1", "refactor/session-v2"))
+def test_scheduler_preserves_explicit_refactor_branch(tmp_path, branch):
+    project, env, _ = setup_project(tmp_path)
+    env["EASYADB_SOURCE_BRANCH"] = branch
+    started = invoke(project, env, "scheduled-deploy.sh", "start", "15m", "--no-proxy")
+    assert started.returncode == 0, started.stderr
+    status = invoke(project, env, "scheduled-deploy.sh", "status")
+    assert f"Branch: {branch}" in status.stdout
+
+
+@pytest.mark.parametrize("branch", ("feat/m4-screen-mapping-m1", "refactor/v2-session-governance"))
+def test_scheduler_rejects_out_of_scope_branch(tmp_path, branch):
+    project, env, _ = setup_project(tmp_path)
+    env["EASYADB_SOURCE_BRANCH"] = branch
+    started = invoke(project, env, "scheduled-deploy.sh", "start", "15m")
+    assert started.returncode == 2
+    assert not (tmp_path / "cron.txt").exists()
+
+
 def test_changed_tree_skips_rebuild_then_deploys_and_retries_failure(tmp_path):
     project, env, remote = setup_project(tmp_path)
     producer = tmp_path / "producer"

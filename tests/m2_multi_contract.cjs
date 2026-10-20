@@ -50,8 +50,7 @@ const root={
  EasyADBWebRTC:{create:(_video,cbs)=>({
    async start(){},async answer(){},pollStats(){},
    initialize(){cbs.onState('ready');},triggerPlaying(){cbs.onState('playing');},
-   diagnostics(){return {queueBytes:0,sourceState:'connected',sourceRanges:0,
-    rangeEnd:null,currentTime:2,queueChunks:0,appendCalls:0,completedUpdates:0,
+   diagnostics(){return {sourceState:'connected',
     videoError:null,webrtcBytes:0,webrtcFrames:0,webrtcDrops:0};},
    resume(){},destroy(){}
  })},
@@ -489,7 +488,7 @@ assert.equal(c.sent.filter(x=>x.includes('"type":"control_enable"')).length,1);
 cb.input.value='Hello';cb.form.fire('submit');
 assert.equal(JSON.parse(b.sent.at(-1)).text,'Hello');
 assert.equal(c.sent.filter(x=>x.includes('"text":"Hello"')).length,0);
-c.emit('diagnostic',{session_id:'second-b',phone_packets:5,mux_chunks:2,media_fragments:1,stage:'streaming'});
+c.emit('diagnostic',{session_id:'second-b',phone_packets:5,webrtc_sent_frames:2,webrtc_dropped_frames:1,stage:'streaming'});
 assert.equal(JSON.parse(c.sent.at(-1)).session_id,'second-b');
 c.emit('diagnostic',{session_id:'second-b',stage:'streaming',
  control_warning:'android_input_permission'});
@@ -763,8 +762,7 @@ async function waitForCheck(id){
  // an indefinite server wait, but timeout cannot claim cleanup or reconnect.
  root.EasyADBWebRTC={create:(_video,cbs)=>({
   async start(){},initialize(){cbs.onState('ready');},
-  diagnostics(){return{queueBytes:0,sourceState:'connected',sourceRanges:0,
-   rangeEnd:null,currentTime:0,queueChunks:0,appendCalls:0,completedUpdates:0,
+  diagnostics(){return{sourceState:'connected',
    videoError:null,webrtcBytes:0,webrtcFrames:0};},
   pollStats(){},resume(){},destroy(){this.destroyed=true;}
  })};

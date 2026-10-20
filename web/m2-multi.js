@@ -804,7 +804,7 @@ class MultiView{
      const stat=card.metrics.sample(video,performance.now(),{
       renderedFrames:card.frameCount,
       frameAgeMs:card.frameLastAt===null?null:performance.now()-card.frameLastAt,
-      receiveMbps:traffic.mbps,queueBytes:pd.queueBytes,
+      receiveMbps:traffic.mbps,
       procCpuPct:m.proc_cpu_pct,procRssMib:m.proc_rss_mib
      });
      stats.textContent=root.EasyADBMetrics.format(stat)+'｜提示：'+root.EasyADBMetrics.advice(stat)+
@@ -1007,8 +1007,8 @@ class MultiView{
  }
  stop(card,keepSelected=false){
   if(card.closed||card.state==='stopping')return;
-  // A single stopped/failed card is no longer a pending append candidate
-  // while other phones remain live. Full-stop explicitly retains selections
+  // A stopped/failed card no longer participates in the selected live set.
+  // Full-stop explicitly retains selections
   // for a deliberate restart of the former set.
   card.keepSelected=keepSelected;
   if(card.touch){card.touch.disable();}

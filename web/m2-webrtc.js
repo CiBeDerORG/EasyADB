@@ -62,7 +62,6 @@ class WebRTCPlayer {
   if(this.closed||metadata?.player!=='webrtc')throw Error('WebRTC 初始化信息无效');
   this.onState('ready');
  }
- append(){throw Error('WebRTC 不接收 MSE 视频片段');}
  async pollStats(recordBytes){
   if(!this.pc||this.closed)return;
   const pc=this.pc;
@@ -87,10 +86,8 @@ class WebRTCPlayer {
  }
  diagnostics(){
   const pc=this.pc,v=this.video;
-  return {sourceState:pc?pc.connectionState:'未初始化',sourceBufferReady:Boolean(pc),
-   sourceRanges:0,rangeEnd:null,currentTime:v.currentTime||0,queueChunks:0,queueBytes:0,
-   appendCalls:0,completedUpdates:0,videoError:v.error?v.error.code:null,
-   playbackRate:v.playbackRate||1,lowLatency:false,
+  return {sourceState:pc?pc.connectionState:'未初始化',
+   videoError:v.error?v.error.code:null,
    webrtcBytes:this.bytesReceived,webrtcFrames:this.framesDecoded,
    webrtcDrops:this.framesDropped};
  }
