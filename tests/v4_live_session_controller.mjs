@@ -71,7 +71,10 @@ const next = create('second');
 assert.equal(first.active, false);
 assert.equal(first.ownsSocket(oldSocket), false);
 assert.equal(first.assignSession('late'), false);
-assert.equal(first.armStopTimeout(() => {}, 40000), false);
+assert.equal(
+  first.armStopTimeout(() => {}, 40000),
+  false,
+);
 timers.get(currentTimer)(); // Late timeout from an old session has no effect.
 assert.equal(next.closed, false);
 assert.equal(next.session, null);

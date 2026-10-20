@@ -28,14 +28,8 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
-          npm run test:architecture
-          for path in web/features/live/live-session-controller.js tests/v4_live_session_controller.mjs; do
-            echo "V4_FORMAT_START:${path}"
-            npx --no-install prettier "$path" | base64 -w 120
-            echo
-            echo "V4_FORMAT_END:${path}"
-          done
           npm run format:check
+          npm run test:architecture
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done

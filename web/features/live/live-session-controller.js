@@ -68,11 +68,7 @@ export class LiveSessionController {
 
   acceptsMessage(socket, message) {
     if (!this.ownsSocket(socket)) return false;
-    return !(
-      message.session_id &&
-      this.session &&
-      message.session_id !== this.session
-    );
+    return !(message.session_id && this.session && message.session_id !== this.session);
   }
 
   armStopTimeout(callback, durationMs) {
