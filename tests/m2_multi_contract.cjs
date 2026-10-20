@@ -802,6 +802,53 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').max_size,1600);
  assert.equal(playback(0).children[1].children[0].disabled,false);
  assert.equal(quality(0,'dpi').disabled,false,'normal mode retains selectable DPI preference');
+ // Native modal is created only on edit click, independent of list redraws.
+ // Editing is a draft and never changes an existing stream before Save.
+ root.document.body=new El('body');
+ El.prototype.showModal=function(){this.open=true;};
+ El.prototype.close=function(){this.open=false;this.fire('close');};
+ const before=JSON.stringify(multi.getChoice('id-1'));
+ assert.equal(multi.openSettings(devices[0]),true);
+ const settings=root.document.body.children.at(-1);
+ assert.equal(settings.tagName,'dialog');
+ assert.equal(settings.open,true);
+ assert.equal(multi.openSettings(devices[1]),false,'only one editor is open');
+ const configForm=settings.children[0],configFields=configForm.children[2];
+ assert.equal(configFields.children.length,4,'four quality parameters');
+ const configSelectors=configFields.children.map(label=>label.children[0]);
+ assert.deepEqual(configFields.children.map(label=>label.textContent),
+  ['分辨率上限','目标码率','最高帧率','DPI']);
+ const playbackSettings=configForm.children[3];
+ const lowSetting=playbackSettings.children[1].children[0];
+ const screenSetting=playbackSettings.children[2].children[0];
+ assert.equal(lowSetting.checked,true,'default low-latency is retained');
+ assert.equal(screenSetting.disabled,false);
+ configSelectors[0].value='exp:1920x1080';configSelectors[0].fire('change');
+ assert.equal(screenSetting.disabled,true,'virtual display disallows physical screen-off');
+ assert.equal(screenSetting.checked,false);
+ assert.equal(JSON.stringify(multi.getChoice('id-1')),before,'draft does not mutate choice');
+ // Cancel leaves all preferences untouched.
+ configForm.children[4].children[0].fire('click');
+ assert.equal(settings.open,false);
+ assert.equal(JSON.stringify(multi.getChoice('id-1')),before);
+ assert.equal(multi.openSettings(devices[0]),true);
+ const reopened=root.document.body.children.at(-1);
+ const editForm=reopened.children[0],edits=editForm.children[2].children.map(label=>label.children[0]);
+ edits[0].value='exp:1920x1080';edits[0].fire('change');
+ edits[1].value='18000000';edits[2].value='55';edits[3].value='360';
+ const options=editForm.children[3];
+ options.children[1].children[0].checked=false;
+ editForm.fire('submit');
+ assert.equal(reopened.open,false);
+ assert.equal(multi.settingsDialog,null);
+ assert.equal(multi.getChoice('id-1').experimental_resolution,'1920x1080');
+ assert.equal(multi.getChoice('id-1').video_bit_rate,18000000);
+ assert.equal(multi.getChoice('id-1').max_fps,55);
+ assert.equal(multi.getChoice('id-1').dpi,360);
+ assert.equal(multi.getChoice('id-1').low_latency,false);
+ assert.equal(multi.getChoice('id-1').screen_off,false);
+ assert.equal(multi.getChoice('id-2').experimental_resolution,null,'per-device isolation');
+ console.log('M2 modal draft/save/cancel, quality and playback settings: OK');
  console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
  console.log('M2 experimental resolutions use per-session virtual display and keep regular modes: OK');
   console.log('M2 WebRTC stop/no-ack black-card teardown is bounded without false-clean restart: OK');
