@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import os
 import re
 import secrets
+import sys
 import sqlite3
 import subprocess
 import threading
@@ -34,6 +35,7 @@ from .castplus_lab import CastError
 from .core.config import load_settings
 from .core.runtime import build_runtime
 from .api.static import router as static_router
+from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
@@ -219,13 +221,11 @@ def pair_at(ip, port, code):
     return {"message": "配对成功，请使用无线调试主页的连接端口继续连接"}
 
 
-@app.post("/api/pair", dependencies=[Depends(authorize)])
 def pair(target: PairTarget):
     # Original first-time pairing from the add-device form remains compatible.
     return pair_at(target.ip, target.port, target.code)
 
 
-@app.post("/api/devices/{device_id}/pair", dependencies=[Depends(authorize)])
 def pair_existing_device(device_id: str, target: PairExisting):
     # Bind pairing to the database-selected route: do not accept a client-side
     # IP override or switch routes, and NEVER connect automatically after pair.
@@ -241,17 +241,14 @@ def pair_existing_device(device_id: str, target: PairExisting):
         return {**result, "paired_ip": ip, "selected_route": device["selected_route"]}
 
 
-@app.get("/api/devices", dependencies=[Depends(authorize)])
 def list_devices():
     return [manager.snapshot(d) for d in store.list()]
 
 
-@app.get("/api/groups", dependencies=[Depends(authorize)])
 def list_groups():
     return store.list_groups()
 
 
-@app.post("/api/groups", status_code=201, dependencies=[Depends(authorize)])
 def create_group(payload: GroupInput):
     name, prefix = clean_group(payload)
     try:
@@ -262,7 +259,6 @@ def create_group(payload: GroupInput):
         raise HTTPException(409, str(exc)) from None
 
 
-@app.put("/api/groups/{group_name}", dependencies=[Depends(authorize)])
 def update_group(group_name: str, payload: GroupInput):
     try:
         with group_operation(_discovery_guard, _discovery_locks, group_name):
@@ -288,7 +284,6 @@ def update_group(group_name: str, payload: GroupInput):
     except GroupBusy:
         raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
 
-@app.put("/api/groups/{group_name}/discovery", dependencies=[Depends(authorize)])
 def configure_group_discovery(group_name: str, payload: GroupDiscoveryInput):
     """Only authenticated EasyADB admins may set credentials; never echo secrets."""
     try:
@@ -300,7 +295,6 @@ def configure_group_discovery(group_name: str, payload: GroupDiscoveryInput):
     return result
 
 
-@app.delete("/api/groups/{group_name}/discovery", dependencies=[Depends(authorize)])
 def clear_group_discovery(group_name: str):
     result = store.remove_group_discovery(group_name)
     if result is None:
@@ -368,26 +362,22 @@ def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None 
         mutex.release()
 
 
-@app.post("/api/groups/{group_name}/discovery/test", dependencies=[Depends(authorize)])
 def test_group_discovery(group_name: str, payload: GroupDiscoveryInput | None = None):
     """Test unsaved form values first; an empty body preserves the existing API."""
     return _group_scan(group_name, persist=False, test_config=payload)
 
 
-@app.post("/api/groups/{group_name}/discovery/scan", dependencies=[Depends(authorize)])
 def scan_group_discovery(group_name: str):
     """Only a user click issues a remote scan; never connect ADB here."""
     return _group_scan(group_name, persist=True)
 
 
-@app.get("/api/groups/{group_name}/discovery/last", dependencies=[Depends(authorize)])
 def group_discovery_last(group_name: str):
     if store.get_group(group_name) is None:
         raise HTTPException(404, "找不到该分组")
     return {"last": store.last_group_discovery(group_name)}
 
 
-@app.delete("/api/groups/{group_name}", dependencies=[Depends(authorize)])
 def delete_group(group_name: str):
     try:
         with group_operation(_discovery_guard, _discovery_locks, group_name):
@@ -411,7 +401,6 @@ def delete_group(group_name: str):
     except GroupBusy:
         raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
 
-@app.post("/api/devices", status_code=201, dependencies=[Depends(authorize)])
 def create_device(payload: DeviceInput):
     with membership_lock():
         data = clean_input(payload)
@@ -424,12 +413,10 @@ def create_device(payload: DeviceInput):
         return manager.snapshot(device)
 
 
-@app.post("/api/devices/refresh", dependencies=[Depends(authorize)])
 def refresh_devices():
     return manager.poll_all()
 
 
-@app.put("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def update_device(device_id: str, payload: DeviceInput):
     with membership_lock():
         with device_lock(manager, device_id):
@@ -451,13 +438,11 @@ def update_device(device_id: str, payload: DeviceInput):
             return manager.snapshot(updated)
 
 
-@app.get("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
 def unlock_state(device_id: str):
     get_device(device_id)
     return {"configured": store.unlock_configured(device_id)}
 
 
-@app.put("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
 def set_unlock_state(device_id: str, payload: UnlockInput):
     with device_lock(manager, device_id):
         get_device(device_id)
@@ -474,7 +459,6 @@ def set_unlock_state(device_id: str, payload: UnlockInput):
         return {"configured": True}
 
 
-@app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
     with membership_lock():
         with device_lock(manager, device_id):
@@ -489,7 +473,6 @@ def delete_device(device_id: str):
             return {"deleted": True}
 
 
-@app.put("/api/devices/{device_id}/temp-address", dependencies=[Depends(authorize)])
 def set_device_temp_address(device_id: str, payload: TempAddressInput):
     # Persist only; editing/removing the selected route invalidates cached ADB.
     # Reject while a server-side live slot is owned (including cleanup).
@@ -524,7 +507,6 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
         return manager.snapshot(result)
 
 
-@app.put("/api/devices/{device_id}/route", dependencies=[Depends(authorize)])
 def select_device_route(device_id: str, payload: RouteInput):
     # Use the same lock as connect, refresh and screenshot. Switching changes
     # persisted preference only; no hidden adb connect or automatic fallback.
@@ -544,7 +526,6 @@ def select_device_route(device_id: str, payload: RouteInput):
         return manager.snapshot(result)
 
 
-@app.post("/api/devices/{device_id}/connect", dependencies=[Depends(authorize)])
 def connect_device(device_id: str):
     get_device(device_id)
     result = manager.probe(device_id, force_connect=True)
@@ -555,7 +536,6 @@ def connect_device(device_id: str):
     return result
 
 
-@app.post("/api/devices/{device_id}/refresh", dependencies=[Depends(authorize)])
 def refresh_device(device_id: str):
     get_device(device_id)
     result = manager.probe(device_id)
@@ -564,7 +544,6 @@ def refresh_device(device_id: str):
     return result
 
 
-@app.post("/api/devices/{device_id}/m2/preflight", dependencies=[Depends(authorize)])
 def m2_device_preflight(device_id: str):
     """User-initiated M2-00 capability check; no connect or scrcpy process."""
     with device_lock(manager, device_id):
@@ -575,7 +554,6 @@ def m2_device_preflight(device_id: str):
         return inspect_device(serial, adb)
 
 
-@app.post("/api/devices/{device_id}/m2/video-probe", dependencies=[Depends(authorize)])
 def m2_video_probe(device_id: str, payload: VideoProbeInput):
     """Opt-in, bounded, non-recording experiment: phone encoder -> FNOS only."""
     with device_lock(manager, device_id):
@@ -598,13 +576,11 @@ def lab_connected_serial(device_id):
     return serial
 
 
-@app.get("/api/devices/{device_id}/display-lab/state", dependencies=[Depends(authorize)])
 def display_lab_state(device_id: str):
     get_device(device_id)
     return display_lab.state(device_id)
 
 
-@app.post("/api/devices/{device_id}/display-lab/environment", dependencies=[Depends(authorize)])
 def display_lab_environment(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -616,7 +592,6 @@ def display_lab_environment(device_id: str):
             raise HTTPException(502, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/scan", dependencies=[Depends(authorize)])
 def display_lab_scan(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -628,7 +603,6 @@ def display_lab_scan(device_id: str):
             raise HTTPException(502, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/overlay", dependencies=[Depends(authorize)])
 def display_lab_overlay(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -642,7 +616,6 @@ def display_lab_overlay(device_id: str):
             raise HTTPException(409, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/restore", dependencies=[Depends(authorize)])
 def display_lab_restore(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -663,7 +636,6 @@ def lab_require_idle(device_id):
             raise HTTPException(409, "请先停止此设备现有画面并等待会话清理完成")
 
 
-@app.post("/api/devices/{device_id}/display-lab/castplus/start", dependencies=[Depends(authorize)])
 def castplus_start(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -674,7 +646,6 @@ def castplus_start(device_id: str):
             raise HTTPException(409, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/castplus/auto", dependencies=[Depends(authorize)])
 def castplus_auto(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -685,7 +656,6 @@ def castplus_auto(device_id: str):
             raise HTTPException(409, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/castplus/switch", dependencies=[Depends(authorize)])
 def castplus_switch(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -696,7 +666,6 @@ def castplus_switch(device_id: str):
             raise HTTPException(409, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/castplus/verify", dependencies=[Depends(authorize)])
 def castplus_verify(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -706,7 +675,6 @@ def castplus_verify(device_id: str):
             raise HTTPException(409, str(exc)) from None
 
 
-@app.post("/api/devices/{device_id}/display-lab/castplus/restore", dependencies=[Depends(authorize)])
 def castplus_restore(device_id: str):
     with device_lock(manager, device_id):
         serial = lab_connected_serial(device_id)
@@ -741,7 +709,6 @@ async def confirm_live_adb_loss(device_id: str, serial: str) -> bool:
     return True
 
 
-@app.get("/api/m2/video-engine")
 def m2_video_engine():
     # Public capability metadata contains no token, serial, network or device data.
     return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE != "webcodecs"}
@@ -767,7 +734,6 @@ async def _close_webrtc_peer(pc, stream, device_id, registry):
     return True
 
 
-@app.websocket("/api/devices/{device_id}/m2/live")
 async def m2_live_video(websocket: WebSocket, device_id: str):
     """Same-origin, explicitly authenticated WebSocket. Token in FIRST MESSAGE,
     not URL/query string/handshake; no ambient cookie-based device access.
@@ -1378,7 +1344,6 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             pass
 
 
-@app.get("/api/devices/{device_id}/screenshot", dependencies=[Depends(authorize)])
 def device_screenshot(device_id: str):
     with device_lock(manager, device_id):
         device = get_device(device_id)
@@ -1390,7 +1355,6 @@ def device_screenshot(device_id: str):
 
 
 # Backward-compatible MVP routes (not used by the M1 page).
-@app.post("/api/connect", dependencies=[Depends(authorize)])
 def connect(target: Target):
     global _legacy_serial
     serial = address(target.ip, target.port)
@@ -1402,7 +1366,6 @@ def connect(target: Target):
     return {"connected": True, "serial": serial, "message": "连接成功"}
 
 
-@app.get("/api/status", dependencies=[Depends(authorize)])
 def status():
     with _legacy_lock:
         serial = _legacy_serial
@@ -1413,10 +1376,15 @@ def status():
             "model": model.stdout.strip() if model.returncode == 0 else None}
 
 
-@app.get("/api/screenshot", dependencies=[Depends(authorize)])
 def screenshot():
     with _legacy_lock:
         serial = _legacy_serial
     if not serial or not is_connected(serial):
         raise HTTPException(409, "设备未连接")
     return capture(serial)
+
+
+# Register all API presentation contracts after importing the original handlers.
+_handler_module = sys.modules[__name__]
+for _domain in (legacy_routes, group_routes, device_routes, lab_routes, live_routes):
+    app.include_router(_domain.build_router(_handler_module, authorize))
