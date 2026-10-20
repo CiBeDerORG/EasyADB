@@ -25,8 +25,7 @@ for arg do
 done
 
 cd "$(dirname "$0")/.."
-# Fail closed for a legacy MSE configuration before attempting an update/deployment.
-if [ -f .env ] && grep -Eq '^[[:space:]]*EASYADB_VIDEO_ENGINE[[:space:]]*=[[:space:]]*mse([[:space:]]*(#.*)?)?DEPLOY_MARKER=data/storage/.easyadb-last-deployed-tree
+DEPLOY_MARKER=data/storage/.easyadb-last-deployed-tree
 deploy_git() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
     sudo -H -u "#${SUDO_UID}" git "$@"
@@ -105,7 +104,7 @@ fi
 # a temporary bridge IP; no host networking.
 
 # Only the dedicated BuildKit container joins proxy-net; WebRTC runtime uses host networking.
-# BuildKit/EasyADB use the mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
+# BuildKit uses the Mihomo Docker alias. Host-side Buildx CLI resolves a temporary bridge IP.
 NETWORK=proxy-net
 MIHOMO_CONTAINER="${MIHOMO_CONTAINER:-mihomo}"
 BUILDER=easyadb-proxy
