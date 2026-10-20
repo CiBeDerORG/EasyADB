@@ -39,6 +39,7 @@ if VIDEO_ENGINE not in ("mse", "webrtc", "webcodecs"):
 MAPPING_ENABLED = os.getenv("EASYADB_MAPPING_ENABLED", "false").lower() in ("1", "true", "yes")
 MAPPING_BIND_IP = os.getenv("EASYADB_MAPPING_HOST", "127.0.0.1").strip()
 MAPPING_PORT = int(os.getenv("EASYADB_MAPPING_PORT", "8766"))
+MAPPING_EXTERNAL_PORT = int(os.getenv("EASYADB_MAPPING_EXTERNAL_PORT", str(MAPPING_PORT)))
 MAPPING_PUBLIC_URL = os.getenv("EASYADB_MAPPING_PUBLIC_URL", "").strip().rstrip("/")
 if MAPPING_ENABLED and VIDEO_ENGINE != "webrtc":
     raise RuntimeError("M1 mapping requires EASYADB_VIDEO_ENGINE=webrtc")
@@ -777,7 +778,7 @@ def m2_video_engine():
 def mapping_summary(record):
     return {"enabled": record is not None,
             "mapping_id": record["id"] if record else None,
-            "port": MAPPING_PORT, "public_url": MAPPING_PUBLIC_URL}
+            "port": MAPPING_EXTERNAL_PORT, "public_url": MAPPING_PUBLIC_URL}
 
 
 @app.get("/api/devices/{device_id}/m2/mapping", dependencies=[Depends(authorize)])
