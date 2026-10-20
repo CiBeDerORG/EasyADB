@@ -9,8 +9,8 @@
     "test:architecture": "node tests/v4_frontend_standards.cjs"
   },
   "devDependencies": {
-    "eslint": "9.39.1",
-    "prettier": "3.6.2"
+    "eslint": "10.13.0",
+    "prettier": "3.9.10"
   },
   "engines": {
     "node": ">=22"

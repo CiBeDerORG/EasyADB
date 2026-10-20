@@ -30,6 +30,9 @@ jobs:
           echo V4_LOCK_START
           base64 -w 120 package-lock.json
           echo V4_LOCK_END
+          echo V4_FORMAT_START
+          npx --no-install prettier tests/v4_frontend_standards.cjs | base64 -w 120
+          echo V4_FORMAT_END
           npm run lint
           npm run format:check
           node tests/v4_frontend_standards.cjs

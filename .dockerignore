@@ -12,3 +12,4 @@ __pycache__/
 tests/
 *.tar
 *.tar.gz
+node_modules/

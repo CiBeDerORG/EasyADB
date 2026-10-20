@@ -59,8 +59,8 @@ assert(!prettierIgnore.includes('web/**'));
 visit(webRoot);
 
 assert.equal(packageInfo.private, true);
-assert.equal(packageInfo.devDependencies.eslint, '9.39.1');
-assert.equal(packageInfo.devDependencies.prettier, '3.6.2');
+assert.equal(packageInfo.devDependencies.eslint, '10.13.0');
+assert.equal(packageInfo.devDependencies.prettier, '3.9.10');
 for (const script of ['lint', 'format:check', 'test:architecture']) {
   assert(packageInfo.scripts[script], `missing frontend check: ${script}`);
 }
