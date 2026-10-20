@@ -84,10 +84,11 @@ def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch
             self.finished = threading.Event()
             self.events = queue.Queue()
             self.started = False
+            self.start_event = threading.Event()
             self.joined = False
             created.append(self)
 
-        def start(self): self.started = True
+        def start(self): self.started = True; self.start_event.set()
         def stop(self): self.finished.set()
         def join(self, timeout=20):
             self.joined = True
@@ -110,7 +111,7 @@ def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch
             starting = ws.receive_json()
             assert starting["type"] == "starting"
             assert starting["session_id"] == created[0].session_id
-            assert created[0].started
+            assert created[0].start_event.wait(2), "WebRTC starts only after SDP answer"
             # A second browser cannot silently replace the active session.
             with client.websocket_connect(path, headers=origin) as other:
                 other.send_json(auth)
@@ -132,6 +133,7 @@ def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch
         with client.websocket_connect(path, headers=origin) as again:
             again.send_json(auth)
             assert again.receive_json()["type"] == "starting"
+            assert created[2].start_event.wait(2)
             again.send_text("stop")
             for _ in range(8):
                 if again.receive_json()["type"] == "ended":

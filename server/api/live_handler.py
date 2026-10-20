@@ -285,7 +285,14 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                                 "type": "webrtc_answer", "session_id": stream.session_id,
                                 "sdp": pc.localDescription.sdp
                             }), LIVE_WS_SEND_TIMEOUT)
-                            stream.start()
+                            try:
+                                stream.start()
+                            except (RuntimeError, OSError):
+                                await websocket.send_json({
+                                    "type": "error", "session_id": stream.session_id,
+                                    "message": "视频会话未能启动，请检查手机编码器及 ADB 状态"
+                                })
+                                break
                             last_browser_ack = time.monotonic()
                         except Exception:
                             await websocket.send_json({"type": "error", "session_id": stream.session_id,
