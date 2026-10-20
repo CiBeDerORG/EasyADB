@@ -4,6 +4,7 @@ This router intentionally exposes NO admin routes, tokens or device inventory.
 It has no public authentication: bind it to a trusted interface only until M2.
 """
 import asyncio
+import json
 import secrets
 import threading
 from pathlib import Path
@@ -31,7 +32,8 @@ class MappingRegistry:
                 raise ValueError("请等待 WebRTC 实时画面初始化后再开启映射")
             record = {"id": secrets.token_urlsafe(18), "device_id": device_id,
                       "stream": stream, "session_id": stream.session_id,
-                      "active": True, "ended": asyncio.Event(), "viewer": False}
+                      "active": True, "ended": asyncio.Event(), "loop": asyncio.get_running_loop(),
+                      "viewer": False}
             self.by_device[device_id] = record
             self.by_id[record["id"]] = record
             return record
@@ -41,7 +43,10 @@ class MappingRegistry:
         self.by_id.pop(record["id"], None)
         if self.by_device.get(record["device_id"]) is record:
             self.by_device.pop(record["device_id"], None)
-        record["ended"].set()
+        try:
+            record["loop"].call_soon_threadsafe(record["ended"].set)
+        except RuntimeError:
+            record["ended"].set()
 
     def disable_for(self, device_id, stream=None):
         with self.lock:
@@ -135,12 +140,13 @@ def build_mapping_app(registry, web_root: Path):
             while not record["ended"].is_set() and not stream.stop_event.is_set():
                 message_task = asyncio.create_task(ws.receive_text())
                 ended_task = asyncio.create_task(record["ended"].wait())
-                done, pending = await asyncio.wait((message_task, ended_task),
+                stop_task = asyncio.create_task(requested_stop.wait())
+                done, pending = await asyncio.wait((message_task, ended_task, stop_task),
                                                     return_when=asyncio.FIRST_COMPLETED)
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*pending, return_exceptions=True)
-                if ended_task in done or record["ended"].is_set():
+                if ended_task in done or stop_task in done or record["ended"].is_set():
                     break
                 try:
                     raw = message_task.result()
@@ -150,7 +156,6 @@ def build_mapping_app(registry, web_root: Path):
                     break
                 if len(raw) > 32768:
                     break
-                import json
                 try:
                     msg = json.loads(raw)
                 except (ValueError, TypeError):
@@ -182,7 +187,6 @@ def build_mapping_app(registry, web_root: Path):
                         async def on_state():
                             if pc.connectionState in ("failed", "closed"):
                                 requested_stop.set()
-                                record["ended"].set() if not record["active"] else None
                         await asyncio.wait_for(pc.setRemoteDescription(
                             RTCSessionDescription(sdp=msg["sdp"], type="offer")), 12)
                         answer = await asyncio.wait_for(pc.createAnswer(), 12)
