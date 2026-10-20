@@ -27,13 +27,12 @@ jobs:
         if: github.ref == 'refs/heads/refactor/v4-frontend-standards'
         run: |
           npm install --ignore-scripts --no-audit --no-fund
+          echo V4_LOCK_START
+          base64 -w 120 package-lock.json
+          echo V4_LOCK_END
           npm run lint
           npm run format:check
           node tests/v4_frontend_standards.cjs
-          echo V4_LOCK_START
-          base64 -w0 package-lock.json
-          echo
-          echo V4_LOCK_END
       - name: Check modal UI and deployment scripts
         run: |
           for script in scripts/*.sh; do sh -n "$script"; done
