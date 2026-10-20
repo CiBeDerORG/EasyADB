@@ -844,7 +844,7 @@ class MultiView{
     }else{
      const base=data.public_url||location.protocol+'//'+location.hostname+':'+data.port;
      const url=new URL(base);
-     url.pathname=url.pathname.replace(/\\/$/,'')+'/m/'+encodeURIComponent(data.mapping_id);
+     url.pathname=url.pathname.endsWith('/')?url.pathname.slice(0,-1)+'/m/'+encodeURIComponent(data.mapping_id):url.pathname+'/m/'+encodeURIComponent(data.mapping_id);
      url.search='';url.hash='';
      card.mapping=url.href;
      mappingLink.href=card.mapping;mappingLink.hidden=false;
