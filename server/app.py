@@ -41,6 +41,9 @@ from .services.device_service import create_device_record, update_device_record,
 from .services.group_service import (create_group_record, update_group_record, delete_group_record,
                              configure_group_discovery_record, clear_group_discovery_record)
 from .api.static import router as static_router
+from .api.schemas import (Target, PairTarget, PairExisting, DeviceInput, RouteInput, TempAddressInput,
+                          UnlockInput, VideoProbeInput, GroupInput, GroupDiscoveryInput)
+from .api.validation import clean_group, address, clean_input
 from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .api.live_handler import handle_live_video
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
@@ -95,99 +98,9 @@ _legacy_serial = None
 _legacy_lock = threading.Lock()
 
 
-class Target(BaseModel):
-    ip: str
-    port: int
-
-
-class PairTarget(Target):
-    code: str
-
-
-class PairExisting(BaseModel):
-    port: int
-    code: str
-    selected_serial: str
-
-
-class DeviceInput(Target):
-    name: str
-    group_name: str = ""
-
-
-
-class RouteInput(BaseModel):
-    route: str
-
-
-class TempAddressInput(BaseModel):
-    ip: str | None = None
-    port: int | None = None
-
-
-class UnlockInput(BaseModel):
-    password: str | None = None  # None = keep existing; empty string = delete
-
-
-class VideoProbeInput(BaseModel):
-    profile: Literal['baseline', 'native'] = 'baseline'
-
-
-class GroupInput(BaseModel):
-    name: str
-    ip_prefix: str | None = None
-
-
-class GroupDiscoveryInput(BaseModel):
-    url: str
-    username: str = "easyadb"
-    password: str = ""
-
-
-def clean_group(payload):
-    name = payload.name.strip()
-    if not 1 <= len(name) <= 64 or name == "未分组":
-        raise HTTPException(400, "分组名称须为 1–64 字符，且不能使用保留名称「未分组」")
-    prefix = (payload.ip_prefix or "").strip() or None
-    if prefix:
-        match = re.fullmatch(r"([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.\*", prefix)
-        if not match:
-            raise HTTPException(400, "IP 前缀格式应为 192.168.10.*")
-        try:
-            canonical = ipaddress.IPv4Address(match.group(1) + ".1")
-        except ipaddress.AddressValueError:
-            raise HTTPException(400, "IP 前缀包含无效的 IPv4 网段") from None
-        prefix = str(canonical).rsplit(".", 1)[0] + ".*"
-    return name, prefix
-
-
 def authorize(x_easyadb_token: str | None = Header(default=None)):
     if not x_easyadb_token or not secrets.compare_digest(x_easyadb_token, TOKEN):
         raise HTTPException(401, "访问密钥不正确")
-
-
-def address(ip, port):
-    try:
-        parsed = ipaddress.IPv4Address(ip.strip())
-    except ipaddress.AddressValueError:
-        raise HTTPException(400, "目前仅支持有效的 IPv4 地址") from None
-    if not 1 <= port <= 65535:
-        raise HTTPException(400, "端口必须在 1 到 65535 之间")
-    return f"{parsed}:{port}"
-
-
-def clean_input(payload):
-    serial = address(payload.ip, payload.port)
-    name = payload.name.strip()
-    group = payload.group_name.strip()
-    if not 1 <= len(name) <= 64:
-        raise HTTPException(400, "设备名称长度必须为 1–64 字符")
-    if len(group) > 64:
-        raise HTTPException(400, "分组名称不能超过 64 字符")
-    return {
-        "name": name, "group_name": group,
-        "ip": serial.rsplit(":", 1)[0], "port": payload.port,
-    }
 
 
 def get_device(device_id):
