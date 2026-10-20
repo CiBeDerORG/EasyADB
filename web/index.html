@@ -440,6 +440,24 @@ body.video-fullscreen-active .group-fab,body.video-fullscreen-active .group-log-
 const $=id=>document.getElementById(id);
 let devices=[],groups=[],selected=null,editing=null,editingTemp=null,editingGroup=null,pairingDeviceId=null,pairingSerial=null,loading=false,loaded=false;
 const managementSelected=new Set(); // one selection for every batch action
+// Per-device startup/batch ADB connection state: a slow/offline device must
+// never hold the global management lock or block completed device controls.
+const connectingDevices=new Set(),connectSnapshots=new Map();
+let connectionBatchBusy=false,connectGeneration=0,connectProgressRevision=0,connectController=null;
+function deviceConnecting(id){return connectingDevices.has(id);}
+function deviceLocked(id){return loading||deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
+function applyConnectionResult(device,result){
+ const present=devices.find(d=>d.id===device.id);
+ if(!present||present.selected_serial!==device.selected_serial)return false;
+ const fresh=result.status==='fulfilled'&&result.value?.id===device.id&&
+  result.value.selected_serial===device.selected_serial
+  ?result.value:{...present,status:'error',active_serial:null,connect_failed:true,
+   last_error:result.reason?.message||'ADB 连接请求未完成'};
+ connectProgressRevision++;
+ connectSnapshots.set(device.id,{revision:connectProgressRevision,device:fresh});
+ devices=devices.map(d=>d.id===device.id?fresh:d);
+ return hasConnectedAdb(fresh);
+}
 let multiView=null,displayLabView=null;
 const scanningGroups=new Set();
 const groupOpen=new Map();
@@ -661,7 +679,7 @@ function render(){
    const top=elem('div','item-top'),info=elem('div','item-info');
    const managementLabel=elem('label','management-check'),managementCheck=elem('input');
    managementCheck.type='checkbox';managementCheck.value=d.id;
-   managementCheck.checked=managementSelected.has(d.id);managementCheck.disabled=loading;
+   managementCheck.checked=managementSelected.has(d.id);managementCheck.disabled=loading||deviceConnecting(d.id);
    managementCheck.setAttribute('aria-label','批量选择 '+d.name);
    managementCheck.addEventListener('change',()=>{
     if(managementCheck.checked)managementSelected.add(d.id);else managementSelected.delete(d.id);
@@ -694,6 +712,7 @@ function render(){
     const configure=action('✎',()=>multiView.openSettings(d),'projection-settings-edit');
     configure.title='设置 '+d.name+' 的投屏参数与播放选项';
     configure.setAttribute('aria-label',configure.title);
+    configure.disabled=loading||deviceConnecting(d.id);
     portWrap.append(configure);
    }
    title.append(portWrap);
@@ -701,7 +720,7 @@ function render(){
    const addAddress=(label,route,ip,port=d.port)=>{
     const chosen=d.selected_route===route,row=elem('div','address-row'+(route==='temp'?' has-remove':route==='mesh'?' has-edit':''));
     const target=action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target');
-    target.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+    target.disabled=deviceLocked(d.id);
     target.setAttribute('aria-pressed',String(chosen));
     target.setAttribute('aria-label','选择'+d.name+'的'+label+' '+ip+':'+port);
     target.title=chosen?'点击对此 IP 主动连接一次':'选择此 IP 并主动连接一次（不自动回退）';
@@ -710,19 +729,19 @@ function render(){
      const change=action('✎',()=>edit(d.id),'device-edit-icon');
      change.type='button';change.title='编辑 '+d.name;
      change.setAttribute('aria-label','编辑设备 '+d.name);
-     change.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+     change.disabled=deviceLocked(d.id);
      row.append(change);
     }
     if(route==='temp'){
      const del=action('×',()=>removeTempAddress(d.id),'address-remove');
      del.type='button';del.title='移除此设备临时 IP（不改变共用端口）';
      del.setAttribute('aria-label','移除'+d.name+'的临时 IP');
-     del.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+     del.disabled=deviceLocked(d.id);
      row.append(del);
     }
     if(chosen&&d.connect_failed){
      const pairButton=action('首次连接',()=>openFirstPair(d.id),'first-pair');
-     pairButton.disabled=loading;
+     pairButton.disabled=loading||deviceConnecting(d.id);
      pairButton.setAttribute('aria-label','为'+d.name+'当前选择的'+label+'进行首次无线配对');
      row.append(pairButton);
     }
@@ -736,15 +755,16 @@ function render(){
    const plus=action('＋',()=>openTempEditor(d),'address-add');
    plus.title=d.temp_ip?'修改临时 IP 与共用端口':'添加临时 IP';
    plus.setAttribute('aria-label',plus.title);
-   plus.disabled=loading||Boolean(multiView&&multiView.isBusyFor(d.id));
+   plus.disabled=deviceLocked(d.id);
    addressList.append(plus);
    top.append(managementLabel,info);primary.append(top,addressList);
-   if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
+   if(deviceConnecting(d.id))primary.append(elem('div','muted connection-pending','此设备正在连接 ADB，其他设备可继续操作…'));
+   else if(d.last_error&&d.status!=='connected')primary.append(elem('div','muted connection-error',d.last_error));
    const actions=elem('div','item-actions');
    const locked=Boolean(multiView&&multiView.isBusyFor(d.id));
    const labButton=action('电脑模式实验',()=>displayLabView.open(d.id),'secondary');
    actions.append(labButton);
-   labButton.disabled=loading||!loaded;
+   labButton.disabled=loading||!loaded||deviceConnecting(d.id);
    primary.append(actions);item.append(primary);wrapper.append(item);
   }
   if(!g.items.length)wrapper.append(elem('p','hint','该分组还没有设备。'));
@@ -753,48 +773,57 @@ function render(){
    const tools=elem('div','group-tools');
    if(g.discovery_needs_password){
     const renew=action('重新填写专用密钥',()=>openGroup(g.title),'secondary group-discovery');
-    renew.disabled=loading||scanningGroups.has(g.title);
+    renew.disabled=loading||scanningGroups.has(g.title)||g.items.some(d=>deviceConnecting(d.id));
     tools.append(renew);
     summary.style.paddingRight='270px';
    }else if(g.discovery_configured){
     const discover=action(scanningGroups.has(g.title)?'正在发现…':'立即发现 ADB',()=>scanGroup(g.title),'secondary group-discovery');
-    discover.disabled=loading||scanningGroups.has(g.title);
+    discover.disabled=loading||scanningGroups.has(g.title)||g.items.some(d=>deviceConnecting(d.id));
     tools.append(discover);
     summary.style.paddingRight='270px';
    }
    const config=action('设置',()=>openGroup(g.title),'secondary group-edit');
-   config.disabled=loading||scanningGroups.has(g.title)||g.items.some(d=>multiView&&multiView.isBusyFor(d.id));
+   config.disabled=loading||scanningGroups.has(g.title)||g.items.some(d=>deviceLocked(d.id));
    tools.append(config);shell.append(tools);
   }
   list.append(shell);
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
- $('refreshAll').disabled=loading||!loaded||!devices.some(d=>managementSelected.has(d.id)&&!(multiView&&multiView.isBusyFor(d.id)));
+ $('refreshAll').disabled=loading||!loaded||!devices.some(d=>managementSelected.has(d.id)&&!deviceLocked(d.id));
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded;
  const candidates=devices.filter(d=>managementSelected.has(d.id));
- const eligible=candidates.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const eligible=candidates.filter(d=>!deviceLocked(d.id));
  const adbReady=candidates.filter(hasConnectedAdb);
  $('bulkCount').textContent='已选设备 '+candidates.length+' 台 · ADB 可用 '+adbReady.length+' 台'+
   (candidates.length-adbReady.length?' · 未连接/连接失败 '+(candidates.length-adbReady.length)+' 台':'')+
   (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量管理':'');
- $('bulkConnect').disabled=loading||!loaded||!eligible.length;
+ $('bulkConnect').disabled=loading||connectionBatchBusy||!loaded||!eligible.length;
  $('bulkDelete').disabled=loading||!loaded||!eligible.length;
- const all=$('bulkSelectAll');
- all.disabled=loading||!loaded||!devices.length;
- all.checked=devices.length>0&&candidates.length===devices.length;
- all.indeterminate=candidates.length>0&&candidates.length<devices.length;
+ $('load').disabled=loading||connectionBatchBusy;
+ const all=$('bulkSelectAll'),selectable=devices.filter(d=>!deviceConnecting(d.id));
+ const selectedSelectable=selectable.filter(d=>managementSelected.has(d.id));
+ all.disabled=loading||!loaded||!selectable.length;
+ all.checked=selectable.length>0&&selectedSelectable.length===selectable.length;
+ all.indeterminate=selectedSelectable.length>0&&selectedSelectable.length<selectable.length;
 }
 async function load(quiet=false){
- if(!$('token').value.trim()){message('请先输入访问密钥','error');return;}
+ if(!$('token').value.trim()){message('请先输入访问密钥','error');return false;}
+ const epoch=connectGeneration,revision=connectProgressRevision;
  try{
   const [data,configs]=await Promise.all([api('/api/devices').then(r=>r.json()),api('/api/groups').then(r=>r.json())]);
-  devices=data;groups=configs;loaded=true;if(selected&&!data.some(d=>d.id===selected))selected=null;
+  if(epoch!==connectGeneration)return false; // never restore devices from a previous token
+  const merged=data.map(d=>{
+   const newer=connectSnapshots.get(d.id);
+   return newer&&newer.revision>revision&&newer.device.selected_serial===d.selected_serial
+    ?newer.device:d;
+  });
+  devices=merged;groups=configs;loaded=true;if(selected&&!merged.some(d=>d.id===selected))selected=null;
   // Scan history remains on the NAS, but does not replay as a persistent UI panel.
-  const availableIds=new Set(data.map(d=>d.id));
+  const availableIds=new Set(merged.map(d=>d.id));
   for(const id of managementSelected)if(!availableIds.has(id))managementSelected.delete(id);
-  render();if(!quiet)message('已加载 '+data.length+' 台设备','ok');
+  render();if(!quiet)message('已加载 '+merged.length+' 台设备','ok');
   return true;
  }catch(e){if(!quiet)message(e.message,'error');return false;}
 }
