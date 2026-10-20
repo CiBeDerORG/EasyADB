@@ -37,11 +37,13 @@ async def cleanup_live_session(*, device_id, stream, pc, registry, close_peer,
     if stream is None:
         return None
     problems = []
+    worker_error = False
     try:
         await asyncio.to_thread(stream.stop)
     except (OSError, RuntimeError, ValueError):
         # Mark dirty BEFORE asynchronous peer close can callback/release.
         stream.cleanup_complete = False
+        worker_error = True
         problems.append("worker stop raised")
     await _cancel(unlock_task)
     # Wait until offer negotiation has stopped before closing aiortc.
@@ -58,17 +60,29 @@ async def cleanup_live_session(*, device_id, stream, pc, registry, close_peer,
             logging.getLogger(__name__).warning(
                 "WebRTC peer close pending for device %s session %s",
                 device_id, stream.session_id)
+        except Exception:
+            # A failed wrapper must not abort the rest of worker teardown.
+            problems.append("WebRTC peer close raised")
+            logging.getLogger(__name__).exception(
+                "WebRTC peer close raised for device %s session %s",
+                device_id, stream.session_id)
     if not worker_launch_attempted:
         # SDP setup did not even attempt ADB/worker startup.
-        stream.cleanup_complete = True
+        # No worker was launched; do not overwrite a failed stop proof.
+        if not worker_error:
+            stream.cleanup_complete = True
         stream.finished.set()
         if getattr(stream, "webrtc_track", None) is not None:
             stream.webrtc_track.stop()
     try:
         await asyncio.to_thread(stream.join, join_timeout)
     except (OSError, RuntimeError, ValueError):
+        worker_error = True
         problems.append("worker join raised")
-    if problems:
+    # Peer timeout is a separate, still-pending proof. Never poison an
+    # independently verified ADB/scrcpy cleanup: late close needs both
+    # proofs to transition the old dirty session to RELEASED.
+    if worker_error:
         stream.cleanup_complete = False
     worker_finished = bool(stream.finished.is_set())
     worker_cleanup = bool(getattr(stream, "cleanup_complete", False))
