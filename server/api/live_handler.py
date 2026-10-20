@@ -61,6 +61,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     requested_stop = asyncio.Event()
     touch_ready = asyncio.Event()
     manual_stop = False
+    worker_launch_attempted = False
     try:
         try:
             initial = await asyncio.wait_for(websocket.receive_json(), timeout=8)
@@ -237,7 +238,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                     })
 
         async def receive_commands():
-            nonlocal manual_stop, last_browser_ack, pc, unlock_task, last_manual_unlock_at
+            nonlocal manual_stop, last_browser_ack, pc, unlock_task, last_manual_unlock_at, worker_launch_attempted
             control_enabled = False
             last_move = 0.0
             last_input = 0.0
@@ -300,6 +301,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                                 "type": "webrtc_answer", "session_id": stream.session_id,
                                 "sdp": pc.localDescription.sdp
                             }), LIVE_WS_SEND_TIMEOUT)
+                            worker_launch_attempted = True
                             try:
                                 stream.start()
                             except (RuntimeError, OSError):
@@ -621,8 +623,8 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         "WebRTC peer close still pending for device %s session %s; "
                         "will release only after verified late cleanup",
                         device_id, stream.session_id)
-            if VIDEO_ENGINE == "webrtc" and getattr(stream, "thread", None) is None:
-                # SDP failure never launched ADB or allocated a worker resource.
+            if VIDEO_ENGINE == "webrtc" and not worker_launch_attempted:
+                # No worker start was ever attempted; safe to retire this unlaunched slot.
                 stream.cleanup_complete = True
                 stream.finished.set()
                 if stream.webrtc_track is not None:

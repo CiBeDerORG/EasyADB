@@ -137,8 +137,14 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
         ) as ws:
             ws.send_json({"token": "local-test-token-123", "profile": "baseline",
                           "player": "webrtc", "selected_serial": device["selected_serial"]})
-            msg = ws.receive_json()
-            assert msg["type"] == "error" and "未能启动" in msg["message"]
+            for _ in range(12):
+                msg = ws.receive_json()
+                if msg["type"] == "error":
+                    assert "未能启动" in msg["message"]
+                    break
+                assert msg["type"] in ("starting", "diagnostic")
+            else:
+                pytest.fail("WebRTC worker launch error was not reported")
         assert not app.live_registry.sessions
 
 
