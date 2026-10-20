@@ -617,6 +617,11 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
+        # V2-04 admission: even a session without its first keyframe must free
+        # the startup permit on stop/failure.  Resource quota != dirty slot.
+        if budget_claimed and stream is not None:
+            resource_budget.release_start(device_id, stream.session_id)
+            budget_claimed = False
         if stream:
             session_manager.cleaning(device_id, stream)
         report = await cleanup_live_session(
