@@ -12,6 +12,8 @@ from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError
 
 MAX_PENDING_FRAMES = 48
+MAX_PENDING_BYTES = 16 * 1024 * 1024
+MAX_CONFIG_BYTES = 256 * 1024
 SENTINEL = object()
 
 
@@ -28,6 +30,7 @@ class ScrcpyH264Track(MediaStreamTrack):
         self.closed = False
         self.dropped_frames = 0
         self.sent_frames = 0
+        self._queued_bytes = 0
 
     def submit(self, pts_us, payload, *, config=False, keyframe=False):
         """Called by the blocking ADB reader; never touches asyncio state there."""
@@ -43,14 +46,15 @@ class ScrcpyH264Track(MediaStreamTrack):
             return
         if config:
             # scrcpy's codec-config packet has SPS/PPS with Annex B start codes.
-            self.config = payload
+            self.config = payload if len(payload) <= MAX_CONFIG_BYTES else None
             return
-        if self.frames.full():
+        if self.frames.full() or self._queued_bytes + len(payload) + (len(self.config or b"") if keyframe else 0) > MAX_PENDING_BYTES:
             # Never build latency by replaying stale frames. A delta after a drop
             # is undecodable: discard until the next IDR with fresh SPS/PPS.
             while not self.frames.empty():
                 self.frames.get_nowait()
             self.need_keyframe = True
+            self._queued_bytes = 0
             self.dropped_frames += 1
         if self.need_keyframe and not keyframe:
             self.dropped_frames += 1
@@ -61,6 +65,10 @@ class ScrcpyH264Track(MediaStreamTrack):
                 return
             payload = self.config + payload
             self.need_keyframe = False
+        if len(payload) > MAX_PENDING_BYTES:
+            self.need_keyframe = True
+            self.dropped_frames += 1
+            return
         if self.last_pts is not None and pts_us <= self.last_pts:
             pts_us = self.last_pts + 1
         self.last_pts = pts_us
@@ -68,6 +76,7 @@ class ScrcpyH264Track(MediaStreamTrack):
         packet.pts = pts_us
         packet.time_base = Fraction(1, 1_000_000)
         self.frames.put_nowait(packet)
+        self._queued_bytes += packet.size
 
     async def recv(self):
         if self.closed:
@@ -75,6 +84,7 @@ class ScrcpyH264Track(MediaStreamTrack):
         item = await self.frames.get()
         if item is SENTINEL:
             raise MediaStreamError
+        self._queued_bytes = max(0, self._queued_bytes - item.size)
         self.sent_frames += 1
         return item
 
@@ -94,4 +104,5 @@ class ScrcpyH264Track(MediaStreamTrack):
         super().stop()
         while not self.frames.empty():
             self.frames.get_nowait()
+        self._queued_bytes = 0
         self.frames.put_nowait(SENTINEL)
