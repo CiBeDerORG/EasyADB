@@ -416,22 +416,23 @@ def refresh_devices():
 
 @app.put("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def update_device(device_id: str, payload: DeviceInput):
-    if display_lab.has_pending(device_id):
-        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-    original = get_device(device_id)
-    data = clean_input(payload)
-    try:
-        updated = store.update(device_id, data)
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
-    if not updated:
-        raise HTTPException(404, "找不到该设备")
-    if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
-        live_registry.stop_for(device_id)
-        manager.clear(device_id)
-    return manager.snapshot(updated)
+    with device_lock(manager, device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
+        original = get_device(device_id)
+        data = clean_input(payload)
+        try:
+            updated = store.update(device_id, data)
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "该组网 IP 和端口已经存在于设备列表") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        if not updated:
+            raise HTTPException(404, "找不到该设备")
+        if (original["ip"], original["port"], original["group_name"], original["lan_ip"], original["selected_route"]) != (updated["ip"], updated["port"], updated["group_name"], updated["lan_ip"], updated["selected_route"]):
+            live_registry.stop_for(device_id)
+            manager.clear(device_id)
+        return manager.snapshot(updated)
 
 
 @app.get("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
@@ -459,15 +460,16 @@ def set_unlock_state(device_id: str, payload: UnlockInput):
 
 @app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
-    if display_lab.has_pending(device_id):
-        raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-    get_device(device_id)
-    if not store.delete(device_id):
-        raise HTTPException(404, "找不到该设备")
-    live_registry.stop_for(device_id)
-    manager.clear(device_id)
-    # Deliberately don't adb disconnect: other clients may be using the target.
-    return {"deleted": True}
+    with device_lock(manager, device_id):
+        if display_lab.has_pending(device_id):
+            raise HTTPException(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
+        get_device(device_id)
+        if not store.delete(device_id):
+            raise HTTPException(404, "找不到该设备")
+        live_registry.stop_for(device_id)
+        manager.clear(device_id)
+        # Deliberately don't adb disconnect: other clients may be using the target.
+        return {"deleted": True}
 
 
 @app.put("/api/devices/{device_id}/temp-address", dependencies=[Depends(authorize)])
