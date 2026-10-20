@@ -579,6 +579,21 @@ async function runDeviceBatch(items,task,onProgress,parallelism=4){
  await Promise.all(workers);
  return results;
 }
+// Connection priority is based on the selected ADB address, not stale metadata.
+function hasConnectedAdb(d){
+ return Boolean(d&&d.status==='connected'&&d.connect_failed!==true&&
+  d.selected_serial&&d.active_serial===d.selected_serial);
+}
+function connectedFirst(a,b){
+ return Number(hasConnectedAdb(b))-Number(hasConnectedAdb(a));
+}
+function successfulBatchIds(candidates,results){
+ const ids=new Set();
+ results.forEach((result,i)=>{
+  if(result.status==='fulfilled'&&hasConnectedAdb(result.value))ids.add(candidates[i].id);
+ });
+ return ids;
+}
 function select(id){selected=id;render();}
 function render(){
  // Build a fresh set of per-device quality controls in the hidden staging
@@ -595,7 +610,15 @@ function render(){
   if(!grouped.has(key))grouped.set(key,{title:d.group_name||'未分组',ip_prefix:null,items:[]});
   grouped.get(key).items.push(d);
  }
- const keys=[...grouped.keys()].sort((a,b)=>a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN'));
+ // Keep grouping, but surface groups with connected devices first.
+ // Sort ONLY the display arrays; keep the original device order for batch jobs.
+ for(const group of grouped.values())group.items.sort(connectedFirst);
+ const keys=[...grouped.keys()].sort((a,b)=>{
+  const ac=grouped.get(a).items.some(hasConnectedAdb),bc=grouped.get(b).items.some(hasConnectedAdb);
+  if(ac!==bc)return ac?-1:1;
+  return a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:
+   grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN');
+ });
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
  for(const key of keys){
   const g=grouped.get(key),section=elem('details','device-group'),shell=elem('div','group-shell');
@@ -604,7 +627,7 @@ function render(){
   const summary=elem('summary');
   summary.append(elem('span','',g.title));
   if(g.ip_prefix)summary.append(elem('span','group-prefix',g.ip_prefix));
-  summary.append(elem('span','group-count',g.items.filter(d=>d.status==='connected').length+' / '+g.items.length+' 已连接'));
+  summary.append(elem('span','group-count',g.items.filter(hasConnectedAdb).length+' / '+g.items.length+' 已连接'));
   section.append(summary);
   const wrapper=elem('div','group-items');
   for(const d of g.items){
@@ -714,8 +737,7 @@ function render(){
  $('newGroup').disabled=loading||!loaded;
  const candidates=devices.filter(d=>managementSelected.has(d.id));
  const eligible=candidates.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
- const adbReady=candidates.filter(d=>d.status==='connected'&&d.connect_failed!==true&&
-  Boolean(d.selected_serial)&&d.active_serial===d.selected_serial);
+ const adbReady=candidates.filter(hasConnectedAdb);
  $('bulkCount').textContent='已选设备 '+candidates.length+' 台 · ADB 可用 '+adbReady.length+' 台'+
   (candidates.length-adbReady.length?' · 未连接/连接失败 '+(candidates.length-adbReady.length)+' 台':'')+
   (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量管理':'');
@@ -964,14 +986,21 @@ $('bulkConnect').addEventListener('click',async()=>{
    return (await api('/api/devices/'+encodeURIComponent(d.id)+'/connect',{method:'POST'})).json();
   },(done,total)=>message('批量连接中：已完成 '+done+' / '+total+' 台（最多 4 台并发）'));
  }finally{
-  await load(true);loading=false;render();
+  await load(true);loading=false;
  }
- let success=0;const failed=[];
+ // A completed batch replaces the old selection with ONLY confirmed successful
+ // connections from this batch. Failed, unattempted and streaming-skipped
+ // devices never remain accidentally selected for the next bulk action.
+ const succeeded=successfulBatchIds(candidates,results);
+ managementSelected.clear();
+ for(const id of succeeded)managementSelected.add(id);
+ const success=succeeded.size,failed=[];
  results.forEach((result,i)=>{
-  if(result.status==='fulfilled')success++;
-  else failed.push(candidates[i].name+'：'+(result.reason?.message||'连接失败'));
+  if(!succeeded.has(candidates[i].id))
+   failed.push(candidates[i].name+'：'+(result.reason?.message||'服务端未确认 ADB 连接成功'));
  });
- message('批量连接完成：成功 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
+ render();
+ message('批量连接完成：成功 '+success+' 台（已自动勾选），预先跳过投屏中 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台'+
   (failed.length?'；'+failed.join('；'):'')+'。未自动切换线路。',failed.length?'error':'ok');
 });
 $('bulkDelete').addEventListener('click',async()=>{
