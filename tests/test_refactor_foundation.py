@@ -40,7 +40,7 @@ def test_runtime_composition_has_no_eager_db_creation_or_adb(tmp_path):
         raise AssertionError("composition must never run an adb command")
 
     runtime = build_runtime(str(db_path), adb)
-    assert runtime.store.path == str(db_path)
+    assert runtime.store.path == db_path
     assert runtime.manager.store is runtime.store
     assert runtime.manager.adb is adb
     assert isinstance(runtime.live_registry, LiveRegistry)
