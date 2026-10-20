@@ -177,6 +177,14 @@ def test_manual_unlock_websocket_uses_current_saved_secret(monkeypatch, tmp_path
                 if msg["type"]=="starting":
                     sid=msg["session_id"];break
             assert sid=="session-manual"
+            # The browser may receive "starting" before scrcpy publishes
+            # init; wait for the actual control_available event first.
+            for _ in range(20):
+                event=ws.receive_json()
+                if event["type"]=="init":
+                    assert event["control_available"] is True
+                    break
+            else:pytest.fail("no control init")
             ws.send_json({"type":"unlock","session_id":sid})
             assert next_notice(ws,"unconfigured")["error"] is True
             assert not used
