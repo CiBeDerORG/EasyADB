@@ -28,6 +28,7 @@ class GroupControl{
   const reconnect=icon('fab-up-reconnect','↻','重连全部当前实时画面');
   const stop=icon('fab-up-stop','✕','关闭全部实时画面并展开设备管理');
   const text=icon('fab-text','⌨','群控文字与按键输入');
+  const unlock=icon('fab-unlock','🔓','主动解锁当前控制已就绪的画面');
   const form=make('form','multi-text-panel group-text-panel');form.hidden=true;
   form.setAttribute('aria-label','群控文字与按键输入');
   const head=make('div','multi-text-head');
@@ -53,7 +54,7 @@ class GroupControl{
    nav.push(button);
   }
   form.append(head,entry,keys);
-  fab.append(log,wake,reconnect,stop,text,main,form);
+  fab.append(log,wake,reconnect,stop,text,unlock,main,form);
   const panel=make('section','group-log-panel');
   panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','群控日志');
   const panelHead=make('div','multi-log-head'),panelClose=make('button','secondary multi-log-close','×');
@@ -62,7 +63,7 @@ class GroupControl{
   const logContent=make('pre','group-log-content');
   panel.append(panelHead,logContent);
   host.append(fab,panel);
-  Object.assign(this,{fab,main,log,wake,reconnect,stop,text,form,input,submit,
+  Object.assign(this,{fab,main,log,wake,reconnect,stop,text,unlock,form,input,submit,
    textClose,nav,panel,panelClose,logContent});
   main.addEventListener('click',()=>{
    if(fab.hidden)return;
@@ -91,8 +92,17 @@ class GroupControl{
    e.addEventListener('keydown',()=>this.resetTimer());
   }
   input.addEventListener('input',()=>this.resetTimer());
-  for(const b of [log,wake,reconnect,stop,text])
+  for(const b of [log,wake,reconnect,stop,text,unlock])
    b.addEventListener('pointerdown',()=>this.resetTimer());
+  unlock.addEventListener('click',()=>{
+   if(unlock.disabled)return;
+   const targets=this.targets().filter(c=>c.unlockButton&&!c.unlockButton.disabled);
+   let count=0;
+   for(const card of targets)if(this.view.requestUnlock(card))count++;
+   this.report('已分别向 '+count+' 路画面发出主动解锁请求；每台独立执行，结果见对应会话日志。',
+    count===0);
+   this.resetTimer();this.refresh();
+  });
   wake.addEventListener('click',()=>{
    if(wake.disabled)return;
    const targets=this.targets().filter(c=>!c.wakeButton.disabled);
@@ -169,6 +179,7 @@ class GroupControl{
   this.log.disabled=!has;this.stop.disabled=!has;
   this.wake.disabled=!targets.some(c=>!c.wakeButton.disabled);
   this.reconnect.disabled=!targets.some(c=>!c.reconnectButton.disabled);
+  this.unlock.disabled=!targets.some(c=>c.unlockButton&&!c.unlockButton.disabled);
   const canInput=targets.some(c=>this.canInput(c));
   this.text.disabled=!canInput;this.input.disabled=!canInput;this.submit.disabled=!canInput;
   // Navigation stays mounted beneath the main FAB; only the menu's
