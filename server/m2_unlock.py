@@ -14,9 +14,42 @@ from .m2_touch import InvalidTouch
 from .m2_video_probe import _run_adb, VideoProbeError
 
 PASSWORD_PATTERN = re.compile(r"[A-Za-z0-9]{4,32}\Z")
-LOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\s*[:=]\s*true\b", re.I)
-UNLOCKED_PATTERN = re.compile(r"(?:deviceLocked|mDeviceLocked|isDeviceLocked|mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing)\s*[:=]\s*false\b", re.I)
+# Android/EMUI versions differ: TrustManagerService uses deviceLocked=1/0
+# on several Android builds (not just true/false). Read the CURRENT user's
+# trust state, not a locked work profile or another user.
+TRUST_LOCK = re.compile(r"(?<![\w])(?:deviceLocked|mDeviceLocked|isDeviceLocked)\s*[:=]\s*(true|false|1|0)\b", re.I)
+WINDOW_LOCK = re.compile(
+    r"(?<![\w])(?:mShowingLockscreen|isStatusBarKeyguard|mKeyguardShowing|"
+    r"isKeyguardShowing|KeyguardShowing|mKeyguardLocked)\s*[:=]\s*(true|false|1|0)\b", re.I)
+DREAM_LOCK = re.compile(r"(?<![\w])mDreamingLockscreen\s*[:=]\s*(true|1)\b", re.I)
+KEYGUARD_SECTION = re.compile(
+    r"(?im)^\s*(?:KeyguardServiceDelegate|KeyguardStateMonitor)\s*\r?\n"
+    r"\s*(?:showing|mIsShowing)\s*[:=]\s*(true|false|1|0)\b")
 SIZE_PATTERN = re.compile(r"(?:Physical size|Override size):\s*(\d+)x(\d+)")
+
+def _consensus(values):
+    states = {value.lower() in ("true", "1") for value in values}
+    return next(iter(states)) if len(states) == 1 else None
+
+def parse_trust_lock(output):
+    """Prefer explicit current-user trust state; never use another profile."""
+    user_lines = [line for line in output.splitlines()
+                  if re.match(r"^\s*User\s+.*\(id=\d+\b", line)]
+    current = [line for line in user_lines if re.search(r"\(current\)", line, re.I)]
+    if current:
+        return _consensus(TRUST_LOCK.findall("\n".join(current)))
+    if len(user_lines) > 1:
+        return None  # Current user unknown; another user's PIN must not decide.
+    return _consensus(TRUST_LOCK.findall("\n".join(user_lines) if user_lines else output))
+
+def parse_window_lock(output):
+    """Only keyguard SHOWING is an unlock indicator; secure/configured is not."""
+    states = WINDOW_LOCK.findall(output)
+    states += KEYGUARD_SECTION.findall(output)
+    # DreamingLockscreen=false alone is not proof of unlocked status.
+    if DREAM_LOCK.search(output):
+        states.append("true")
+    return _consensus(states)
 
 def validate_password(value):
     if type(value) is not str or not PASSWORD_PATTERN.fullmatch(value):
@@ -49,17 +82,27 @@ def decrypt_password(db_path, ciphertext):
         raise ValueError("开屏密码密文无效或本机密钥已变化，请重新配置") from exc
 
 def lock_state(serial):
-    """Fail closed on ambiguous OEM output: never inject into an unlocked app."""
-    for args in (("dumpsys", "trust"), ("dumpsys", "window", "policy")):
+    """Conservative consensus across AOSP and EMUI services.
+
+    Device-locked=false is authoritative for skipping PIN input. A conflicting
+    keyguard signal is ambiguous, not authorization to inject into an app.
+    """
+    def read(*args):
         try:
-            output = _run_adb(serial, "shell", *args, timeout=6)
+            return _run_adb(serial, "shell", "dumpsys", *args, timeout=6)
         except VideoProbeError:
-            continue  # OEM may restrict one diagnostics service; try the other
-        locked = bool(LOCKED_PATTERN.search(output))
-        unlocked = bool(UNLOCKED_PATTERN.search(output))
-        if locked != unlocked:
-            return locked
-    return None
+            return ""
+
+    trust = parse_trust_lock(read("trust"))
+    # An explicit unlocked TrustManager state never permits PIN injection.
+    if trust is False:
+        return False
+    policy = parse_window_lock(read("window", "policy"))
+    if policy is None:
+        policy = parse_window_lock(read("window"))
+    if trust is True:
+        return None if policy is False else True
+    return policy
 
 def automatic_unlock(stream, password, *, sleep=time.sleep):
     """Single attempt per explicitly started, primary-screen session.
@@ -91,9 +134,12 @@ def automatic_unlock(stream, password, *, sleep=time.sleep):
     sleep(0.45)
     if stream.stop_event.is_set():
         return "skipped"
-    # After gesture, require an affirmative locked state before sending secret.
-    if lock_state(stream.serial) is not True:
-        return "unknown_lock_state"
+    # After gesture, never type if unlock happened by biometric/trust/swipe.
+    after_swipe = lock_state(stream.serial)
+    if after_swipe is False:
+        return "already_unlocked"
+    if after_swipe is not True:
+        return "unknown_after_swipe"
     stream.send_text({"type": "input_text", "session_id": stream.session_id, "text": password})
     sleep(0.18)
     if stream.stop_event.is_set():
