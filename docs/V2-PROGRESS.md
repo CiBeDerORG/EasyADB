@@ -37,6 +37,13 @@
 - V2-07 WebSocket 实际名额竞争/停止回收测试发现了“首帧前停止不释放启动配额”的缺陷；已修复于 `9e8a532`，[CI #39440378836](https://github.com/CiBeDerORG/EasyADB/actions/runs/39440378836) **224 passed、1 warning**。前面阶段性失败是代码/测试迁移期间问题，均不计为通过。
 - 最终验收仍以本分支最新 HEAD 的 Actions 为准；此文档提交后仍应再次验证。
 
+## V2 后续整改 F01～F09 与最终 CI 门禁（2026-10-20）
+
+- [F01～F08 整改结果与逐项提交、CI](V2-TASKS.md)：部署白名单、WebRTC-only 构建、三份 Compose Host 网络一致性、启动并发端到端透传、Peer 迟到清理、ADB→事件循环前背压、MSE 尾项退役均逐项独立通过 CI。
+- **F09 代码提交：** [760b150](https://github.com/CiBeDerORG/EasyADB/commit/760b1503675ed6f6e15d5cac681a1fac0c0bd5ba)，对应 [CI #39451626281](https://github.com/CiBeDerORG/EasyADB/actions/runs/39451626281) **success**。该运行覆盖新增专用 V2 门禁、完整 Python Mock、13 份 Node 契约、Shell 语法和 OpenWrt ACL/扫描烟测；专用门禁检查关键整改用例、CI 调用和 WebRTC-only 生产入口，避免静默移除测试或回退旧媒体路径。
+- 门禁与全量测试处于同一工作流；**本次文档提交生成的新 HEAD 还需独立复核 Actions，不得借用上一提交的绿色 CI 冒充**。
+- 自动化范围仅是模拟与配置/契约验证。**F10 真实 NAS/FNOS、Android、OpenWrt、EasyTier ICE UDP、1/2/5/10/20 路长时压力及回退演练仍全部待执行**；不声明生产验收完成，见 [V2-ACCEPTANCE.md](V2-ACCEPTANCE.md)。
+
 ## 不变的安全约定
 
 1. WebSocket 保留同源握手与第一条 JSON 中的 token，客户端不能提供原始 ADB 命令、PIN 或其他设备的 Session ID。
