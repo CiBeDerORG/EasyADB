@@ -214,7 +214,9 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "getBatchSelection:()=>managementSelected" in html
         assert "getBatchSelection" in multi_js
         assert "参与本轮投屏" not in multi_js
-        assert "const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)))" in html
+        assert "const candidates=picked.filter(d=>!deviceLocked(d.id))" in html
+        assert "const connectingDevices=new Set()" in html
+        assert "await connectProgressively(candidates,skipped,false,'首次加载连接',epoch)" in html
         assert "if(!confirm('将从列表永久删除以下 " in html
         assert "managementSelected.clear();render();" in html
         # Route selection acts directly on its IP and triggers one explicit connect.
