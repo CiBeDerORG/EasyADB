@@ -47,10 +47,12 @@ const root={
  clearTimeout(id){timers.delete(id);},
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
- EasyADBPlayers:{create:(_type,_video,cbs)=>({
-   initialize(){cbs.onState('ready');},append(){},triggerPlaying(){cbs.onState('playing');},
-   diagnostics(){return {queueBytes:0,sourceState:'open',sourceRanges:1,
-    rangeEnd:3,currentTime:2,queueChunks:0,appendCalls:4,completedUpdates:4,videoError:null};},
+ EasyADBWebRTC:{create:(_video,cbs)=>({
+   async start(){},async answer(){},pollStats(){},
+   initialize(){cbs.onState('ready');},triggerPlaying(){cbs.onState('playing');},
+   diagnostics(){return {queueBytes:0,sourceState:'connected',sourceRanges:0,
+    rangeEnd:null,currentTime:2,queueChunks:0,appendCalls:0,completedUpdates:0,
+    videoError:null,webrtcBytes:0,webrtcFrames:0,webrtcDrops:0};},
    resume(){},destroy(){}
  })},
  EasyADBTouch:{create:()=>({enable(){},disable(){},destroy(){}})},
@@ -231,7 +233,7 @@ assert.equal(picker.children[0].children.some(node=>node.className==='multi-live
 function select(i){batchSelected.add(devices[i].id);multi.updatePicker();}
 function init(ws,sid){
  ws.emit('init',{session_id:sid,width:720,height:1280,
-  mime:'video/mp4; codecs="avc1.640028"',format:'fmp4',control_available:true,
+  player:'webrtc',codec:'h264',control_available:true,
   requested:{max_size:960,video_bit_rate:3000000,max_fps:24}});
 }
 assert.equal(root.EasyADBMulti.MAX_DEVICES,4);
@@ -588,7 +590,7 @@ async function waitForCheck(id){
  assert.equal(multi.cards.size,2);
  assert.equal(grid.children.length,2);
  assert.equal(multi.cards.get('id-1'),liveCardA,'existing A card identity never changes');
- assert.equal(liveCardA.player,originalPlayer,'existing A MSE never reinitializes');
+ assert.equal(liveCardA.player,originalPlayer,'existing A WebRTC never reinitializes');
  assert.equal(liveCardA.enabled,true,'append preserves existing remote control');
  assert.equal(liveA.readyState,WS.OPEN,'existing WS was not closed');
  assert.equal(liveA.sent.filter(x=>x.includes('"type":"control_disable"')).length,0);
@@ -627,7 +629,7 @@ async function waitForCheck(id){
  assert.equal(grid.children.length,0,'full stop removes every owned live DOM card');
  assert.equal(sockets.length,socketCount+4,'only four additional sessions ever created');
  // Per-device buttons target ONLY their own session, never the batch's other
- // checked devices and never an already-running WS or MSE player.
+ // checked devices and never an already-running WS or WebRTC player.
  batchSelected.clear();multi.updatePicker();
  const aloneCount=sockets.length;
  liveButton(0).fire('click');
@@ -802,7 +804,7 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').dpi,360);
  assert.equal(multi.getChoice('id-2').dpi,240);
  assert.equal(multi.getChoice('id-2').experimental_resolution,null);
- multi.videoEngine='mse';
+ multi.videoEngine='webrtc';
  const experimentalSocketCount=sockets.length;
  assert.equal(multi.startFor('id-1'),true);
  assert.equal(drawerEvents.at(-1),'collapsed','single device projection collapses management');
