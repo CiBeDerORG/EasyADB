@@ -28,6 +28,7 @@ from .m2_video_probe import probe_video, VideoProbeError
 from .m2_live import LiveRegistry, LiveVideo
 from .m2_quality import resolve_live_quality, EXPERIMENTAL_RESOLUTIONS, VIRTUAL_DPI_CHOICES
 from .m2_touch import InvalidTouch
+from .m2_unlock import validate_password, automatic_unlock
 from .display_lab import DisplayLab, LabError
 from .castplus_lab import CastError
 
@@ -112,6 +113,10 @@ class RouteInput(BaseModel):
 class TempAddressInput(BaseModel):
     ip: str | None = None
     port: int | None = None
+
+
+class UnlockInput(BaseModel):
+    password: str | None = None  # None = keep existing; empty string = delete
 
 
 class VideoProbeInput(BaseModel):
@@ -481,6 +486,29 @@ def update_device(device_id: str, payload: DeviceInput):
     return manager.snapshot(updated)
 
 
+@app.get("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
+def unlock_state(device_id: str):
+    get_device(device_id)
+    return {"configured": store.unlock_configured(device_id)}
+
+
+@app.put("/api/devices/{device_id}/unlock", dependencies=[Depends(authorize)])
+def set_unlock_state(device_id: str, payload: UnlockInput):
+    with manager._device_lock(device_id):
+        get_device(device_id)
+        if payload.password is None:
+            return {"configured": store.unlock_configured(device_id)}
+        if payload.password == "":
+            store.clear_unlock_secret(device_id)
+            return {"configured": False}
+        try:
+            validate_password(payload.password)
+            store.save_unlock_secret(device_id, payload.password)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return {"configured": True}
+
+
 @app.delete("/api/devices/{device_id}", dependencies=[Depends(authorize)])
 def delete_device(device_id: str):
     if display_lab.has_pending(device_id):
@@ -788,6 +816,7 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
     pc = None  # one WebRTC peer per authenticated, explicitly started WS
     receiver = None
     watchdog = None
+    unlock_task = None
     requested_stop = asyncio.Event()
     touch_ready = asyncio.Event()
     manual_stop = False
@@ -866,6 +895,15 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await websocket.send_json({"type": "error", "message": "当前选择的 ADB 地址已离线"})
             return
         adb_check_ms = round((time.monotonic() - adb_checked_at) * 1000)
+        # The saved credential is resolved server-side only, never sent to browser,
+        # and is bound to this explicitly authenticated, selected device/session.
+        try:
+            unlock_secret = store.get_unlock_secret(device_id) if not experiment else None
+        except ValueError:
+            await websocket.send_json({"type": "error", "message": "开屏密码配置无效，请重新设置"})
+            return
+        if unlock_secret:
+            screen_off = False  # Automatic wake/unlock overrides deferred physical screen-off.
         # Atomic with route mutation: another browser cannot switch the
         # selected serial between validation and reserving this live session.
         error = None
@@ -1189,6 +1227,27 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 }), LIVE_WS_SEND_TIMEOUT)
                 if payload.get("control_available"):
                     touch_ready.set()
+                    if unlock_secret and not unlock_task and not experiment:
+                        async def run_startup_unlock():
+                            try:
+                                result = await asyncio.to_thread(automatic_unlock, stream, unlock_secret)
+                                explanations = {
+                                    "submitted": "已发送开屏密码及回车，请查看设备确认是否解锁",
+                                    "already_unlocked": "设备已解锁，无需输入开屏密码",
+                                    "unknown_lock_state": "无法确认设备仍处于锁屏，已跳过密码输入",
+                                    "unknown_screen_size": "无法确认锁屏滑动尺寸，已跳过密码输入",
+                                    "skipped": "已取消本轮自动解锁"
+                                }
+                                if not requested_stop.is_set():
+                                    await websocket.send_json({"type": "unlock_notice",
+                                        "session_id": stream.session_id,
+                                        "message": explanations.get(result, "自动解锁已结束")})
+                            except (InvalidTouch, VideoProbeError, OSError, ValueError):
+                                if not requested_stop.is_set():
+                                    await websocket.send_json({"type": "unlock_notice",
+                                        "session_id": stream.session_id,
+                                        "message": "开屏密码发送未完成，请手动检查设备", "error": True})
+                        unlock_task = asyncio.create_task(run_startup_unlock())
             elif kind == "screen_power_notice":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "screen_power_notice", "session_id": stream.session_id, **payload
@@ -1227,6 +1286,9 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
             await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             await asyncio.to_thread(stream.stop)
+            if unlock_task:
+                unlock_task.cancel()
+                await asyncio.gather(unlock_task, return_exceptions=True)
             # SDP/ICE negotiation runs in the receiver task. Stop it before
             # closing the peer; otherwise it can race against pc.close().
             if receiver:
