@@ -497,7 +497,7 @@ class MultiView{
    touch:null,player:null,video:null,meter:new root.EasyADBTraffic.Meter(performance.now()),
    metrics:new root.EasyADBMetrics.QualityMeter(performance.now()),lastInput:false,
    startSettled:false,nextLaunch,adbCheckMs:null,frameLastAt:null,frameCount:0,
-   permissionWarningShown:false,
+   permissionWarningShown:false,autoControlRejected:false,
    history:this.qualityHistory.get(d.id)||[],logLines:[]};
   const box=make('article','multi-card'),header=make('div','heading');
   header.append(make('strong','',d.name+(experiment?.mode==='new_resolution'?' · 实验性虚拟屏幕':
@@ -698,7 +698,7 @@ class MultiView{
    wakeButton.disabled=!sessionReady||Boolean(card.experiment)||card.wakePending||card.reconnectRequested;
    reconnectButton.disabled=!sessionReady||card.reconnectRequested||this.opening;
    closeStreamButton.disabled=!sessionReady||card.reconnectRequested;
-   const controlReady=!card.closed&&card.ready&&!card.permissionWarningShown&&
+   const controlReady=!card.closed&&card.ready&&!card.permissionWarningShown&&!card.autoControlRejected&&
     (card.state==='ready'||card.state==='playing')&&!card.pending&&
     card.ws&&card.ws.readyState===WebSocket.OPEN&&Boolean(card.session);
    const canInput=controlReady&&card.enabled&&!card.lastInput;
@@ -878,6 +878,7 @@ class MultiView{
       card.settleLaunch(); // start next phone only after this pipeline initialized
      }catch(e){mark(e.message,true);this.end(card,false);}
     }else if(m.type==='control_enabled'){
+     if(card.autoControlRejected)return; // never resurrect a rejected one-shot opt-in
      try{
       if(!card.ready||!card.touch||
          (card.state!=='ready'&&card.state!=='playing'))throw Error('控制通道未就绪');
@@ -905,7 +906,7 @@ class MultiView{
      // do not repeatedly send enable requests or imply inputs will work.
      const enableRejected=card.pending&&!card.enabled;
      card.pending=false;
-     if(enableRejected)card.permissionWarningShown=true;
+     if(enableRejected)card.autoControlRejected=true;
      refresh();
      keyStatus.textContent=m.message||'自动开启控制失败，本轮仅可观看';
      if(m.code==='adb_disconnected'){
