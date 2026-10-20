@@ -839,8 +839,8 @@ function modalMessage(text,kind='error',id='formMessage'){
 function closeModal(){if(loading)return;$('deviceDialog').close();}
 function openModal(id=null){
  if(loading||!loaded)return;
- if(id&&multiView&&multiView.isBusyFor(id)){
-  message('这台设备正在投屏或启动中，请停止此路并完成清理后再修改配置。','error');
+ if(id&&deviceLocked(id)){
+  message('这台设备正在连接 ADB 或投屏中，请完成当前操作后再修改配置。','error');
   return;
  }
  reset();const d=id?devices.find(x=>x.id===id):null;
@@ -860,7 +860,7 @@ function edit(id){openModal(id);}
 function openGroup(name=null){
  if(loading||!loaded)return;
  const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
- if(g&&devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+ if(g&&devices.some(d=>d.group_name===name&&deviceLocked(d.id))){
   message('该分组包含正在投屏的设备：可新建分组，但修改此分组请先停止相关设备。','error');
   return;
  }
@@ -902,7 +902,8 @@ function renderDiscoveryResult(last){
  panel.append(rows);return panel;
 }
 async function scanGroup(name,test=false){
- if(loading||scanningGroups.has(name))return;
+ if(loading||scanningGroups.has(name)||
+  devices.some(d=>d.group_name===name&&deviceConnecting(d.id)))return;
  scanningGroups.add(name);if(test)$('testGroupDiscovery').disabled=true;render();
  try{
   const base='/api/groups/'+encodeURIComponent(name)+'/discovery/';
@@ -933,7 +934,7 @@ function closeGroup(){if(!loading&&!scanningGroups.has(editingGroup))$('groupDia
 function openFirstPair(id){
  if(loading||!loaded)return;
  const d=devices.find(x=>x.id===id);
- if(!d||!d.connect_failed||!d.selected_serial)return;
+ if(!d||deviceLocked(id)||!d.connect_failed||!d.selected_serial)return;
  pairingDeviceId=d.id;pairingSerial=d.selected_serial;
  $('firstPairForm').reset();
  $('firstPairTitle').textContent='首次连接 · '+d.name;
@@ -944,6 +945,7 @@ function openFirstPair(id){
 function closeFirstPair(){if(!loading)$('firstPairDialog').close();}
 async function switchRoute(id,route){
  if(loading)return;
+ if(deviceConnecting(id)){message('该设备仍在连接中，请完成后再切换线路。','error');return;}
  if(multiView&&multiView.isBusyFor(id)){
   message('这台设备正在投屏或启动中，请先停止此路再切换其连接地址。','error');return;
  }
@@ -966,7 +968,7 @@ async function switchRoute(id,route){
  finally{await load(true);loading=false;render();}
 }
 function openTempEditor(d){
- if(loading||multiView&&multiView.isBusyFor(d.id))return;
+ if(deviceLocked(d.id))return;
  editingTemp=d.id;
  $('tempDialogTitle').textContent=d.temp_ip?'修改临时 IP':'添加临时 IP';
  $('tempIp').value=d.temp_ip||'';
@@ -988,7 +990,7 @@ $('tempForm').addEventListener('submit',async ev=>{
  if(success)$('tempDialog').close();
 });
 async function saveTempAddress(id,ip,port){
- if(loading||multiView&&multiView.isBusyFor(id))return false;
+ if(deviceLocked(id))return false;
  loading=true;render();message('正在保存临时线路…');
  try{
   await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
@@ -1004,7 +1006,7 @@ async function saveTempAddress(id,ip,port){
 }
 function removeTempAddress(id){
  const d=devices.find(x=>x.id===id);
- if(!d||loading||multiView&&multiView.isBusyFor(id))return;
+ if(!d||deviceLocked(id))return;
  if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
 }
 // Each connect uses its own FastAPI threadpool worker/device lock. Only an
@@ -1110,7 +1112,7 @@ $('bulkConnect').addEventListener('click',async()=>{
 $('bulkDelete').addEventListener('click',async()=>{
  if(loading||!loaded)return;
  const picked=devices.filter(d=>managementSelected.has(d.id));
- const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const candidates=picked.filter(d=>!deviceLocked(d.id));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
  if(!confirm('将从列表永久删除以下 '+candidates.length+' 台设备：\n'+
@@ -1119,7 +1121,7 @@ $('bulkDelete').addEventListener('click',async()=>{
   '\n不会清除手机上的 ADB 配对授权。确认删除？'))return;
  loading=true;render();let success=0;const failed=[];
  for(const d of candidates){
-  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：操作期间开始投屏，已跳过');continue;}
+  if(deviceLocked(d.id)){failed.push(d.name+'：设备正在连接/投屏或管理中，已跳过');continue;}
   try{
    await api('/api/devices/'+encodeURIComponent(d.id),{method:'DELETE'});
    managementSelected.delete(d.id);if(selected===d.id)selected=null;success++;
@@ -1143,7 +1145,7 @@ $('firstPairDialog').addEventListener('click',ev=>{
 });
 $('firstPairForm').addEventListener('submit',async ev=>{
  ev.preventDefault();
- if(loading||!pairingDeviceId||!pairingSerial)return;
+ if(loading||!pairingDeviceId||!pairingSerial||deviceConnecting(pairingDeviceId))return;
  const id=pairingDeviceId;
  loading=true;$('submitFirstPair').disabled=true;render();
  try{
@@ -1164,7 +1166,7 @@ $('firstPairForm').addEventListener('submit',async ev=>{
 $('deleteGroup').addEventListener('click',async()=>{
  if(loading||!editingGroup||scanningGroups.has(editingGroup))return;
  const name=editingGroup;
- if(devices.some(d=>d.group_name===name&&multiView&&multiView.isBusyFor(d.id))){
+ if(devices.some(d=>d.group_name===name&&deviceLocked(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备，再删除分组。','error','groupMessage');
   return;
  }
@@ -1187,7 +1189,7 @@ $('groupDialog').addEventListener('close',()=>{editingGroup=null;});
 $('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
 $('groupForm').addEventListener('submit',async ev=>{
  ev.preventDefault();if(loading||scanningGroups.has(editingGroup))return;
- if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&multiView&&multiView.isBusyFor(d.id))){
+ if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&deviceLocked(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备再修改；新建分组不受限制。','error','groupMessage');
   return;
  }
@@ -1225,7 +1227,7 @@ $('deviceDialog').addEventListener('click',ev=>{
 });
 $('form').addEventListener('submit',async ev=>{
  ev.preventDefault();if(loading)return;
- if(editing&&multiView&&multiView.isBusyFor(editing)){
+ if(editing&&deviceLocked(editing)){
   modalMessage('该设备正处于本轮投屏或启动中，请先停止此路再修改；新建其它设备不受限制。');return;
  }
  loading=true;render();
@@ -1240,13 +1242,13 @@ $('form').addEventListener('submit',async ev=>{
 $('refreshAll').addEventListener('click',async()=>{
  if(loading||!loaded)return;
  const picked=devices.filter(d=>managementSelected.has(d.id));
- const candidates=picked.filter(d=>!(multiView&&multiView.isBusyFor(d.id)));
+ const candidates=picked.filter(d=>!deviceLocked(d.id));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
  loading=true;render();let success=0;const failed=[];
  for(const d of candidates){
   message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
-  if(multiView&&multiView.isBusyFor(d.id)){failed.push(d.name+'：投屏中跳过');continue;}
+  if(deviceLocked(d.id)){failed.push(d.name+'：正在连接或投屏，已跳过');continue;}
   try{
    const fresh=await(await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{method:'POST'})).json();
    devices=devices.map(x=>x.id===d.id?fresh:x);success++;
