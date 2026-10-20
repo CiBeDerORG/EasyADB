@@ -112,7 +112,7 @@ assert.match(page,/id="bulkDelete"/);
 assert.match(page,/const managementSelected=new Set\(\)/);
 assert.match(page,/managementCheck\.checked=managementSelected\.has\(d\.id\)/);
 assert.match(page,/managementSelected\.clear\(\);render\(\)/,'auth change clears bulk selection');
-assert.match(page,/candidates=picked\.filter\(d=>!\(multiView&&multiView\.isBusyFor\(d\.id\)\)\)/,'batch skips busy devices');
+assert.match(page,/candidates=picked\.filter\(d=>!deviceLocked\(d\.id\)\)/,'batch skips connecting and projecting devices');
 assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deletion requires confirmation');
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
