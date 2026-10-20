@@ -179,3 +179,25 @@ def test_group_edit_waits_for_member_device_lock(monkeypatch, tmp_path):
         result = job.result(timeout=3)
     assert entered.is_set()
     assert result["ip_prefix"] == "192.168.2.*"
+
+
+def test_explicit_lifespan_initializes_once_and_stops_existing_sessions():
+    import asyncio
+    from server.core.lifecycle import managed_resources
+
+    events = []
+
+    class Store:
+        def initialize(self):
+            events.append("initialize")
+
+    class Registry:
+        def stop_all(self):
+            events.append("stop_all")
+
+    async def check():
+        async with managed_resources(lambda: (Store(), Registry())):
+            assert events == ["initialize"]
+        assert events == ["initialize", "stop_all"]
+
+    asyncio.run(check())

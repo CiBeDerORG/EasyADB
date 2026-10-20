@@ -34,6 +34,7 @@ from .display_lab import DisplayLab, LabError
 from .castplus_lab import CastError
 from .core.config import load_settings
 from .core.runtime import build_runtime
+from .core.lifecycle import managed_resources
 from .core.exceptions import DomainError
 from .services.group_discovery import run_group_scan
 from .services.device_service import create_device_record, update_device_record, delete_device_record
@@ -78,11 +79,9 @@ LIVE_WS_SEND_TIMEOUT = 10.0
 
 @asynccontextmanager
 async def lifespan(_app):
-    store.initialize()
-    try:
+    # Resolve aliases at startup to preserve existing test substitutions.
+    async with managed_resources(lambda: (store, live_registry)):
         yield
-    finally:
-        await asyncio.to_thread(live_registry.stop_all)
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
