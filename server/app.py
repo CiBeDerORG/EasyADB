@@ -978,7 +978,8 @@ async def m2_live_video(websocket: WebSocket, device_id: str):
                 explanations = {
                     "submitted": "已发送开屏密码与回车；是否解锁成功请查看设备",
                     "already_unlocked": "设备已处于解锁状态，无需输入密码",
-                    "unknown_lock_state": "无法确认当前仍是锁屏页面；为了避免误输入密码，已跳过",
+                    "unknown_lock_state": "亮屏后仍无法从 Android/EMUI 确认锁屏状态，未输入密码；请提供锁屏状态诊断结果",
+                    "unknown_after_swipe": "上滑后未能确认密码输入页仍处于锁屏状态，未输入密码；请提供锁屏状态诊断结果",
                     "unknown_screen_size": "无法获取屏幕尺寸，未执行解锁",
                     "skipped": "当前投屏已停止或显示源不支持解锁"
                 }
