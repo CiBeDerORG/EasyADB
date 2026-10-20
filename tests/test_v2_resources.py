@@ -1,6 +1,10 @@
 """V2-04 resource admission and per-WebRTC-track byte budget tests."""
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import threading
+
+import pytest
+from aiortc.mediastreams import MediaStreamError
 
 from server.services.resource_budget import ResourceBudget
 import server.m2_webrtc as webrtc
@@ -82,3 +86,112 @@ def test_each_runtime_registry_owns_independent_start_budget():
     assert scoped.acquire_start("B", "two")
     assert not scoped.acquire_start("C", "three")
     assert scoped.release_start("B", "two")
+
+
+
+def test_reader_thread_callback_backlog_has_independent_byte_and_count_limits(monkeypatch):
+    """A blocked event loop must never retain an unlimited list of payload closures."""
+    monkeypatch.setattr(webrtc, "MAX_SUBMIT_CALLBACKS", 3)
+    monkeypatch.setattr(webrtc, "MAX_SUBMIT_BYTES", 80)
+
+    async def run():
+        track = webrtc.ScrcpyH264Track(asyncio.get_running_loop())
+        track._submit_on_loop(0, CONFIG, True, False)
+        payload = KEY + b"x" * 20
+        # Block the loop while many producer calls compete for the same track.
+        def producer(first):
+            for i in range(250):
+                track.submit(first + i, payload, keyframe=True)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(producer, range(0, 2000, 250)))
+        with track._submit_lock:
+            assert track._pending_callbacks <= 3
+            assert track._pending_bytes <= 80
+            assert track._overflow_notice_scheduled
+            assert track._rejected_submissions >= 1997
+        await asyncio.sleep(0)
+        assert track._pending_callbacks == track._pending_bytes == 0
+        assert not track._overflow_notice_scheduled
+        assert track.frames.empty() and track.need_keyframe
+        assert track.dropped_frames >= 1997
+        # No stale delta packet may be delivered after a dropped callback.
+        track.submit(3000, DELTA)
+        await asyncio.sleep(0)
+        assert track.frames.empty()
+        track.submit(3001, KEY, keyframe=True)
+        await asyncio.sleep(0)
+        assert bytes(await asyncio.wait_for(track.recv(), 1)) == CONFIG + KEY
+        track.stop()
+        await asyncio.sleep(0)
+    asyncio.run(run())
+
+
+def test_oversize_submission_is_never_held_by_callback_and_recovers_on_idr(monkeypatch):
+    monkeypatch.setattr(webrtc, "MAX_SUBMIT_BYTES", 64)
+
+    async def run():
+        track = webrtc.ScrcpyH264Track(asyncio.get_running_loop())
+        track._submit_on_loop(0, CONFIG, True, False)
+        huge = KEY + b"x" * 1_000_000
+        worker = threading.Thread(target=lambda: track.submit(1, huge, keyframe=True))
+        worker.start()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        with track._submit_lock:
+            assert track._pending_callbacks == 0
+            assert track._pending_bytes == 0
+            assert track._overflow_notice_scheduled
+        await asyncio.sleep(0)
+        assert track.need_keyframe and track.frames.empty()
+        track.submit(2, KEY, keyframe=True)
+        await asyncio.sleep(0)
+        assert bytes(await asyncio.wait_for(track.recv(), 1)) == CONFIG + KEY
+        track.stop()
+        await asyncio.sleep(0)
+    asyncio.run(run())
+
+
+def test_stop_racing_producer_disables_new_submission_and_unblocks_recv(monkeypatch):
+    monkeypatch.setattr(webrtc, "MAX_SUBMIT_CALLBACKS", 4)
+    monkeypatch.setattr(webrtc, "MAX_SUBMIT_BYTES", 96)
+
+    async def run():
+        track = webrtc.ScrcpyH264Track(asyncio.get_running_loop())
+        track._submit_on_loop(0, CONFIG, True, False)
+        started = threading.Event()
+
+        def produce():
+            started.set()
+            for i in range(5000):
+                track.submit(i + 1, KEY + b"a" * 18, keyframe=True)
+
+        worker = threading.Thread(target=produce)
+        worker.start()
+        assert await asyncio.to_thread(started.wait, 2)
+        track.stop()  # atomically closes the producer gate
+        await asyncio.to_thread(worker.join, 2)
+        assert not worker.is_alive()
+        with track._submit_lock:
+            assert not track._accepting
+            assert track._pending_callbacks <= 4
+            assert track._pending_bytes <= 96
+        track.submit(99999, KEY, keyframe=True)
+        await asyncio.sleep(0)
+        assert track.closed
+        assert track._pending_callbacks == track._pending_bytes == 0
+        with pytest.raises(MediaStreamError):
+            await asyncio.wait_for(track.recv(), 1)
+    asyncio.run(run())
+
+
+def test_submission_failure_returns_reserved_budget_and_does_not_touch_queue():
+    class ClosedLoop:
+        def call_soon_threadsafe(self, *args):
+            raise RuntimeError("Event loop is closed")
+
+    track = webrtc.ScrcpyH264Track(ClosedLoop())
+    track.submit(1, KEY, keyframe=True)
+    assert track._pending_callbacks == 0
+    assert track._pending_bytes == 0
+    assert track.frames.empty()
+    assert not track._accepting
