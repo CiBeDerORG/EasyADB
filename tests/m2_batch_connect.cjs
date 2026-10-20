@@ -42,8 +42,12 @@ const task=id=>{
  assert.equal(active,0);
  const connectBody=html.slice(html.indexOf("$('bulkConnect').addEventListener"),
   html.indexOf("$('bulkDelete').addEventListener"));
- assert.match(connectBody,/await runDeviceBatch\(candidates/);
- assert.match(connectBody,/\/'\+encodeURIComponent\(d.id\)\+'\/connect'/);
- assert.doesNotMatch(connectBody,/for\(const d of candidates\)/,'no serial per-device await');
+ assert.match(connectBody,/await connectProgressively\(candidates,skipped,true,'批量连接',connectGeneration\)/);
+ const handler=html.slice(html.indexOf('async function connectProgressively('),
+  html.indexOf('async function loadAndConnect('));
+ assert.match(handler,/await runDeviceBatch\(candidates,async d=>/);
+ assert.match(handler,/\/'\+encodeURIComponent\(d.id\)\+'\/connect'/);
+ assert.match(handler,/connectingDevices\.delete\(d\.id\)/);
+ assert.doesNotMatch(handler,/loading=true/,'no global loading lock during asynchronous ADB connections');
  console.log('Parallel batch connect: 4 simultaneous, next-on-settle, failure isolated: OK');
 })().catch(e=>{console.error(e);process.exitCode=1;});
