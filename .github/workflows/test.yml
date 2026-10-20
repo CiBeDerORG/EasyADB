@@ -1,4 +1,4 @@
-name: EasyADB M2 and OpenWrt discovery tests
+name: EasyADB M2/M3/V2 and OpenWrt regression
 on:
   push:
     branches: [feat/m2-web-control, feat/display-mode-lab, feat/m3-openwrt-discovery, refactor/foundation-v1, refactor/v2-session-governance]
@@ -49,6 +49,11 @@ jobs:
           test ! -e scripts/update-m1.sh
       - name: Check integrated OpenWrt ACL and scanner smoke tests
         run: sh luci-avahi-web/tests/smoke.sh
+      - name: Verify V2 release regression gate
+        if: github.ref == 'refs/heads/refactor/v2-session-governance'
+        env:
+          EASYADB_TOKEN: local-test-token-123
+        run: python -m pytest -q tests/test_v2_release_gate.py
       - name: Run mock ADB tests
         if: ${{ !cancelled() }}
         env:
