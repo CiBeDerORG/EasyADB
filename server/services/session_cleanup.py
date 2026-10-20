@@ -40,6 +40,8 @@ async def cleanup_live_session(*, device_id, stream, pc, registry, close_peer,
     try:
         await asyncio.to_thread(stream.stop)
     except (OSError, RuntimeError, ValueError):
+        # Mark dirty BEFORE asynchronous peer close can callback/release.
+        stream.cleanup_complete = False
         problems.append("worker stop raised")
     await _cancel(unlock_task)
     # Wait until offer negotiation has stopped before closing aiortc.

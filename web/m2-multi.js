@@ -1076,7 +1076,8 @@ class MultiView{
    !c.closed&&c.state!=='stopping');
   const beforeQueued=this.launchQueue.length;
   this.launchQueue=this.launchQueue.filter(item=>!picked.has(item.device.id));
-  if(beforeQueued!==this.launchQueue.length)this._launchNext();
+  // Do not start waiting peers during a stop request; active starts will
+  // settle and pump only the surviving queue after stops have been sent.
   if(!targets.length){this.updatePicker();return;}
   this.stopBatch={pending:new Set(targets.map(c=>c.id)),total:targets.length,clean:0,failed:0};
   for(const card of targets)this.stop(card,true);
