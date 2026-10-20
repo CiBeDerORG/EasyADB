@@ -14,9 +14,9 @@ class Settings:
 
 def load_settings(environ=None) -> Settings:
     env = os.environ if environ is None else environ
-    engine = env.get("EASYADB_VIDEO_ENGINE", "mse").strip().lower()
-    if engine not in ("mse", "webrtc", "webcodecs"):
-        raise RuntimeError("EASYADB_VIDEO_ENGINE must be mse, webrtc or webcodecs")
+    engine = env.get("EASYADB_VIDEO_ENGINE", "webrtc").strip().lower()
+    if engine != "webrtc":
+        raise RuntimeError("V2 only supports EASYADB_VIDEO_ENGINE=webrtc; remove the old mse setting")
     token = env.get("EASYADB_TOKEN", "").strip()
     if len(token) < 12 or token == "REPLACE_WITH_RANDOM_LONG_TOKEN":
         raise RuntimeError("Set EASYADB_TOKEN to a unique token of at least 12 characters")

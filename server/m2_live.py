@@ -1,4 +1,4 @@
-"""Single-device, explicitly started scrcpy H264 -> FFmpeg fMP4 -> MSE transport.
+"""Single-device, explicitly started scrcpy H264 -> WebRTC encoded RTP transport.
 
 No background ADB polling, automatic device reconnection, control messages or
 recording. Every stream is owned by exactly one authenticated WebSocket.
@@ -6,7 +6,6 @@ recording. Every stream is owned by exactly one authenticated WebSocket.
 import os
 import queue
 import secrets
-import select
 import socket
 import struct
 import subprocess
@@ -31,126 +30,13 @@ MAX_QUEUE_ITEMS = 48
 MAX_QUEUE_WAIT = 3.0
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 
-# Shared by production and the FFmpeg -> MSE integration smoke test.
-# -c:v copy retains the phone's original H.264 encoded video.
-FFMPEG_MSE_ARGS = (
-    "-hide_banner", "-loglevel", "error", "-nostdin",
-    # scrcpy intentionally uses variable frame rate: unchanged screens are
-    # normally repeated only every ~100ms (device/encoder-dependent). Without
-    # this FFmpeg stamps every arrival at a fixed 1/30s, so the MSE timeline
-    # advances much faster than actual wall time and repeatedly starves.
-    # Raw Annex B loses scrcpy's original packet PTS; FFmpeg input arrival
-    # timestamps are a bounded interim approximation until a PTS-aware muxer.
-    "-use_wallclock_as_timestamps", "1",
-    "-f", "h264", "-r", "30", "-i", "pipe:0",
-    "-map", "0:v:0", "-an", "-c:v", "copy",
-    "-movflags", "+empty_moov+default_base_moof+frag_every_frame",
-    "-flush_packets", "1",
-    "-f", "mp4", "pipe:1",
-)
+MAX_QUEUE_ITEMS = 48
+MAX_QUEUE_WAIT = 3.0
+MAX_FRAME_BYTES = 8 * 1024 * 1024
 
 
 class StreamStopped(Exception):
     pass
-
-
-def parse_init_segments(blob):
-    """Wait for ftyp + moov and derive real avc1.* from the encoder avcC box.
-
-    Returns (bytes_consumed, init_segment, mime), or None if incomplete.
-    Fragments may immediately follow moov in the same input buffer.
-    """
-    offset = 0
-    names = []
-    while True:
-        if len(blob) - offset < 8:
-            return None
-        size, name = struct.unpack_from(">I4s", blob, offset)
-        if size < 8 or size > MAX_INIT_BYTES:
-            raise VideoProbeError("视频 MP4 初始化段尺寸异常")
-        if len(blob) - offset < size:
-            return None
-        names.append(name)
-        end = offset + size
-        if name == b"moov":
-            if not names or names[0] != b"ftyp":
-                raise VideoProbeError("视频 MP4 缺少初始 ftyp")
-            avcc = blob.find(b"avcC", offset, end)
-            if avcc < 4 or avcc + 8 > end:
-                raise VideoProbeError("视频 MP4 缺少 H.264 avcC 编码信息")
-            if blob[avcc + 4] != 1:
-                raise VideoProbeError("视频 H.264 avcC 版本异常")
-            codec = "avc1." + bytes(blob[avcc + 5:avcc + 8]).hex().upper()
-            return end, bytes(blob[:end]), f'video/mp4; codecs="{codec}"'
-        if name not in (b"ftyp", b"free"):
-            raise VideoProbeError("视频 MP4 初始化段顺序异常")
-        offset = end
-        if offset > MAX_INIT_BYTES:
-            raise VideoProbeError("视频 MP4 初始化段过大")
-
-
-# FFmpeg writes the byte stream in arbitrary pipe read boundaries: one MP4
-# media fragment may span multiple reads (and one read may contain many).
-# Coalesce complete moof+mdat pairs so the browser normally appends once per
-# encoded frame, not once for each OS pipe read. Never wait to combine frames.
-MAX_MP4_FRAGMENT_BYTES = MAX_FRAME_BYTES + 2 * MAX_INIT_BYTES
-
-
-class Fmp4FragmentAssembler:
-    def __init__(self):
-        self.buffer = bytearray()
-        self.prefix = []
-        self.prefix_bytes = 0
-        self.awaiting_mdat = False
-
-    def feed(self, data):
-        """Return complete ordered fragments. Input may split ANY box byte."""
-        if data:
-            self.buffer.extend(data)
-        if len(self.buffer) > MAX_MP4_FRAGMENT_BYTES:
-            raise VideoProbeError("MP4 媒体分片过大")
-        completed = []
-        while len(self.buffer) >= 8:
-            size, name = struct.unpack_from(">I4s", self.buffer)
-            header_size = 8
-            if size == 1:
-                if len(self.buffer) < 16:
-                    break
-                size = struct.unpack_from(">Q", self.buffer, 8)[0]
-                header_size = 16
-            if size < header_size or size > MAX_MP4_FRAGMENT_BYTES:
-                raise VideoProbeError("MP4 媒体盒尺寸无效")
-            if len(self.buffer) < size:
-                break
-            box = bytes(self.buffer[:size])
-            del self.buffer[:size]
-            if name == b"moof":
-                if self.awaiting_mdat:
-                    raise VideoProbeError("MP4 分片缺少 mdat")
-                self.awaiting_mdat = True
-                self.prefix.append(box)
-                self.prefix_bytes += len(box)
-            elif name == b"mdat":
-                if not self.awaiting_mdat:
-                    raise VideoProbeError("MP4 媒体数据缺少 moof")
-                completed.append(b"".join((*self.prefix, box)))
-                self.prefix.clear()
-                self.prefix_bytes = 0
-                self.awaiting_mdat = False
-            elif name in (b"styp", b"free", b"sidx", b"emsg", b"prft"):
-                # Optional pre-fragment metadata belongs with the next frame.
-                self.prefix.append(box)
-                self.prefix_bytes += len(box)
-            elif name == b"mfra":
-                # Trailing FFmpeg index only appears when the stream closes;
-                # no live video sample depends on it.
-                if self.awaiting_mdat:
-                    raise VideoProbeError("MP4 结束索引前缺少 mdat")
-            else:
-                raise VideoProbeError("MP4 视频流含不支持的媒体盒")
-            if self.prefix_bytes > MAX_MP4_FRAGMENT_BYTES:
-                raise VideoProbeError("MP4 媒体分片前缀过大")
-        return completed
 
 
 def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
@@ -180,9 +66,9 @@ def _socket_read(sock, amount, stop, timeout=1.0, adb_proc=None):
 
 
 class LiveVideo:
-    def __init__(self, serial, profile, server_file=None, quality=None, display_source=None, screen_off=False, video_engine="mse"):
+    def __init__(self, serial, profile, server_file=None, quality=None, display_source=None, screen_off=False, video_engine="webrtc"):
         self.settings = resolve_live_quality(profile, quality)
-        if video_engine not in ("mse", "webrtc"):
+        if video_engine != "webrtc":
             raise ValueError("尚未实现的视频引擎")
         self.video_engine = video_engine
         self.webrtc_track = None  # assigned by owning WS before starting worker
@@ -214,7 +100,6 @@ class LiveVideo:
         self.touch_point = None
         self._touch_lock = threading.Lock()
         self.adb_proc = None
-        self.ffmpeg_proc = None
         self._resource_lock = threading.Lock()
         self._resource_meter = ProcessMeter()
         self._adb_log_fd = None  # dup of THIS worker's private stdout, never logcat
@@ -226,9 +111,6 @@ class LiveVideo:
         self._phase = "等待启动"
         self._phone_packets = 0
         self._phone_last = None
-        self._mux_chunks = 0
-        self._mux_last = None
-        self._media_fragments = 0
         self._ready_at = None
 
     def _phase_set(self, phase):
@@ -240,20 +122,11 @@ class LiveVideo:
             self._phone_packets += 1
             self._phone_last = time.monotonic()
 
-    def _record_mux_chunk(self):
-        with self._metric_lock:
-            self._mux_chunks += 1
-            self._mux_last = time.monotonic()
-
-    def _record_media_fragments(self, count):
-        with self._metric_lock:
-            self._media_fragments += count
-
     def diagnostics(self):
         """Safe stage/age counters for an explicitly opened stream only."""
         now = time.monotonic()
         with self._resource_lock:
-            pids = [getattr(p, "pid", None) for p in (self.adb_proc, self.ffmpeg_proc)]
+            pids = [getattr(self.adb_proc, "pid", None)]
         resources = self._resource_meter.sample(pids, now)
         # Only after explicit user input. os.pread does not change the shared
         # shell log write offset; raw shell output never leaves this server.
@@ -306,7 +179,6 @@ class LiveVideo:
         with self._resource_lock:
             sock = self.video_sock
             adb_proc = self.adb_proc
-            mux = self.ffmpeg_proc
         # One stop gate closes touch, text and keys together. Since stop_event
         # was set first, no fresh command may race this final finger release.
         with self._touch_lock:
@@ -341,7 +213,7 @@ class LiveVideo:
                 sock.close()
             except OSError:
                 self._close_failed = True
-        for proc in (mux, adb_proc):
+        for proc in (adb_proc,):
             if proc is not None and proc.poll() is None:
                 try:
                     proc.terminate()
@@ -467,39 +339,8 @@ class LiveVideo:
                     raise VideoProbeError("浏览器读取视频过慢，已终止本轮会话")
         raise StreamStopped()
 
-    def _stream_to_ffmpeg(self, video, mux, first_header):
-        """Consume only matching scrcpy v5.0.1 H264 Annex B media packets."""
-        header = first_header
-        first_config = False
-        while not self.stop_event.is_set():
-            pts, length = struct.unpack(">QI", header)
-            if pts & (1 << 63):
-                _, width, height = struct.unpack(">III", header)
-                # fMP4 track dimensions are fixed for this first-stage spike.
-                raise VideoProbeError(
-                    "手机画面尺寸发生变化；首版请停止后重新开始投屏")
-            if not 0 < length <= MAX_FRAME_BYTES:
-                raise VideoProbeError("scrcpy H.264 媒体包大小异常")
-            payload = _socket_read(video, length, self.stop_event, adb_proc=self.adb_proc)
-            if not pts & (1 << 62):
-                self._record_phone_packet()
-            if pts & (1 << 62):
-                first_config = True
-            elif not first_config and not (pts & (1 << 61)):
-                # Wait for codec initialization and a safe random-access frame.
-                header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
-                continue
-            if first_config or (pts & (1 << 61)):
-                try:
-                    mux.stdin.write(payload)
-                    mux.stdin.flush()
-                except (OSError, BrokenPipeError, ValueError) as exc:
-                    raise VideoProbeError("FFmpeg 已停止接收 H.264 数据") from exc
-            header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
-        raise StreamStopped()
-
     def _stream_to_webrtc(self, video, first_header, width, height, name):
-        """Forward scrcpy's complete encoded access units, without FFmpeg/MSE."""
+        """Forward scrcpy encoded access units directly to the WebRTC track."""
         if self.webrtc_track is None:
             raise VideoProbeError("WebRTC 视频轨道尚未绑定")
         header = first_header
@@ -539,7 +380,6 @@ class LiveVideo:
         abstract = f"localabstract:scrcpy_{scid}"
         port = None
         remote_pushed = False
-        feeder = None
         failure = None
         try:
             if self.stop_event.is_set():
@@ -552,7 +392,7 @@ class LiveVideo:
                     before_ids = display_ids(_run_adb(self.serial, "shell", "dumpsys", "display"))
                 except VideoProbeError:
                     before_ids = [0]
-            with tempfile.TemporaryFile(mode="w+b") as adb_log, tempfile.TemporaryFile(mode="w+b") as mux_log:
+            with tempfile.TemporaryFile(mode="w+b") as adb_log:
                 with self._resource_lock:
                     self._adb_log_fd = os.dup(adb_log.fileno())
                 self._phase_set("推送 scrcpy-server")
@@ -651,113 +491,15 @@ class LiveVideo:
                 first_header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
                 with self._touch_lock:
                     self.touch_size = (width, height)
-                if self.video_engine == "webrtc":
-                    self._phase_set("等待 WebRTC H.264 关键帧")
-                    self._stream_to_webrtc(video, first_header, width, height, name)
-                    return
-                self._phase_set("等待 FFmpeg 初始化段")
+                self._phase_set("等待 WebRTC H.264 关键帧")
+                self._stream_to_webrtc(video, first_header, width, height, name)
 
-                # No transcoding; only repack existing H264 bytes into fMP4.
-                mux = subprocess.Popen(
-                    ["ffmpeg", *FFMPEG_MSE_ARGS],
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                   stderr=mux_log, bufsize=0)
-                with self._resource_lock:
-                    self.ffmpeg_proc = mux
-
-                def feed():
-                    try:
-                        self._stream_to_ffmpeg(video, mux, first_header)
-                    except StreamStopped:
-                        pass
-                    except VideoProbeError as exc:
-                        if not self.stop_event.is_set():
-                            try:
-                                self._emit(("error", str(exc)))
-                            except (VideoProbeError, StreamStopped):
-                                pass
-                            finally:
-                                # Do not wait for FFmpeg stdout/EOF to eventually
-                                # notice a dead ADB media socket. Stop all input
-                                # immediately; the owner thread runs final cleanup.
-                                self.stop_event.set()
-                    finally:
-                        if mux.stdin:
-                            try:
-                                mux.stdin.close()
-                            except OSError:
-                                pass
-
-                feeder = threading.Thread(target=feed, daemon=True, name="easyadb-m2-feeder")
-                feeder.start()
-                init_buffer = bytearray()
-                fragmenter = Fmp4FragmentAssembler()
-                has_init = False
-                init_started = time.monotonic()
-                while not self.stop_event.is_set():
-                    if adb_proc.poll() is not None:
-                        raise VideoProbeError("本轮 ADB/scrcpy 视频进程已退出")
-                    if not has_init and time.monotonic() - init_started > 25:
-                        raise VideoProbeError("FFmpeg 25 秒内未生成 MP4 初始化段，请检查编码器或屏幕状态")
-                    # Avoid indefinitely blocking on a quiet/failed encoder,
-                    # so stop/route switch can release its session promptly.
-                    ready, _, _ = select.select([mux.stdout], [], [], 0.5)
-                    if not ready:
-                        continue
-                    data = os.read(mux.stdout.fileno(), 32768)
-                    if not data:
-                        if not self.stop_event.is_set():
-                            mux_log.flush()
-                            mux_log.seek(0)
-                            raw = mux_log.read(10000).decode("utf-8", "replace").lower()
-                            msg = ("FFmpeg H.264 转封装失败，请重新开始实验"
-                                   if "error" in raw or mux.poll() not in (0, None)
-                                   else "视频编码流已结束")
-                            raise VideoProbeError(msg)
-                        break
-                    self._record_mux_chunk()
-                    if not has_init:
-                        init_buffer.extend(data)
-                        if len(init_buffer) > MAX_INIT_BYTES:
-                            raise VideoProbeError("MP4 初始化信息过大")
-                        parsed = parse_init_segments(init_buffer)
-                        if parsed is None:
-                            continue
-                        end, init, mime = parsed
-                        with self._metric_lock:
-                            self._ready_at = time.monotonic()
-                            self._phase = "已生成 MP4 初始化段"
-                        if self.screen_off:
-                            # Wake clicked before first frame wins over deferred off.
-                            if self.set_display_power(False, skip_if_wake=True):
-                                self._emit(("screen_power_notice", {"on": False,
-                                    "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
-                        self._emit(("init", {"mime": mime, "width": width, "height": height,
-                                             "profile": self.profile, "requested": dict(self.settings),
-                                             "codec": "h264", "control_available": True,
-                                             "device": name.decode("utf-8", "replace")}))
-                        self._emit(("bytes", init))
-                        remainder = bytes(init_buffer[end:])
-                        init_buffer.clear()
-                        fragments = fragmenter.feed(remainder)
-                        for fragment in fragments:
-                            self._emit(("bytes", fragment))
-                        if fragments:
-                            self._record_media_fragments(len(fragments))
-                        has_init = True
-                        self._phase_set("持续传输")
-                    else:
-                        fragments = fragmenter.feed(data)
-                        for fragment in fragments:
-                            self._emit(("bytes", fragment))
-                        if fragments:
-                            self._record_media_fragments(len(fragments))
         except StreamStopped:
             pass
         except VideoProbeError as exc:
             failure = str(exc)
         except (OSError, subprocess.SubprocessError) as exc:
-            failure = "实时视频启动或转封装失败，请检查手机端视频功能及 FFmpeg"
+            failure = "实时视频启动或传输失败，请检查手机端视频功能及 ADB"
         finally:
             with self._resource_lock:
                 fd = self._adb_log_fd
@@ -780,22 +522,18 @@ class LiveVideo:
                     self.stop()
                 except (OSError, ValueError):
                     cleanup_ok = False
-                if feeder:
-                    feeder.join(timeout=3)
-                    if feeder.is_alive():
-                        cleanup_ok = False
-                for proc in (self.ffmpeg_proc, self.adb_proc):
-                    if proc is not None:
+                if self.adb_proc is not None:
+                    proc = self.adb_proc
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
                         try:
-                            proc.wait(timeout=3)
-                        except subprocess.TimeoutExpired:
-                            try:
-                                proc.kill()
-                                proc.wait(timeout=2)
-                            except (OSError, subprocess.TimeoutExpired):
-                                cleanup_ok = False
-                        except (OSError, ValueError):
+                            proc.kill()
+                            proc.wait(timeout=2)
+                        except (OSError, subprocess.TimeoutExpired):
                             cleanup_ok = False
+                    except (OSError, ValueError):
+                        cleanup_ok = False
                 if port is not None:
                     try:
                         _run_adb(self.serial, "forward", "--remove", f"tcp:{port}", timeout=5)
