@@ -17,6 +17,7 @@ from ..display_lab import LabError
 from ..m2_touch import InvalidTouch
 from ..m2_video_probe import VideoProbeError
 from ..services.operations import device_lock
+from ..services.session_cleanup import cleanup_live_session
 
 
 async def handle_live_video(websocket: WebSocket, device_id: str, source):
@@ -601,43 +602,17 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
-        # Also suppress pc.close() connectionstatechange callbacks from trying
-        # to initiate a second teardown while the first cleanup is in progress.
-        requested_stop.set()
-        if watchdog:
-            watchdog.cancel()
-            await asyncio.gather(watchdog, return_exceptions=True)
         if stream:
             session_manager.cleaning(device_id, stream)
-            await asyncio.to_thread(stream.stop)
-            if unlock_task:
-                unlock_task.cancel()
-                await asyncio.gather(unlock_task, return_exceptions=True)
-            # SDP/ICE negotiation runs in the receiver task. Stop it before
-            # closing the peer; otherwise it can race against pc.close().
-            if receiver:
-                receiver.cancel()
-                await asyncio.gather(receiver, return_exceptions=True)
-            if pc is not None:
-                # Keep a strong reference on this registry-owned session.
-                # Timeout only bounds the WS wait, never cancels peer teardown.
-                stream.peer_close_task = asyncio.create_task(
-                    _close_webrtc_peer(pc, stream, device_id, live_registry))
-                try:
-                    await asyncio.wait_for(asyncio.shield(stream.peer_close_task), 10)
-                except asyncio.TimeoutError:
-                    logging.getLogger(__name__).warning(
-                        "WebRTC peer close still pending for device %s session %s; "
-                        "will release only after verified late cleanup",
-                        device_id, stream.session_id)
-            if VIDEO_ENGINE == "webrtc" and not worker_launch_attempted:
-                # No worker start was ever attempted; safe to retire this unlaunched slot.
-                stream.cleanup_complete = True
-                stream.finished.set()
-                if stream.webrtc_track is not None:
-                    stream.webrtc_track.stop()
-            await asyncio.to_thread(stream.join, 20)
-            if live_registry.is_cleaned(stream):
+        report = await cleanup_live_session(
+            device_id=device_id, stream=stream, pc=pc,
+            registry=live_registry, close_peer=_close_webrtc_peer,
+            requested_stop=requested_stop, watchdog=watchdog,
+            receiver=receiver, unlock_task=unlock_task,
+            worker_launch_attempted=worker_launch_attempted,
+        )
+        if stream:
+            if report.cleaned:
                 # Ended(cleanup_complete=true) only after all session-owned
                 # video/control/ADB resources were verifiably released.
                 session_manager.complete(device_id, stream, clean=True)
@@ -651,7 +626,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         pass
             else:
                 session_manager.complete(device_id, stream, clean=False,
-                    reason="worker or WebRTC peer cleanup was not verified")
+                    reason=report.reason)
                 # Fail closed: registry continues to reserve a worker whose
                 # cleanup has not finished. reserve() retires it once finished.
                 try:
