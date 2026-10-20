@@ -406,6 +406,24 @@ assert.equal(a.sent.filter(x=>x.includes('"type":"control_enable"')).length,1,
  'automatic control enable is sent exactly once per initialized session');
 a.emit('control_enabled',{session_id:'only-one'});
 assert.equal(ca.enabled,true);
+assert.match(page,/\.multi-fab \.fab-text\{right:52px;top:0\}/);
+assert.match(page,/\.multi-fab \.fab-unlock\{right:104px;top:0/);
+assert.equal(ca.unlockButton.disabled,false,'individual manual unlock is usable with ready control');
+assert.equal(multi.requestUnlock(ca),true);
+assert.equal(JSON.parse(a.sent.at(-1)).type,'unlock');
+assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
+assert.equal(Object.keys(JSON.parse(a.sent.at(-1))).sort().join(','),'session_id,type',
+ 'manual unlock never sends PIN, device ID or arbitrary ADB command');
+assert.equal(ca.unlockButton.disabled,true,'duplicate request is locally blocked');
+assert.equal(multi.requestUnlock(ca),false);
+a.emit('unlock_notice',{session_id:'only-one',source:'manual',status:'running',
+ message:'正在尝试主动解锁'});
+assert.equal(ca.unlockPending,true);
+a.emit('unlock_notice',{session_id:'only-one',source:'manual',status:'unconfigured',
+ error:true,message:'本设备未配置有效开屏密码'});
+assert.equal(ca.unlockPending,false,'server denial re-enables retry');
+assert.equal(ca.unlockButton.disabled,false);
+assert.match(ca.eventLog.textContent,/未配置有效开屏密码/);
 assert.equal(ca.nav.slice(0,3).every(b=>!b.hidden&&!b.disabled),true,
  'downward back/home/recents become usable after automatic remote acknowledgement');
 ca.textButton.fire('click');
