@@ -201,3 +201,24 @@ def test_explicit_lifespan_initializes_once_and_stops_existing_sessions():
         assert events == ["initialize", "stop_all"]
 
     asyncio.run(check())
+
+
+def test_group_discovery_validates_group_only_after_acquiring_operation_mutex():
+    from server.core.exceptions import DomainError
+    from server.services.group_discovery import run_group_scan
+
+    mutex = threading.Lock()
+
+    class Store:
+        def get_group(self, name):
+            assert mutex.locked(), "group state may not be read before scan ownership"
+            return None
+
+    with pytest.raises(DomainError) as exc:
+        run_group_scan(
+            "Home", persist=True, test_config=None, store=Store(), discovery_client=None,
+            manager=None, display_lab=None, live_registry=None,
+            discovery_guard=threading.RLock(), discovery_locks={"Home": mutex},
+        )
+    assert exc.value.status_code == 404
+    assert not mutex.locked()

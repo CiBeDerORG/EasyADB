@@ -12,18 +12,18 @@ from .operations import membership_lock, device_locks
 
 def run_group_scan(group_name, *, persist, test_config, store, discovery_client,
                    manager, display_lab, live_registry, discovery_guard, discovery_locks):
-    group = store.get_group(group_name)
-    if group is None:
-        raise DomainError(404, "找不到该分组")
-    if not group["discovery_configured"]:
-        raise DomainError(409, "该分组尚未配置 OpenWrt 发现接口")
-    if persist and not group["ip_prefix"]:
-        raise DomainError(409, "正式匹配前请先配置本组内网 IP 前缀")
     with discovery_guard:
         mutex = discovery_locks.setdefault(group_name, threading.Lock())
     if not mutex.acquire(blocking=False):
         raise DomainError(409, "该分组正在发现 ADB，请勿重复提交")
     try:
+        group = store.get_group(group_name)
+        if group is None:
+            raise DomainError(404, "找不到该分组")
+        if not group["discovery_configured"]:
+            raise DomainError(409, "该分组尚未配置 OpenWrt 发现接口")
+        if persist and not group["ip_prefix"]:
+            raise DomainError(409, "正式匹配前请先配置本组内网 IP 前缀")
         try:
             if test_config is not None:
                 # Test the current (possibly unsaved) form without changing SQLite.
