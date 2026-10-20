@@ -107,7 +107,8 @@ def test_direct_compose_is_standalone_and_preserves_persistent_paths():
     assert "build:" not in "\n".join(
         line for line in direct.splitlines() if not line.lstrip().startswith("#")
     )
-    assert "network_mode: host" not in direct
+    assert "network_mode: host" in direct and "network_mode: host" in proxy
+    assert "    ports:" not in direct and "    ports:" not in proxy
 
 
 

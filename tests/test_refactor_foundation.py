@@ -21,7 +21,7 @@ def test_settings_validate_without_importing_app(tmp_path):
     settings = load_settings(base)
     assert settings.token == TOKEN
     assert settings.db_path == str(tmp_path / "data.sqlite3")
-    assert settings.video_engine == "mse"
+    assert settings.video_engine == "webrtc"
     assert load_settings({**base, "EASYADB_VIDEO_ENGINE": " WEBRTC "}).video_engine == "webrtc"
     with pytest.raises(RuntimeError, match="EASYADB_VIDEO_ENGINE"):
         load_settings({**base, "EASYADB_VIDEO_ENGINE": "unknown"})
@@ -258,3 +258,11 @@ def test_runtime_preserves_an_existing_sqlite_database(tmp_path):
     runtime.store.initialize()
     assert runtime.store.get(saved["id"])["name"] == "Persist"
     assert runtime.store.get(saved["id"])["ip"] == "10.7.7.7"
+
+
+def test_v2_rejects_removed_mse_and_webcodecs_settings_without_fallback(tmp_path):
+    for retired in ("mse", "webcodecs"):
+        with pytest.raises(RuntimeError, match="only supports"):
+            load_settings({"EASYADB_TOKEN": TOKEN, "EASYADB_DB": str(tmp_path / "a.sqlite3"),
+                           "EASYADB_VIDEO_ENGINE": retired})
+    assert load_settings({"EASYADB_TOKEN": TOKEN}).video_engine == "webrtc"

@@ -1,4 +1,4 @@
-"""Frozen M3 HTTP/WS route contract for architecture-only refactoring.
+"""M3 baseline contracts with the explicitly retired V2 MSE asset excluded.
 
 The expected routes were captured at M3 commit
 5ff047fa3a4dbe0aed75e1a06fa0d4d20042787a, NOT generated at test time.
@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 EXPECTED_HTTP = {
     ("GET", "/"),
-    ("GET", "/m2-player.js"),
     ("GET", "/m2-webrtc.js"),
     ("GET", "/m2-traffic.js"),
     ("GET", "/m2-touch.js"),
