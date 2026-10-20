@@ -213,3 +213,77 @@ def test_manual_unlock_websocket_uses_current_saved_secret(monkeypatch, tmp_path
                     assert msg["cleanup_complete"] is True
                     break
             else:pytest.fail("no final cleanup")
+
+def test_emui_and_aosp_keyguard_parsers_are_conservative():
+    # Some TrustManager builds, including Chromium's Android test fixture,
+    # report numeric deviceLocked=1/0 rather than true/false.
+    current=' User "Owner" (id=0, flags=0x4c13) (current): trustState=UNTRUSTED, trustManaged=0, deviceLocked='
+    assert m2_unlock.parse_trust_lock(current+'1, strongAuthRequired=0x0') is True
+    assert m2_unlock.parse_trust_lock(current+'0, strongAuthRequired=0x0') is False
+    assert m2_unlock.parse_trust_lock(current+'true, strongAuthRequired=0x0') is True
+    assert m2_unlock.parse_trust_lock(current+'false, strongAuthRequired=0x0') is False
+    assert m2_unlock.parse_trust_lock('deviceLocked: 1') is True
+    assert m2_unlock.parse_trust_lock('mDeviceLocked=false') is False
+    assert m2_unlock.parse_trust_lock(
+        current+'0\n User "Work" (id=10, flags=0x4c13): trustState=UNTRUSTED, deviceLocked=1'
+    ) is False, "never infer owner lock from a managed profile"
+    assert m2_unlock.parse_trust_lock(
+        ' User "Owner" (id=0, flags=0x4c13): deviceLocked=0\n'
+        ' User "Work" (id=10, flags=0x4c13): deviceLocked=1'
+    ) is None, "multiuser trust output without current marker is ambiguous"
+    assert m2_unlock.parse_trust_lock('deviceLocked=1 deviceLocked=0') is None
+    assert m2_unlock.parse_window_lock(
+        'mShowingLockscreen=true mShowingDream=false mDreamingLockscreen=false'
+    ) is True
+    assert m2_unlock.parse_window_lock(
+        'isStatusBarKeyguard=false mShowingLockscreen=false'
+    ) is False
+    assert m2_unlock.parse_window_lock(
+        'KeyguardServiceDelegate\n  showing=true\n  occluded=false\n'
+        'KeyguardStateMonitor\n  mIsShowing=true\n'
+    ) is True
+    assert m2_unlock.parse_window_lock('KeyguardStateMonitor\n  mIsShowing=false') is False
+    assert m2_unlock.parse_window_lock('mDreamingLockscreen=true') is True
+    assert m2_unlock.parse_window_lock('mDreamingLockscreen=false') is None
+    assert m2_unlock.parse_window_lock('mKeyguardOccluded=false secure=true') is None
+    assert m2_unlock.parse_window_lock(
+        'mShowingLockscreen=false isStatusBarKeyguard=true'
+    ) is None, "contradictory signals never authorize PIN entry"
+
+
+def test_mate30_style_numeric_trust_unlock_and_post_swipe_guard(monkeypatch):
+    adb_calls=[]
+    state={"locked":True}
+    def adb(serial,*args,timeout=6):
+        adb_calls.append(args)
+        if args==("shell","dumpsys","trust"):
+            return ('Trust manager state:\n'
+                    ' User "Owner" (id=0, flags=0x4c13) (current): '
+                    'trustState=UNTRUSTED, trustManaged=0, deviceLocked='
+                    +("1" if state["locked"] else "0"))
+        if args==("shell","dumpsys","window","policy"):
+            return ('KeyguardServiceDelegate\n  showing='
+                    +("true" if state["locked"] else "false"))
+        if args==("shell","wm","size"):return "Physical size: 1080x2340"
+        return ""
+    monkeypatch.setattr(m2_unlock,"_run_adb",adb)
+    assert m2_unlock.lock_state("10.10.5.2:5555") is True
+    stream=FakeStream()
+    assert m2_unlock.automatic_unlock(stream,"123456",sleep=lambda _:None)=="submitted"
+    assert stream.calls==[("wake",),("text","123456"),("nav","enter")]
+    assert all("123456" not in str(call) for call in adb_calls)
+    stream=FakeStream()
+    def slept(duration):
+        if duration==0.45:state["locked"]=False # user/face unlocked after swipe
+    assert m2_unlock.automatic_unlock(stream,"123456",sleep=slept)=="already_unlocked"
+    assert stream.calls==[("wake",)],"do not type PIN into now-unlocked foreground app"
+    state["locked"]=True
+    def contradictory(serial,*args,timeout=6):
+        if args==("shell","dumpsys","trust"):return "deviceLocked=1"
+        if args==("shell","dumpsys","window","policy"):return "mShowingLockscreen=false"
+        return ""
+    monkeypatch.setattr(m2_unlock,"_run_adb",contradictory)
+    assert m2_unlock.lock_state(stream.serial) is None, "conflicting OEM diagnostics fail closed"
+    stream=FakeStream()
+    assert m2_unlock.automatic_unlock(stream,"123456",sleep=lambda _:None)=="unknown_lock_state"
+    assert stream.calls==[("wake",)]
