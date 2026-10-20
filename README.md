@@ -1,3 +1,5 @@
+> **架构重构进度（仅基于 M3）**：本分支 `refactor/foundation-v1` 的目标、已完成内容、CI 和下次继续步骤，统一记录于 [重构进度](docs/REFACTOR-PROGRESS.md) 与 [重构报告](docs/REFACTOR-ROADMAP.md)。V1 尚未全部完成，不包含 M4 画面映射分支。
+
 ## EasyADB 定时更新部署（FNOS / Linux）
 
 沿用原有部署脚本，不创建第二套 Docker 构建链路。**首次启用前，建议先手动成功部署当前检出的分支一次**，以保证本地 Git 文件树就是当前运行版本。定时任务通过原 Git 登录用户安全执行 `fetch` 与 `pull --ff-only`，只比较已跟踪文件的 Git tree SHA；无文件变化（即使有空提交）则跳过整个 Docker 构建和 Compose 更新。仅在构建和启动成功后记录新版本，失败则保留旧标记供下轮重试。不会覆盖未提交修改、改写 `.env`、删除 `data/`、自动切换到别的实验分支，或执行 `down -v`。
