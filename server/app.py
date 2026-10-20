@@ -38,6 +38,8 @@ from .core.lifecycle import managed_resources
 from .core.exceptions import DomainError
 from .services.group_discovery import run_group_scan
 from .services.device_service import create_device_record, update_device_record, delete_device_record
+from .services.group_service import (create_group_record, update_group_record, delete_group_record,
+                             configure_group_discovery_record, clear_group_discovery_record)
 from .api.static import router as static_router
 from .api import groups as group_routes, devices as device_routes, lab as lab_routes, live as live_routes, legacy as legacy_routes
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
@@ -252,57 +254,40 @@ def list_groups():
 
 
 def create_group(payload: GroupInput):
-    name, prefix = clean_group(payload)
     try:
-        return store.create_group(name, prefix)
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, "分组名称已存在") from None
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
-
+        name, prefix = clean_group(payload)
+        return create_group_record(name, prefix, store=store)
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def update_group(group_name: str, payload: GroupInput):
     try:
-        with group_operation(_discovery_guard, _discovery_locks, group_name):
-            with membership_lock():
-                name, prefix = clean_group(payload)
-                old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
-                with device_locks(manager, old_members):
-                    if any(display_lab.has_pending(id) for id in old_members):
-                        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
-                    try:
-                        result = store.update_group(group_name, name, prefix)
-                    except sqlite3.IntegrityError:
-                        raise HTTPException(409, "分组名称已存在") from None
-                    except ValueError as exc:
-                        raise HTTPException(409, str(exc)) from None
-                    if result is None:
-                        raise HTTPException(404, "找不到该分组")
-                    for device_id in old_members:
-                        live_registry.stop_for(device_id)
-                        manager.clear(device_id)
-                    return result
-
-    except GroupBusy:
-        raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
+        return update_group_record(
+            group_name, lambda: clean_group(payload), store=store, manager=manager,
+            display_lab=display_lab, live_registry=live_registry,
+            discovery_guard=_discovery_guard, discovery_locks=_discovery_locks,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def configure_group_discovery(group_name: str, payload: GroupDiscoveryInput):
-    """Only authenticated EasyADB admins may set credentials; never echo secrets."""
+    """Only authenticated admins may update OpenWrt credentials."""
     try:
-        result = store.set_group_discovery(group_name, payload.url, payload.username, payload.password)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from None
-    if result is None:
-        raise HTTPException(404, "找不到该分组")
-    return result
-
+        return configure_group_discovery_record(
+            group_name, payload.url, payload.username, payload.password,
+            store=store, discovery_guard=_discovery_guard, discovery_locks=_discovery_locks,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def clear_group_discovery(group_name: str):
-    result = store.remove_group_discovery(group_name)
-    if result is None:
-        raise HTTPException(404, "找不到该分组")
-    return result
-
+    try:
+        return clear_group_discovery_record(
+            group_name, store=store, discovery_guard=_discovery_guard,
+            discovery_locks=_discovery_locks,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None = None):
     """Transport adapter: API error mapping, runtime dependencies from current app."""
@@ -334,26 +319,13 @@ def group_discovery_last(group_name: str):
 
 def delete_group(group_name: str):
     try:
-        with group_operation(_discovery_guard, _discovery_locks, group_name):
-            with membership_lock():
-                old_members = [d["id"] for d in store.list() if d["group_name"] == group_name]
-                with device_locks(manager, old_members):
-                    # Clear the cached route after the DB transaction has safely moved all
-                    # members to the ungrouped category; never disconnect or delete a device.
-                    if any(display_lab.has_pending(d["id"]) for d in store.list()
-                           if d["group_name"] == group_name):
-                        raise HTTPException(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
-                    result = store.delete_group(group_name)
-                    if result is None:
-                        raise HTTPException(404, "找不到该分组")
-                    for device_id in result["device_ids"]:
-                        live_registry.stop_for(device_id)
-                        manager.clear(device_id)
-                    return {"deleted": True, "moved_count": result["moved_count"]}
-
-
-    except GroupBusy:
-        raise HTTPException(409, "该分组正在发现 ADB 或修改配置，请稍后重试") from None
+        return delete_group_record(
+            group_name, store=store, manager=manager, display_lab=display_lab,
+            live_registry=live_registry, discovery_guard=_discovery_guard,
+            discovery_locks=_discovery_locks,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 def create_device(payload: DeviceInput):
     try:
