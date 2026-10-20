@@ -47,7 +47,8 @@ const root={
  clearTimeout(id){timers.delete(id);},
  location:{protocol:'http:',host:'nas.local'},Date,
  performance:{now:()=>{clock+=1000;return clock;}},
- EasyADBPlayers:{create:(_type,_video,cbs)=>({
+ EasyADBWebRTC:{create:(_video,cbs)=>({
+   async start(){},async answer(){},pollStats(){},
    initialize(){cbs.onState('ready');},append(){},triggerPlaying(){cbs.onState('playing');},
    diagnostics(){return {queueBytes:0,sourceState:'open',sourceRanges:1,
     rangeEnd:3,currentTime:2,queueChunks:0,appendCalls:4,completedUpdates:4,videoError:null};},
@@ -404,7 +405,7 @@ ca.logClose.fire('click');assert.equal(ca.logPanel.hidden,true,'log panel closes
 a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
  mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
 assert.match(ca.diagnostic.textContent,/手机编码包 9/);
-assert.match(ca.diagnostic.textContent,/完整分片 3/);
+assert.match(ca.diagnostic.textContent,/WebRTC 已取帧/);
 assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
 ca.main.fire('click');
 assert.equal(a.sent.filter(x=>x.includes('"type":"control_enable"')).length,1,
@@ -588,7 +589,7 @@ async function waitForCheck(id){
  assert.equal(multi.cards.size,2);
  assert.equal(grid.children.length,2);
  assert.equal(multi.cards.get('id-1'),liveCardA,'existing A card identity never changes');
- assert.equal(liveCardA.player,originalPlayer,'existing A MSE never reinitializes');
+ assert.equal(liveCardA.player,originalPlayer,'existing A WebRTC never reinitializes');
  assert.equal(liveCardA.enabled,true,'append preserves existing remote control');
  assert.equal(liveA.readyState,WS.OPEN,'existing WS was not closed');
  assert.equal(liveA.sent.filter(x=>x.includes('"type":"control_disable"')).length,0);
@@ -627,7 +628,7 @@ async function waitForCheck(id){
  assert.equal(grid.children.length,0,'full stop removes every owned live DOM card');
  assert.equal(sockets.length,socketCount+4,'only four additional sessions ever created');
  // Per-device buttons target ONLY their own session, never the batch's other
- // checked devices and never an already-running WS or MSE player.
+ // checked devices and never an already-running WS or WebRTC player.
  batchSelected.clear();multi.updatePicker();
  const aloneCount=sockets.length;
  liveButton(0).fire('click');
@@ -802,7 +803,7 @@ async function waitForCheck(id){
  assert.equal(multi.getChoice('id-1').dpi,360);
  assert.equal(multi.getChoice('id-2').dpi,240);
  assert.equal(multi.getChoice('id-2').experimental_resolution,null);
- multi.videoEngine='mse';
+ multi.videoEngine='webrtc';
  const experimentalSocketCount=sockets.length;
  assert.equal(multi.startFor('id-1'),true);
  assert.equal(drawerEvents.at(-1),'collapsed','single device projection collapses management');
