@@ -404,9 +404,9 @@ assert.equal(ca.logPanel.hidden,false,'upward log action opens overlay');
 assert.equal(ca.menuOpen,false,'opening log folds floating menu');
 ca.logClose.fire('click');assert.equal(ca.logPanel.hidden,true,'log panel closes independently');
 a.emit('diagnostic',{session_id:'only-one',adb_check_ms:23,stage:'streaming',phone_packets:9,
- mux_chunks:4,media_fragments:3,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20,ws_video_bytes:1000});
+ webrtc_sent_frames:7,webrtc_dropped_frames:1,elapsed_ms:1500,proc_cpu_pct:5,proc_rss_mib:20});
 assert.match(ca.diagnostic.textContent,/手机编码包 9/);
-assert.match(ca.diagnostic.textContent,/完整分片 3/);
+assert.match(ca.diagnostic.textContent,/WebRTC 已取帧 7/);
 assert.equal(JSON.parse(a.sent.at(-1)).session_id,'only-one');
 ca.main.fire('click');
 assert.equal(a.sent.filter(x=>x.includes('"type":"control_enable"')).length,1,
