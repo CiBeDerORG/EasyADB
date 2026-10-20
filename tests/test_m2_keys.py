@@ -143,7 +143,7 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
             f"/api/devices/{device['id']}/m2/live",
             headers={"origin": "http://testserver"}
         ) as ws:
-            ws.send_json({"token": "local-test-token-123", "player": "mse",
+            ws.send_json({"token": "local-test-token-123", "player": "webrtc",
                           "profile": "baseline", "selected_serial": device["selected_serial"]})
             init = receive_kind(ws, "init")
             sid = init["session_id"]

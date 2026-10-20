@@ -149,7 +149,7 @@ def test_running_media_error_checks_adb_once_and_never_reconnects(monkeypatch, t
         path = f"/api/devices/{device['id']}/m2/live"
         with client.websocket_connect(path, headers={"origin": "http://testserver"}) as ws:
             ws.send_json({"token": "local-test-token-123", "profile": "baseline",
-                          "player": "mse", "selected_serial": serial})
+                          "player": "webrtc", "selected_serial": serial})
             result = None
             for _ in range(12):
                 msg = ws.receive_json()
@@ -208,7 +208,7 @@ def test_manual_stop_never_triggers_an_extra_adb_connection_check(monkeypatch, t
             headers={"origin": "http://testserver"}
         ) as ws:
             ws.send_json({"token": "local-test-token-123", "profile": "baseline",
-                          "player": "mse", "selected_serial": serial})
+                          "player": "webrtc", "selected_serial": serial})
             for _ in range(12):
                 if ws.receive_json()["type"] == "init":
                     break

@@ -103,7 +103,7 @@ def test_m2_01_manual_stop_waits_for_server_cleanup_before_new_start(monkeypatch
                                serial=d["selected_serial"], route="mesh")
         path = f"/api/devices/{d['id']}/m2/live"
         origin = {"origin": "http://testserver"}
-        auth = {"token": "local-test-token-123", "player": "mse",
+        auth = {"token": "local-test-token-123", "player": "webrtc",
                 "profile": "baseline", "selected_serial": d["selected_serial"]}
         with client.websocket_connect(path, headers=origin) as ws:
             ws.send_json(auth)
