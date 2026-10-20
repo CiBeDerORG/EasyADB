@@ -300,7 +300,14 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                                 "type": "webrtc_answer", "session_id": stream.session_id,
                                 "sdp": pc.localDescription.sdp
                             }), LIVE_WS_SEND_TIMEOUT)
-                            stream.start()
+                            try:
+                                stream.start()
+                            except (RuntimeError, OSError):
+                                await websocket.send_json({
+                                    "type": "error", "session_id": stream.session_id,
+                                    "message": "视频会话未能启动，请稍后重试"
+                                })
+                                break
                             last_browser_ack = time.monotonic()
                         except Exception:
                             await websocket.send_json({"type": "error", "session_id": stream.session_id,
@@ -633,7 +640,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         }), LIVE_WS_SEND_TIMEOUT)
                     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
                         pass
-            elif manual_stop:
+            else:
                 # Fail closed: registry continues to reserve a worker whose
                 # cleanup has not finished. reserve() retires it once finished.
                 try:

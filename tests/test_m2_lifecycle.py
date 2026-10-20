@@ -116,7 +116,13 @@ def test_start_failure_rolls_back_reserved_session(monkeypatch, tmp_path):
     class FailedStart:
         def __init__(self, serial, profile):
             self.session_id = "unstarted"
+            self.finished = threading.Event()
+            self.cleanup_complete = True
+            self.events = queue.Queue()
         def start(self): raise RuntimeError("cannot start worker")
+        def stop(self): self.finished.set()
+        def join(self, timeout=20): self.finished.wait(timeout)
+        def diagnostics(self): return {"stage": "start-failed"}
 
     monkeypatch.setattr(app, "LiveVideo", FailedStart)
     with TestClient(app.app) as client:
