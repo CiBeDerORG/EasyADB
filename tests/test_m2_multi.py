@@ -47,20 +47,25 @@ def test_registry_limits_distinct_devices_and_releases_only_same_session():
             self.finished=threading.Event()
             self.cleanup_complete=False
     registry=LiveRegistry()
-    streams=[Worker() for _ in range(5)]
-    for i in range(4):
-        assert registry.reserve(str(i),streams[i])
-    assert not registry.reserve("4",streams[4])
-    assert not registry.reserve("0",streams[4])
-    registry.release("0",streams[4])
+    assert registry.MAX_LIVE_SESSIONS == 20
+    streams=[Worker() for _ in range(22)]
+    for i in range(20):
+        assert registry.reserve(str(i),streams[i]), f"session {i+1} must fit"
+    assert len(registry.sessions) == 20
+    assert not registry.reserve("20",streams[20]), "21st distinct device rejected"
+    assert not registry.reserve("0",streams[20]), "same phone cannot run twice"
+    registry.release("0",streams[20])  # foreign object may not free the slot
     assert registry.sessions["0"] is streams[0]
     streams[0].finished.set()
-    assert not registry.reserve("4",streams[4])
+    assert not registry.reserve("20",streams[20]), "dirty stopped worker still counts"
+    assert not registry.reserve("0",streams[20]), "dirty same-device worker blocks restart"
     streams[0].cleanup_complete=True
-    assert registry.reserve("0",streams[4])
-    assert not registry.reserve("4",Worker())  # still four device slots
-    registry.release("0",streams[4])
-    assert registry.reserve("4",Worker())
+    assert registry.reserve("0",streams[20]), "same device can replace cleaned worker"
+    assert len(registry.sessions) == 20
+    assert not registry.reserve("20",streams[21]), "replacement did not create a 21st slot"
+    registry.release("0",streams[20])
+    assert registry.reserve("20",streams[21]), "clean release opens exactly one slot"
+    assert len(registry.sessions) == 20
 
 
 def next_type(ws,kind):
