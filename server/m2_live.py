@@ -154,10 +154,6 @@ class LiveVideo:
                 "phone_packets": self._phone_packets,
                 "phone_idle_ms": (round((now - self._phone_last) * 1000)
                                   if self._phone_last is not None else None),
-                "mux_chunks": self._mux_chunks,
-                "media_fragments": self._media_fragments,
-                "mux_idle_ms": (round((now - self._mux_last) * 1000)
-                                if self._mux_last is not None else None),
                 "init_ready_ms": (round((self._ready_at - self._born) * 1000)
                                    if self._ready_at is not None else None),
             }
