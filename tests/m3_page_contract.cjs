@@ -19,7 +19,12 @@ assert.ok(!js.includes('discoveryResults'),'scan histories must not replay into 
 assert.ok(!js.includes("'/discovery/last'"),'loading devices must not replay old toasts');
 assert.ok(!js.includes("route==='temp'?':' +port"));
 assert.match(js,/action\(label\+'：'\+ip,\(\)=>switchRoute/);
-assert.ok(js.includes("title.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"));
+assert.ok(js.includes("portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"));
+assert.ok(js.includes("const configure=action('✎',()=>multiView.openSettings(d),'projection-settings-edit')"));
+assert.ok(js.includes("title.append(portWrap)"));
+assert.ok(!js.includes("row.prepend(adbStatusBadge(d))"));
+assert.ok(html.includes('.device-port.device-projector.adb-connected::before'));
+assert.ok(html.includes('dialog.quality-settings-dialog{'));
 assert.ok(js.includes("addressList.append(...addressRows)"));
 assert.ok(js.includes("addressList.append(plus)"));
 assert.ok(js.includes("row.append(del)"));
