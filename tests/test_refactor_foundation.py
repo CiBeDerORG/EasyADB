@@ -112,3 +112,70 @@ def test_mutation_waits_for_existing_device_operation(monkeypatch, tmp_path, act
     else:
         assert result == {"deleted": True}
         assert store.get(did) is None
+
+
+def test_group_edit_and_delete_reject_an_inflight_scan(monkeypatch, tmp_path):
+    """A group may not be renamed/deleted while an explicit RPCD scan owns it."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("EASYADB_TOKEN", TOKEN)
+    mod = importlib.import_module("server.app")
+    store = DeviceStore(str(tmp_path / "groups.sqlite3"))
+    monkeypatch.setattr(mod, "store", store)
+    monkeypatch.setattr(mod, "manager", DeviceManager(store, lambda *a, **kw: pytest.fail("no adb")))
+    monkeypatch.setattr(mod, "_discovery_locks", {})
+    with TestClient(mod.app) as client:
+        auth = {"X-EasyADB-Token": TOKEN}
+        assert client.post("/api/groups", headers=auth,
+                           json={"name": "Home", "ip_prefix": "192.168.1.*"}).status_code == 201
+        scan_mutex = threading.Lock()
+        scan_mutex.acquire()
+        mod._discovery_locks["Home"] = scan_mutex
+        try:
+            edited = client.put("/api/groups/Home", headers=auth,
+                                json={"name": "Renamed", "ip_prefix": "192.168.2.*"})
+            removed = client.delete("/api/groups/Home", headers=auth)
+            assert edited.status_code == removed.status_code == 409
+            assert store.get_group("Home") is not None
+            assert store.get_group("Renamed") is None
+        finally:
+            scan_mutex.release()
+        assert client.put("/api/groups/Home", headers=auth,
+                          json={"name": "Renamed", "ip_prefix": "192.168.2.*"}).status_code == 200
+
+
+def test_group_edit_waits_for_member_device_lock(monkeypatch, tmp_path):
+    """Group prefix/route mutations cannot bypass an in-flight device operation."""
+    monkeypatch.setenv("EASYADB_TOKEN", TOKEN)
+    mod = importlib.import_module("server.app")
+    store = DeviceStore(str(tmp_path / "groups.sqlite3"))
+    store.initialize()
+    store.create_group("Home", "192.168.1.*")
+    did = store.create({"name": "P", "group_name": "Home",
+                        "ip": "10.10.10.10", "port": 5555})["id"]
+    manager = DeviceManager(store, lambda *a, **kw: pytest.fail("no adb"))
+    monkeypatch.setattr(mod, "store", store)
+    monkeypatch.setattr(mod, "manager", manager)
+    monkeypatch.setattr(mod, "_discovery_locks", {})
+    entered = threading.Event()
+    started = threading.Event()
+    original = store.update_group
+
+    def watch(*args, **kwargs):
+        entered.set()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "update_group", watch)
+
+    def mutate():
+        started.set()
+        return mod.update_group("Home", mod.GroupInput(name="Home", ip_prefix="192.168.2.*"))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with manager._device_lock(did):
+            job = pool.submit(mutate)
+            assert started.wait(2)
+            assert not entered.wait(0.2), "group mutation must wait for member's device lock"
+        result = job.result(timeout=3)
+    assert entered.is_set()
+    assert result["ip_prefix"] == "192.168.2.*"
