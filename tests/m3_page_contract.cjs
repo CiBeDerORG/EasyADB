@@ -57,7 +57,8 @@ assert.ok(!js.includes("function runConnect(id)"));
 assert.ok(js.includes("const candidates=devices.filter(d=>!deviceLocked(d.id))"));
 assert.ok(js.includes("await connectProgressively(candidates,skipped,false,'首次加载连接',epoch)"));
 assert.ok(js.includes("await runDeviceBatch(candidates,async d=>"));
-assert.ok(js.includes("+'/refresh',{method:'POST'}"),'batch status check remains separate and probe-only');
+assert.match(js,/encodeURIComponent\(d\.id\)\+'\/refresh',\{\s*method:'POST',signal:batch\.abortController\.signal\s*\}/,
+ 'legacy batch status check remains separate and probe-only with its own cancellation signal');
 assert.ok(!js.includes("临时 ADB 端口："));
 assert.ok(store.includes('"endpoints": []'));
 assert.ok(js.includes("function renderDiscoveryResult(last)"));

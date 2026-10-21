@@ -131,7 +131,8 @@ assert.match(page,/managementSelected\.clear\(\);render\(\)/,'auth change clears
 assert.match(page,/candidates=picked\.filter\(d=>!deviceLocked\(d\.id\)\)/,'batch skips connecting and projecting devices');
 assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deletion requires confirmation');
 assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
-assert(page.includes("encodeURIComponent(d.id),{method:'DELETE'}"),'batch deletes via existing endpoint');
+assert(page.includes("encodeURIComponent(d.id),{method:'DELETE',signal:batch.abortController.signal}"),
+ 'legacy batch deletes via the existing endpoint with its own cancellation signal');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
 assert(page.includes("portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))"),
  'shared ADB port itself is the single title-mounted projection toggle');

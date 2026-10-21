@@ -15,7 +15,7 @@ const locks = section('function deviceConnecting(id)', 'function applyConnection
 const deletion = section("$('bulkDelete').addEventListener", "$('newDevice').addEventListener");
 const refresh = section("$('refreshAll').addEventListener", "window.addEventListener('beforeunload'");
 
-async function verify(handlerId, suffix) {
+async function verify(handlerId, suffix, createController = null) {
   const initial = [
     {id: 'ready', name: 'Ready', status: 'connected'},
     {id: 'late', name: 'Becomes busy', status: 'connected'},
@@ -25,7 +25,7 @@ async function verify(handlerId, suffix) {
   const handlers = new Map(), requests = [], messages = [], confirmations = [];
   let renderCount = 0, reloadCount = 0;
   const sandbox = {
-    INITIAL_DEVICES: initial, BUSY: busy, encodeURIComponent,
+    INITIAL_DEVICES: initial, BUSY: busy, encodeURIComponent, AbortController, createController,
     $(id) {
       return {addEventListener(type, fn) {
         if (type === 'click') handlers.set(id, fn);
@@ -44,15 +44,29 @@ async function verify(handlerId, suffix) {
   };
   const script = `
 let loading = false, loaded = true, selected = 'ready';
+let connectGeneration = 0, managementBatch = null, deviceManagementController = null;
 let devices = INITIAL_DEVICES.map(device => ({...device}));
 const managementSelected = new Set(devices.map(device => device.id));
 const connectingDevices = new Set();
 const multiView = {isBusyFor: id => BUSY.has(id)};
 ${locks}
+if (createController) deviceManagementController = createController({
+ state: {
+  get devices() { return devices; }, set devices(value) { devices = value; },
+  get selectedDeviceId() { return selected; }, set selectedDeviceId(value) { selected = value; },
+  get isLoaded() { return loaded; },
+  get isLoading() { return loading; }, set isLoading(value) { loading = value; },
+  get generation() { return connectGeneration; },
+  get activeBatch() { return managementBatch; }, set activeBatch(value) { managementBatch = value; },
+  selectedDeviceIds: managementSelected
+ },
+ request: api, isDeviceConnecting: deviceConnecting, isDeviceBusy: deviceBusy,
+ confirmDelete: confirm, refreshDevices: () => load(true), onChange: render, notify: message
+});
 ${deletion}
 ${refresh}
 globalThis.snapshot = () => ({
- loading, selected, devices, selectedIds: [...managementSelected]
+ loading, selected, devices, selectedIds: [...managementSelected], managementBatch
 });
 `;
   vm.runInNewContext(script, sandbox, {filename: 'bulk-management-page.js'});
@@ -62,6 +76,7 @@ globalThis.snapshot = () => ({
   assert.deepEqual(requests, [['/api/devices/ready' + suffix, handlerId === 'bulkDelete' ? 'DELETE' : 'POST']],
     'page-level loading cannot block an eligible batch target; new busy targets are skipped');
   assert.equal(state.loading, false, 'the page lock must be released');
+  assert.equal(state.managementBatch, null, 'the finished batch relinquishes ownership');
   assert.equal(reloadCount, 1, 'one final refresh');
   assert(renderCount >= 2, 'disabled controls redraw before and after the operation');
   assert.equal(confirmations.length, handlerId === 'bulkDelete' ? 1 : 0);
@@ -78,7 +93,10 @@ globalThis.snapshot = () => ({
 }
 
 (async () => {
-  await verify('bulkDelete', '');
-  await verify('refreshAll', '/refresh');
-  console.log('Bulk delete/refresh: page lock does not self-skip; per-device busy state is rechecked: OK');
+  const {createDeviceManagementController} = await import('../web/features/devices/device-management-controller.js');
+  for (const createController of [null, createDeviceManagementController]) {
+    await verify('bulkDelete', '', createController);
+    await verify('refreshAll', '/refresh', createController);
+  }
+  console.log('Bulk delete/refresh legacy/injected: page lock does not self-skip; per-device busy state is rechecked: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

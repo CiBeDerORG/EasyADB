@@ -180,6 +180,7 @@ const managementSelected=new Set(); // one selection for every batch action
 // never hold the global management lock or block completed device controls.
 const connectingDevices=new Set(),connectSnapshots=new Map();
 let connectionBatchBusy=false,connectGeneration=0,connectProgressRevision=0,connectController=null;
+let managementBatch=null; // shared across the temporary inline and module adapters
 function deviceConnecting(id){return connectingDevices.has(id);}
 // The global management lock must not cause a running batch to skip itself.
 function deviceBusy(id){return deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
@@ -393,6 +394,7 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
     get isLoaded(){return loaded;},
     get isLoading(){return loading;},set isLoading(value){loading=value;},
     get generation(){return connectGeneration;},
+    get activeBatch(){return managementBatch;},set activeBatch(value){managementBatch=value;},
     selectedDeviceIds:managementSelected
    },
    request:api,refreshDevices:()=>load(true),confirmDelete:text=>confirm(text),
@@ -935,8 +937,12 @@ async function loadAndConnect(){
 }
 $('load').addEventListener('click',loadAndConnect);
 $('token').addEventListener('input',()=>{
- if(typeof deviceManagementController!=='undefined')deviceManagementController?.invalidate();
  connectGeneration++;connectController?.abort();connectController=null;
+ if(typeof deviceManagementController!=='undefined'&&deviceManagementController){
+  deviceManagementController.invalidate();
+ }else if(managementBatch){
+  const batch=managementBatch;managementBatch=null;batch.abortController.abort();loading=false;
+ }
  connectingDevices.clear();connectSnapshots.clear();
  if(connectionBatchBusy)loading=false;
  connectionBatchBusy=false;
@@ -965,7 +971,9 @@ $('bulkConnect').addEventListener('click',async()=>{
 $('bulkDelete').addEventListener('click',async()=>{
  if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
   return deviceManagementController.deleteSelected();
+ // Pre-bootstrap compatibility retains the same batch owner across injection.
  if(loading||!loaded)return;
+ const epoch=connectGeneration;
  const picked=devices.filter(d=>managementSelected.has(d.id));
  const candidates=picked.filter(d=>!deviceLocked(d.id));
  const skipped=picked.length-candidates.length;
@@ -974,17 +982,30 @@ $('bulkDelete').addEventListener('click',async()=>{
   candidates.map(d=>d.name).join('、')+
   (skipped?'\n另有 '+skipped+' 台正在投屏或清理中，将跳过。':'')+
   '\n不会清除手机上的 ADB 配对授权。确认删除？'))return;
- loading=true;render();let success=0;const failed=[];
- for(const d of candidates){
-  if(deviceBusy(d.id)){failed.push(d.name+'：设备正在连接/投屏，已跳过');continue;}
+ if(epoch!==connectGeneration||loading||!loaded)return;
+ const batch={generation:epoch,abortController:new AbortController()};managementBatch=batch;
+ const isCurrent=()=>managementBatch===batch&&epoch===connectGeneration;
+ loading=true;render();let success=0,refreshError='';const failed=[];
+ try{
+  for(const d of candidates){
+   if(!isCurrent())return;
+   if(deviceBusy(d.id)){failed.push(d.name+'：设备正在连接/投屏，已跳过');continue;}
+   try{
+    await api('/api/devices/'+encodeURIComponent(d.id),{method:'DELETE',signal:batch.abortController.signal});
+    if(!isCurrent())return;
+    managementSelected.delete(d.id);if(selected===d.id)selected=null;success++;
+   }catch(e){if(!isCurrent())return;failed.push(d.name+'：'+e.message);}
+  }
   try{
-   await api('/api/devices/'+encodeURIComponent(d.id),{method:'DELETE'});
-   managementSelected.delete(d.id);if(selected===d.id)selected=null;success++;
-  }catch(e){failed.push(d.name+'：'+e.message);}
+   if(!await load(true))refreshError='设备列表刷新失败';
+  }catch(e){refreshError='设备列表刷新失败：'+e.message;}
+  if(!isCurrent())return;
+ }finally{
+  if(isCurrent()){managementBatch=null;loading=false;render();}
  }
- await load(true);loading=false;render();
  message('批量删除完成：已删除 '+success+' 台，预先跳过投屏中 '+skipped+' 台，其他未删除 '+
-  failed.length+' 台'+(failed.length?'；'+failed.join('；'):'')+'.',failed.length?'error':'ok');
+  failed.length+' 台'+(failed.length?'；'+failed.join('；'):'')+'.'+
+  (refreshError?'；'+refreshError:''),failed.length||refreshError?'error':'ok');
 });
 $('newDevice').addEventListener('click',()=>openModal());
 $('newGroup').addEventListener('click',()=>openGroup());
@@ -1098,22 +1119,39 @@ $('refreshAll').addEventListener('click',async()=>{
  if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
   return deviceManagementController.checkSelected();
  if(loading||!loaded)return;
+ const epoch=connectGeneration;
  const picked=devices.filter(d=>managementSelected.has(d.id));
  const candidates=picked.filter(d=>!deviceLocked(d.id));
  const skipped=picked.length-candidates.length;
  if(!candidates.length)return;
- loading=true;render();let success=0;const failed=[];
- for(const d of candidates){
-  message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
-  if(deviceBusy(d.id)){failed.push(d.name+'：正在连接或投屏，已跳过');continue;}
+ const batch={generation:epoch,abortController:new AbortController()};managementBatch=batch;
+ const isCurrent=()=>managementBatch===batch&&epoch===connectGeneration;
+ loading=true;render();let success=0,refreshError='';const failed=[];
+ try{
+  for(const d of candidates){
+   if(!isCurrent())return;
+   message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
+   if(deviceBusy(d.id)){failed.push(d.name+'：正在连接或投屏，已跳过');continue;}
+   try{
+    const response=await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{
+     method:'POST',signal:batch.abortController.signal
+    });
+    if(!isCurrent())return;
+    const fresh=await response.json();
+    if(!isCurrent())return;
+    devices=devices.map(x=>x.id===d.id?fresh:x);success++;
+   }catch(e){if(!isCurrent())return;failed.push(d.name+'：'+e.message);}
+  }
   try{
-   const fresh=await(await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{method:'POST'})).json();
-   devices=devices.map(x=>x.id===d.id?fresh:x);success++;
-  }catch(e){failed.push(d.name+'：'+e.message);}
+   if(!await load(true))refreshError='设备列表刷新失败';
+  }catch(e){refreshError='设备列表刷新失败：'+e.message;}
+  if(!isCurrent())return;
+ }finally{
+  if(isCurrent()){managementBatch=null;loading=false;render();}
  }
- await load(true);loading=false;render();
  message('批量检查完成：已检查 '+success+' 台，投屏中预先跳过 '+skipped+' 台，其他失败/跳过 '+failed.length+' 台；只检查各自选定地址，不自动连接'+
-  (failed.length?'；'+failed.join('；'):''),failed.length?'error':'ok');
+  (failed.length?'；'+failed.join('；'):'')+(refreshError?'；'+refreshError:''),
+  failed.length||refreshError?'error':'ok');
 });
 window.addEventListener('beforeunload',()=>{if(multiView)multiView.closeAll();});
 window.addEventListener('pagehide',()=>{if(multiView)multiView.closeAll();});

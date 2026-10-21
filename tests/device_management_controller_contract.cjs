@@ -19,7 +19,7 @@ function devices(ids) {
 function fixture(factory, ids = ['1', '2', '3']) {
   const state = {
     devices: devices(ids), selectedDeviceIds: new Set(ids), selectedDeviceId: '1',
-    isLoaded: true, isLoading: false, generation: 0,
+    isLoaded: true, isLoading: false, generation: 0, activeBatch: null,
   };
   const busy = new Set(), connecting = new Set(), requests = [], notices = [], confirmations = [];
   const server = new Map(state.devices.map((device) => [device.id, device]));
@@ -192,14 +192,15 @@ function section(html, start, end) {
       REDRAWS: redraws, NOTICES: notices, REQUESTS: requests,
       REQUEST: async (path, options) => {
         requests.push([path, options.method]);
-        return { json: async () => ({ ...devices([path.split('/')[3]])[0], status: 'checked' }) };
+        const id = decodeURIComponent(path.split('/')[3]);
+        return { json: async () => ({ ...devices([id])[0], status: 'checked' }) };
       },
     };
     const setup = `
 const $=id=>document.getElementById(id);
 let devices=INITIAL.map(device=>({...device})),groups=[],selected='1',loaded=true,loading=false;
 const managementSelected=new Set(['1']),connectingDevices=new Set(),connectSnapshots=new Map();
-let connectGeneration=0,connectionBatchBusy=false,connectController=null;
+let connectGeneration=0,connectionBatchBusy=false,connectController=null,managementBatch=null;
 let multiView={isBusyFor:()=>false,closeAll(){}};
 let frontendModules=null,deviceConnectionController=null,deviceManagementController=null;
 const toastItems=new Map();
@@ -239,6 +240,9 @@ globalThis.snapshot=()=>({devices,selected,selection:managementSelected,loading,
       ['/api/devices/1/refresh', 'POST'],
       ['/api/devices/2/refresh', 'POST'],
     ]);
+    assert.deepEqual(Array.from(sandbox.snapshot().devices, device => device.id), ['1', '2'],
+      'refresh responses preserve both device identities');
+    assert(sandbox.snapshot().devices.every(device => device.status === 'checked'));
     assert.equal(sandbox.snapshot().loading, false);
     await handlers.get('bulkDelete:click')();
     assert.deepEqual(requests.slice(2), [
@@ -246,7 +250,7 @@ globalThis.snapshot=()=>({devices,selected,selection:managementSelected,loading,
       ['/api/devices/2', 'DELETE'],
     ]);
     assert.equal(selection.size, 0);
-    assert.equal(sandbox.snapshot().selected, null);
+    assert.equal(sandbox.snapshot().selected, null, 'deleting the active device clears its selection');
     handlers.get('token:input')();
     assert.equal(sandbox.snapshot().loaded, false);
     assert.equal(sandbox.snapshot().devices.length, 0);

@@ -20,7 +20,17 @@ export class DeviceManagementController {
     this.isDeviceConnecting = isDeviceConnecting;
     this.onChange = onChange;
     this.notify = notify;
-    this.activeBatch = null;
+    // The page also exposes this owner to the temporary inline adapter. Never
+    // replace an in-flight legacy batch when the deferred module is installed.
+    if (state.activeBatch === undefined) state.activeBatch = null;
+  }
+
+  get activeBatch() {
+    return this.state.activeBatch;
+  }
+
+  set activeBatch(batch) {
+    this.state.activeBatch = batch;
   }
 
   getSelectionSummary() {
@@ -80,6 +90,7 @@ export class DeviceManagementController {
   async runBatch(operation) {
     const state = this.state;
     if (state.isLoading || !state.isLoaded || this.activeBatch) return false;
+    const generation = state.generation;
     const { selected, eligible } = this.getSelectionSummary();
     const skipped = selected.length - eligible.length;
     if (!eligible.length) return false;
@@ -96,11 +107,13 @@ export class DeviceManagementController {
     )
       return false;
 
-    const batch = { generation: state.generation, abortController: new AbortController() };
+    if (generation !== state.generation || state.isLoading || !state.isLoaded || this.activeBatch) {
+      return false;
+    }
+    const batch = { generation, abortController: new AbortController() };
     const isCurrent = () => this.activeBatch === batch && state.generation === batch.generation;
     this.activeBatch = batch;
     state.isLoading = true;
-    this.onChange();
     const failed = [];
     const deletedIds = new Set();
     let success = 0;
@@ -108,6 +121,7 @@ export class DeviceManagementController {
     let completed = false;
 
     try {
+      this.onChange();
       for (const device of eligible) {
         if (!isCurrent()) return false;
         if (operation === 'check') {
@@ -122,13 +136,13 @@ export class DeviceManagementController {
         }
         // A phone may become busy or leave the selection during an earlier request.
         // Revalidate immediately before dispatch, ignoring the page's own lock.
-        const stillPresent = state.devices.some((entry) => entry.id === device.id);
-        if (
-          !stillPresent ||
-          !state.selectedDeviceIds.has(device.id) ||
-          this.isDeviceBusy(device.id)
-        ) {
+        const present = state.devices.find((entry) => entry.id === device.id);
+        if (!present || !state.selectedDeviceIds.has(device.id) || this.isDeviceBusy(device.id)) {
           failed.push(device.name + '：正在连接或投屏，已跳过');
+          continue;
+        }
+        if (present.selected_serial !== device.selected_serial) {
+          failed.push(device.name + '：设备选定地址已变更，已跳过');
           continue;
         }
         try {
@@ -145,6 +159,15 @@ export class DeviceManagementController {
           if (operation === 'check') {
             const fresh = await response.json();
             if (!isCurrent()) return false;
+            const current = state.devices.find((entry) => entry.id === device.id);
+            if (
+              !current ||
+              current.selected_serial !== device.selected_serial ||
+              fresh?.id !== device.id ||
+              fresh.selected_serial !== device.selected_serial
+            ) {
+              throw Error('设备检查结果与当前选定地址不一致，已忽略');
+            }
             state.devices = state.devices.map((entry) => (entry.id === device.id ? fresh : entry));
           } else {
             state.selectedDeviceIds.delete(device.id);
