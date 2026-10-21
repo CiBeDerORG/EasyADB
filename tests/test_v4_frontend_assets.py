@@ -18,6 +18,7 @@ MODULES = (
     "features/devices/device-list-model.js",
     "features/devices/device-list-view.js",
     "features/devices/device-connection-controller.js",
+    "features/devices/device-management-controller.js",
 )
 
 

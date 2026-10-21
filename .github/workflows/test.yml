@@ -52,6 +52,7 @@ jobs:
           node tests/bulk_management_lock_contract.cjs
           node tests/progressive_connect_contract.cjs
           node tests/device_connection_controller_contract.cjs
+          node tests/device_management_controller_contract.cjs
           node tests/m2_webrtc_contract.cjs
           node tests/m2_traffic_meter.cjs
           node tests/m2_touch_contract.cjs

@@ -278,7 +278,7 @@ function adbStatusBadge(d){
 }
 const toastHost=$('toastHost'),toastItems=new Map();
 let frontendModules=null; // populated by a one-time ES Module bootstrap; no window global
-let deviceConnectionController=null;
+let deviceConnectionController=null,deviceManagementController=null;
 function toastSelected(card){
  const selection=typeof window.getSelection==='function'?window.getSelection():null;
  return Boolean(selection&&!selection.isCollapsed&&
@@ -385,6 +385,21 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
    onChange:render,notify:message
   });
  }
+ if(frontendModules.createDeviceManagementController){
+  deviceManagementController=frontendModules.createDeviceManagementController({
+   state:{
+    get devices(){return devices;},set devices(value){devices=value;},
+    get selectedDeviceId(){return selected;},set selectedDeviceId(value){selected=value;},
+    get isLoaded(){return loaded;},
+    get isLoading(){return loading;},set isLoading(value){loading=value;},
+    get generation(){return connectGeneration;},
+    selectedDeviceIds:managementSelected
+   },
+   request:api,refreshDevices:()=>load(true),confirmDelete:text=>confirm(text),
+   isDeviceBusy:deviceBusy,isDeviceConnecting:deviceConnecting,
+   onChange:render,notify:message
+  });
+ }
  if(initialText)message(initialText);
  render(); // use the injected device-list projection after module bootstrap
 });
@@ -467,6 +482,8 @@ function render(){
    },
    on:{
     onSelectionChange:(id,checked)=>{
+     if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
+      return deviceManagementController.selectDevice(id,checked);
      if(checked)managementSelected.add(id);else managementSelected.delete(id);
      render();
     },
@@ -495,6 +512,8 @@ function render(){
    managementCheck.checked=managementSelected.has(d.id);managementCheck.disabled=loading||deviceConnecting(d.id);
    managementCheck.setAttribute('aria-label','批量选择 '+d.name);
    managementCheck.addEventListener('change',()=>{
+    if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
+     return deviceManagementController.selectDevice(d.id,managementCheck.checked);
     if(managementCheck.checked)managementSelected.add(d.id);else managementSelected.delete(d.id);
     render();
    });
@@ -604,20 +623,22 @@ function render(){
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);
- $('refreshAll').disabled=loading||!loaded||!devices.some(d=>managementSelected.has(d.id)&&!deviceLocked(d.id));
  $('newDevice').disabled=loading||!loaded;
  $('newGroup').disabled=loading||!loaded;
- const candidates=devices.filter(d=>managementSelected.has(d.id));
- const eligible=candidates.filter(d=>!deviceLocked(d.id));
- const adbReady=candidates.filter(hasConnectedAdb);
+ const summary=typeof deviceManagementController!=='undefined'&&deviceManagementController
+  ?deviceManagementController.getSelectionSummary():null;
+ const candidates=summary?.selected??devices.filter(d=>managementSelected.has(d.id));
+ const eligible=summary?.eligible??candidates.filter(d=>!deviceLocked(d.id));
+ const adbReady=summary?.ready??candidates.filter(hasConnectedAdb);
+ $('refreshAll').disabled=loading||!loaded||!eligible.length;
  $('bulkCount').textContent='已选设备 '+candidates.length+' 台 · ADB 可用 '+adbReady.length+' 台'+
   (candidates.length-adbReady.length?' · 未连接/连接失败 '+(candidates.length-adbReady.length)+' 台':'')+
   (candidates.length-eligible.length?' · '+(candidates.length-eligible.length)+' 台投屏中不可批量管理':'');
  $('bulkConnect').disabled=loading||connectionBatchBusy||!loaded||!eligible.length;
  $('bulkDelete').disabled=loading||!loaded||!eligible.length;
  $('load').disabled=loading||connectionBatchBusy;
- const all=$('bulkSelectAll'),selectable=devices.filter(d=>!deviceConnecting(d.id));
- const selectedSelectable=selectable.filter(d=>managementSelected.has(d.id));
+ const all=$('bulkSelectAll'),selectable=summary?.selectable??devices.filter(d=>!deviceConnecting(d.id));
+ const selectedSelectable=summary?.selectedSelectable??selectable.filter(d=>managementSelected.has(d.id));
  all.disabled=loading||!loaded||!selectable.length;
  all.checked=selectable.length>0&&selectedSelectable.length===selectable.length;
  all.indeterminate=selectedSelectable.length>0&&selectedSelectable.length<selectable.length;
@@ -914,6 +935,7 @@ async function loadAndConnect(){
 }
 $('load').addEventListener('click',loadAndConnect);
 $('token').addEventListener('input',()=>{
+ if(typeof deviceManagementController!=='undefined')deviceManagementController?.invalidate();
  connectGeneration++;connectController?.abort();connectController=null;
  connectingDevices.clear();connectSnapshots.clear();
  if(connectionBatchBusy)loading=false;
@@ -922,6 +944,8 @@ $('token').addEventListener('input',()=>{
  loaded=false;devices=[];groups=[];selected=null;managementSelected.clear();render();
 });
 $('bulkSelectAll').addEventListener('change',()=>{
+ if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
+  return deviceManagementController.selectAll($('bulkSelectAll').checked);
  if(loading||!loaded)return;
  const selectable=devices.filter(d=>!deviceConnecting(d.id));
  if($('bulkSelectAll').checked)for(const d of selectable)managementSelected.add(d.id);
@@ -939,6 +963,8 @@ $('bulkConnect').addEventListener('click',async()=>{
  await connectProgressively(candidates,skipped,true,'批量连接',connectGeneration);
 });
 $('bulkDelete').addEventListener('click',async()=>{
+ if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
+  return deviceManagementController.deleteSelected();
  if(loading||!loaded)return;
  const picked=devices.filter(d=>managementSelected.has(d.id));
  const candidates=picked.filter(d=>!deviceLocked(d.id));
@@ -1069,6 +1095,8 @@ $('form').addEventListener('submit',async ev=>{
  }catch(e){modalMessage(e.message);}finally{loading=false;render();}
 });
 $('refreshAll').addEventListener('click',async()=>{
+ if(typeof deviceManagementController!=='undefined'&&deviceManagementController)
+  return deviceManagementController.checkSelected();
  if(loading||!loaded)return;
  const picked=devices.filter(d=>managementSelected.has(d.id));
  const candidates=picked.filter(d=>!deviceLocked(d.id));

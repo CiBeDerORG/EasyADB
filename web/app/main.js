@@ -7,6 +7,7 @@ import { createLiveQualitySettings } from '../features/live/live-quality-setting
 import { createLiveBatchScheduler } from '../features/live/live-batch-scheduler.js';
 import { createLiveCardView } from '../features/live/live-card-view.js';
 import * as deviceConnection from '../features/devices/device-connection-controller.js';
+import * as deviceManagement from '../features/devices/device-management-controller.js';
 import * as deviceList from '../features/devices/device-list-model.js';
 import * as deviceListView from '../features/devices/device-list-view.js';
 
@@ -18,6 +19,7 @@ const modules = {
   createLiveBatchScheduler,
   createLiveCardView,
   createDeviceConnectionController: deviceConnection.createDeviceConnectionController,
+  createDeviceManagementController: deviceManagement.createDeviceManagementController,
   deviceList,
   deviceListView,
   api: createApiClient({
