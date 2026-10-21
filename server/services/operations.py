@@ -8,6 +8,8 @@ Do not hold these locks while waiting for unrelated background tasks.
 from contextlib import ExitStack, contextmanager
 import threading
 
+from ..core.exceptions import DomainError
+
 
 def device_lock(manager, device_id):
     """Return the existing per-device RLock, not a second competing lock."""
@@ -21,6 +23,20 @@ def device_locks(manager, device_ids):
         for device_id in sorted(set(device_ids)):
             stack.enter_context(device_lock(manager, device_id))
         yield
+
+
+def require_clean_sessions(live_registry, device_ids, detail):
+    """Reject record mutations until every target's resources are verified clean.
+
+    Callers must hold all target device locks through the subsequent mutation,
+    so a new live reservation cannot slip between this check and the DB write.
+    Checking proof does not stop, release or otherwise mutate any session.
+    """
+    with live_registry.lock:
+        for device_id in device_ids:
+            session = live_registry.sessions.get(device_id)
+            if session is not None and not live_registry.is_cleaned(session):
+                raise DomainError(409, detail)
 
 
 # Group membership operations acquire this guard before any device RLocks.

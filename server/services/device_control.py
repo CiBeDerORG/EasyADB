@@ -4,7 +4,7 @@ import sqlite3
 from ..core.exceptions import DomainError
 from ..devices import selected_address
 from ..m2_unlock import validate_password
-from .operations import device_lock
+from .operations import device_lock, require_clean_sessions
 
 
 def _require(store, device_id):
@@ -41,10 +41,9 @@ def set_temporary_record(device_id, ip_value, port_value, validate_address, *,
         if display_lab.has_pending(device_id):
             raise DomainError(409, "请先恢复该设备的副屏实验，再修改线路")
         original = _require(store, device_id)
-        with live_registry.lock:
-            session = live_registry.sessions.get(device_id)
-            if session is not None and not live_registry.is_cleaned(session):
-                raise DomainError(409, "该设备正在投屏或清理，请结束后修改临时地址")
+        require_clean_sessions(
+            live_registry, (device_id,), "该设备正在投屏或清理，请结束后修改临时地址",
+        )
         if ip_value is None:
             if port_value is not None:
                 raise DomainError(400, "移除临时 IP 时不可单独修改共用端口")
@@ -72,6 +71,11 @@ def select_route_record(device_id, route, *, store, manager, display_lab, live_r
             raise DomainError(409, "请先恢复该设备的副屏实验，再切换线路")
         if route not in ("mesh", "lan", "temp"):
             raise DomainError(400, "请选择组网 IP、内网 IP 或临时 IP")
+        _require(store, device_id)
+        require_clean_sessions(
+            live_registry, (device_id,),
+            "该设备正在投屏或清理，请结束并确认清理后再切换线路",
+        )
         try:
             result = store.select_route(device_id, route)
         except ValueError as exc:

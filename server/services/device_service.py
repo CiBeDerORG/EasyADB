@@ -2,7 +2,7 @@
 import sqlite3
 
 from ..core.exceptions import DomainError
-from .operations import membership_lock, device_lock
+from .operations import membership_lock, device_lock, require_clean_sessions
 
 
 def create_device_record(data, *, store, manager):
@@ -25,6 +25,10 @@ def update_device_record(device_id, clean_data, *, store, manager, display_lab, 
             if original is None:
                 raise DomainError(404, "找不到该设备")
             data = clean_data()
+            require_clean_sessions(
+                live_registry, (device_id,),
+                "该设备正在投屏或清理，请结束并确认清理后再修改设备",
+            )
             try:
                 updated = store.update(device_id, data)
             except sqlite3.IntegrityError:
@@ -45,7 +49,13 @@ def delete_device_record(device_id, *, store, manager, display_lab, live_registr
         with device_lock(manager, device_id):
             if display_lab.has_pending(device_id):
                 raise DomainError(409, "该设备有待恢复的副屏实验，请先恢复原始设置")
-            if store.get(device_id) is None or not store.delete(device_id):
+            if store.get(device_id) is None:
+                raise DomainError(404, "找不到该设备")
+            require_clean_sessions(
+                live_registry, (device_id,),
+                "该设备正在投屏或清理，请结束并确认清理后再删除设备",
+            )
+            if not store.delete(device_id):
                 raise DomainError(404, "找不到该设备")
             live_registry.stop_for(device_id)
             manager.clear(device_id)

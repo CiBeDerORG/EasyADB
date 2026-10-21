@@ -2,7 +2,8 @@
 import sqlite3
 
 from ..core.exceptions import DomainError
-from .operations import membership_lock, device_locks, group_operation, GroupBusy
+from .operations import (membership_lock, device_locks, group_operation, GroupBusy,
+                         require_clean_sessions)
 
 
 def _busy():
@@ -29,6 +30,10 @@ def update_group_record(group_name, clean_data, *, store, manager, display_lab,
                 with device_locks(manager, members):
                     if any(display_lab.has_pending(device_id) for device_id in members):
                         raise DomainError(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
+                    require_clean_sessions(
+                        live_registry, members,
+                        "分组中存在正在投屏或清理的设备，请结束并确认清理后再修改分组",
+                    )
                     try:
                         result = store.update_group(group_name, name, prefix)
                     except sqlite3.IntegrityError:
@@ -54,6 +59,10 @@ def delete_group_record(group_name, *, store, manager, display_lab,
                 with device_locks(manager, members):
                     if any(display_lab.has_pending(device_id) for device_id in members):
                         raise DomainError(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
+                    require_clean_sessions(
+                        live_registry, members,
+                        "分组中存在正在投屏或清理的设备，请结束并确认清理后再删除分组",
+                    )
                     result = store.delete_group(group_name)
                     if result is None:
                         raise DomainError(404, "找不到该分组")

@@ -195,7 +195,7 @@ def test_live_websocket_rejects_auth_and_stale_selected_address(monkeypatch, tmp
             assert ws.receive_json()["type"] == "error"
 
 
-def test_manual_device_ip_switch_interrupts_live_session(monkeypatch, tmp_path):
+def test_manual_device_ip_switch_requires_verified_session_cleanup(monkeypatch, tmp_path):
     monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
     mod = importlib.import_module("server.app")
     mod.store = DeviceStore(str(tmp_path / "devices.sqlite3"))
@@ -205,16 +205,31 @@ def test_manual_device_ip_switch_interrupts_live_session(monkeypatch, tmp_path):
     class DummyStream:
         def __init__(self):
             self.stopped = False
+            self.finished = threading.Event()
+            self.cleanup_complete = False
+            self.peer_cleanup_complete = False
         def stop(self): self.stopped = True
     running = DummyStream()
     with TestClient(mod.app) as client:
+        assert client.post("/api/groups", headers=AUTH, json={
+            "name": "Home", "ip_prefix": "192.168.1.*"
+        }).status_code == 201
         device = client.post("/api/devices", headers=AUTH, json={
-            "name": "Phone", "ip": "10.10.30.206", "port": 40455
+            "name": "Phone", "ip": "10.10.30.206", "port": 40455, "group_name": "Home"
         }).json()
         assert mod.live_registry.reserve(device["id"], running)
         result = client.put(f"/api/devices/{device['id']}/route", headers=AUTH,
-                            json={"route": "mesh"})
+                            json={"route": "lan"})
+        assert result.status_code == 409
+        assert mod.store.get(device["id"])["selected_route"] == "mesh"
+        assert not running.stopped
+        assert mod.live_registry.sessions[device["id"]] is running
+        running.finished.set()
+        running.cleanup_complete = running.peer_cleanup_complete = True
+        result = client.put(f"/api/devices/{device['id']}/route", headers=AUTH,
+                            json={"route": "lan"})
         assert result.status_code == 200
+        assert result.json()["selected_serial"] == "192.168.1.206:40455"
         assert running.stopped
         mod.live_registry.release(device["id"], running)
 
