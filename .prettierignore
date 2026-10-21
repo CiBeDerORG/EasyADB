@@ -1,6 +1,7 @@
 # V4-01: explicit old-format baseline; migrate one module at a time.
 # New web/ modules are never blanket-ignored.
-web/index.html
+# CSS extracted without a visual rewrite; format only after isolated CSS baseline review.
+web/assets/legacy-page.css
 web/display-lab.js
 web/m2-group.js
 web/m2-metrics.js

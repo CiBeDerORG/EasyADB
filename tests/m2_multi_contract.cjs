@@ -85,7 +85,7 @@ vm.runInNewContext(productionSource.replace('const MAX_DEVICES=20;','const MAX_D
 assert.equal(frontendModuleListeners.length,1);
 frontendModuleListeners[0]({detail:{createLiveSessionController,
  createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
-const page=fs.readFileSync('web/index.html','utf8');
+const page=(fs.readFileSync('web/index.html','utf8')+'\n'+fs.readFileSync('web/assets/legacy-page.css','utf8'));
 assert.match(page,/最多20路/);
 assert.doesNotMatch(page,/id="legacySolo"/,'legacy screenshot player must be deleted');
 assert.doesNotMatch(page,/id="previewTitle"|id="shotButton"|id="liveVideo"/);

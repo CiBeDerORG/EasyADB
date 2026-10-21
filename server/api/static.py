@@ -56,6 +56,15 @@ def m2_group_script():
 
 
 
+# Exact legacy stylesheet route: no generic directory mount.
+@router.get("/assets/legacy-page.css", include_in_schema=False)
+def legacy_page_stylesheet():
+    return FileResponse(
+        ROOT / "web" / "assets" / "legacy-page.css", media_type="text/css",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 # Exact V4 ES Module allowlist, not a wildcard file or directory mount.
 # Imported relative paths resolve under these same URL prefixes.
 FRONTEND_MODULES = (

@@ -2,7 +2,7 @@
 'use strict';
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
-const page=fs.readFileSync('web/index.html','utf8');
+const page=(fs.readFileSync('web/index.html','utf8')+'\n'+fs.readFileSync('web/assets/legacy-page.css','utf8'));
 const multiSource=fs.readFileSync('web/m2-multi.js','utf8');
 const groupSource=fs.readFileSync('web/m2-group.js','utf8');
 const server=fs.readFileSync('server/app.py','utf8');

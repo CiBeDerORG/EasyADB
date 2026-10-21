@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('node:fs'),assert=require('node:assert/strict');
-const html=fs.readFileSync('web/index.html','utf8');
+const html=(fs.readFileSync('web/index.html','utf8')+'\n'+fs.readFileSync('web/assets/legacy-page.css','utf8'));
 const server=fs.readFileSync('server/app.py','utf8');
 const discoveryService=fs.readFileSync('server/services/group_discovery.py','utf8');
 const source=fs.readFileSync('server/openwrt_discovery.py','utf8');

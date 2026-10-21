@@ -60,7 +60,8 @@ for (const name of legacyScripts) {
   assert(prettierIgnore.includes(`web/${name}\n`), `missing explicit format exception: ${name}`);
   assert(eslintConfig.includes(`'web/${name}'`), `missing explicit lint exception: ${name}`);
 }
-assert(prettierIgnore.includes('web/index.html\n'));
+assert(!prettierIgnore.includes('web/index.html\n'), 'migrated page must not be ignored');
+assert(prettierIgnore.includes('web/assets/legacy-page.css\n'), 'unformatted legacy CSS must be explicitly scoped');
 assert(!prettierIgnore.includes('web/**'));
 assert(eslintConfig.includes('camelcase:'), 'new modules must enforce camelCase identifiers');
 visit(webRoot);

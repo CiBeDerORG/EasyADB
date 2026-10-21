@@ -30,8 +30,18 @@ def test_v4_module_urls_only_serve_explicit_assets(monkeypatch):
             assert response.text == (
                 Path(__file__).resolve().parents[1] / "web" / path
             ).read_text(encoding="utf-8")
+        stylesheet = client.get("/assets/legacy-page.css")
+        assert stylesheet.status_code == 200
+        assert stylesheet.headers["cache-control"] == "no-store"
+        assert stylesheet.headers["content-type"].startswith("text/css")
+        assert stylesheet.text == (
+            Path(__file__).resolve().parents[1] / "web/assets/legacy-page.css"
+        ).read_text(encoding="utf-8")
+        page = client.get("/").text
+        assert '<link rel="stylesheet" href="/assets/legacy-page.css">' in page
+        assert "<style>" not in page
         for path in (
-            "/app/secret.js", "/core/private.js", "/shared/ui/private.js",
+            "/assets/private.css", "/app/secret.js", "/core/private.js", "/shared/ui/private.js",
             "/app/../core/private.js", "/shared/ui/../../.env",
         ):
             assert client.get(path).status_code == 404, path
