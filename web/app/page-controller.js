@@ -57,6 +57,7 @@ export function createPageController({
     isLoading: false,
     generation: 0,
     resultRevision: 0,
+    metadataLoad: null,
     abortController: null,
     isBatchBusy: false,
     selectedDeviceIds: new Set(),

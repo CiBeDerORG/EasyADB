@@ -12,26 +12,42 @@ export class DeviceConnectionController {
     this.isDeviceBusy = isDeviceBusy;
     this.onChange = onChange;
     this.notify = notify;
+    if (state.metadataLoad === undefined) state.metadataLoad = null;
   }
 
   async loadDevices(isQuiet = false) {
     const state = this.state;
-    const generation = state.generation;
-    const revision = state.resultRevision;
     if (!this.getToken().trim()) {
       this.notify('请先输入访问密钥', 'error');
       return false;
     }
+    const metadataLoad = {
+      generation: state.generation,
+      resultRevision: state.resultRevision,
+      promise: null,
+    };
+    state.metadataLoad = metadataLoad;
+    metadataLoad.promise = this.readDevices(metadataLoad, isQuiet);
+    return metadataLoad.promise;
+  }
+
+  async readDevices(metadataLoad, isQuiet) {
+    const state = this.state;
+    const { generation, resultRevision } = metadataLoad;
     try {
       const [devices, groups] = await Promise.all([
         this.request('/api/devices').then((response) => response.json()),
         this.request('/api/groups').then((response) => response.json()),
       ]);
       if (generation !== state.generation) return false;
+      // Only the newest read may publish a snapshot. An older caller follows
+      // its replacement's result, so overlapping scans do not report a false
+      // refresh failure, and a failed new read cannot revive stale deleted rows.
+      if (state.metadataLoad !== metadataLoad) return state.metadataLoad?.promise ?? false;
       const merged = devices.map((device) => {
         const newer = state.resultSnapshots.get(device.id);
         return newer &&
-          newer.revision > revision &&
+          newer.revision > resultRevision &&
           newer.device.selected_serial === device.selected_serial
           ? newer.device
           : device;
@@ -50,8 +66,10 @@ export class DeviceConnectionController {
       if (!isQuiet) this.notify('已加载 ' + merged.length + ' 台设备', 'ok');
       return true;
     } catch (error) {
-      // An old credential's failed GET is as stale as its successful response.
-      if (generation === state.generation && !isQuiet) this.notify(error.message, 'error');
+      // A replaced read's failure is as stale as its successful response.
+      if (generation !== state.generation) return false;
+      if (state.metadataLoad !== metadataLoad) return state.metadataLoad?.promise ?? false;
+      if (!isQuiet) this.notify(error.message, 'error');
       return false;
     }
   }

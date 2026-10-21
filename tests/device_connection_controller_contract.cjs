@@ -1,7 +1,7 @@
 /* Real controller and page adapter; no browser, ADB, timers or network required. */
 'use strict';
 const assert = require('node:assert/strict');
-const {createPageFixture} = require('./helpers/page-fixture.cjs');
+const {createPageFixture, findAll} = require('./helpers/page-fixture.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const makeDevices = (count = 5) => Array.from({ length: count }, (_, index) => ({
@@ -72,6 +72,92 @@ function fixture(createController, initial = makeDevices()) {
   }
   return { state, controller, request, server, requests, connections, lists, messages,
     renders, busy, behavior, finish };
+}
+
+const copy = value => JSON.parse(JSON.stringify(value));
+const pageDevices = () => makeDevices(2).map((device, index) => ({...device,
+  group_name: index ? 'Work' : 'Home', ip: '10.0.0.' + device.id,
+  mesh_ip: '10.0.0.' + device.id, lan_ip: '192.168.' + (index ? '20' : '10') + '.' + device.id,
+  port: 5555, selected_route: 'mesh',
+}));
+
+async function checkPageDeletedRowsStayDeleted() {
+  for (const stage of ['response', 'json']) for (const finalRefreshFails of [false, true]) {
+    let rows = pageDevices(), reads = 0;
+    const oldRead = deferred(), oldRows = copy(rows), groups = [{name: 'Home'}, {name: 'Work'}];
+    const f = await createPageFixture({devices: copy(rows), groups, request: async (path, options, entry) => {
+      if (path === '/api/groups') return {json: async () => groups};
+      if (path === '/api/devices') {
+        if (++reads === 1) return stage === 'response' ? oldRead.promise : {json: () => oldRead.promise};
+        if (finalRefreshFails) return {ok: false, status: 503, json: async () => ({detail: 'new read failed'})};
+        return {json: async () => copy(rows)};
+      }
+      assert.equal(path, '/api/devices/2'); assert.equal(entry.method, 'DELETE');
+      rows = rows.filter(device => device.id !== '2');
+      return {json: async () => ({deleted: true})};
+    }});
+    try {
+      const selection = f.state.selectedDeviceIds;
+      const oldLoad = f.liveOptions.onDeviceDisconnected('1');
+      await until(() => reads === 1);
+      const checkbox = findAll(f.get('devices'), node => node.tagName === 'INPUT' && node.value === '2')[0];
+      checkbox.checked = true; await checkbox.fire('change');
+      assert.equal(f.get('bulkDelete').disabled, false);
+      await f.get('bulkDelete').click();
+      assert.deepEqual(f.state.devices.map(device => device.id), ['1']);
+      const notifications = f.messages.length;
+      oldRead.resolve(stage === 'response' ? {json: async () => oldRows} : oldRows);
+      assert.equal(await oldLoad, !finalRefreshFails, 'replaced read follows the latest refresh result');
+      assert.deepEqual(f.state.devices.map(device => device.id), ['1'], 'late response cannot resurrect a deleted row');
+      assert.equal(f.state.selectedDeviceIds, selection);
+      assert.equal(selection.has('2'), false);
+      assert.equal(f.messages.length, notifications, 'late read must not overwrite the current operation result');
+      assert.equal(f.state.isLoading, false); assert.equal(f.state.activeBatch, null);
+      assert.equal(reads, 2, 'replacement adds no automatic read or retry');
+    } finally { f.dispose(); }
+  }
+}
+
+async function checkPageConcurrentDiscoveryReads() {
+  const groups = [{name: 'Home', ip_prefix: '192.168.10.*', discovery_configured: true},
+    {name: 'Work', ip_prefix: '192.168.20.*', discovery_configured: true}];
+  for (const outcome of ['old-success', 'old-error']) {
+    let rows = pageDevices(), reads = 0;
+    const oldRead = deferred(); let oldRows;
+    const f = await createPageFixture({devices: copy(rows), groups, request: async (path, options, entry) => {
+      if (path === '/api/groups') return {json: async () => groups};
+      if (path === '/api/devices') {
+        if (++reads === 1) { oldRows = copy(rows); return {json: () => oldRead.promise}; }
+        return {json: async () => copy(rows)};
+      }
+      assert.equal(entry.method, 'POST'); assert(path.endsWith('/discovery/scan'));
+      const group = path.includes('/Home/') ? 'Home' : 'Work';
+      const matched = rows.find(device => device.group_name === group);
+      assert.equal(matched.status, 'idle', 'connected devices are not eligible for discovery updates');
+      rows = rows.map(device => device === matched ? {...device, port: 6000, selected_serial: device.ip + ':6000'} : device);
+      return {json: async () => ({group, found: 1, updated: [{id: matched.id, ip: matched.lan_ip, port: 6000}],
+        endpoints: [{ip: matched.lan_ip, port: 6000, status: 'updated', device_name: matched.name}]})};
+    }});
+    const scanButton = name => {
+      const shell = findAll(f.get('devices'), node => node.className === 'group-shell' &&
+        node.children[0]?.children[0]?.children[0]?.textContent === name)[0];
+      return findAll(shell, node => node.className === 'secondary group-discovery')[0];
+    };
+    try {
+      const firstScan = scanButton('Home').click(); await until(() => reads === 1);
+      assert.equal(scanButton('Work').disabled, false, 'different groups may still scan independently');
+      assert.equal(await scanButton('Work').click(), true);
+      assert.deepEqual(f.state.devices.map(device => device.port), [6000, 6000]);
+      if (outcome === 'old-error') oldRead.reject(Error('obsolete body failed'));
+      else oldRead.resolve(oldRows);
+      assert.equal(await firstScan, true);
+      assert.deepEqual(f.state.devices.map(device => device.port), [6000, 6000]);
+      assert.equal(f.messages.some(message => message.text.includes('刷新失败')), false,
+        'a replaced scan refresh is not a user-visible failure when the newer read succeeded');
+      assert.equal(f.state.scanningGroupNames.size, 0); assert.equal(f.state.scanOperations.size, 0);
+      assert.equal(reads, 2);
+    } finally { f.dispose(); }
+  }
 }
 
 (async () => {
@@ -182,6 +268,49 @@ function fixture(createController, initial = makeDevices()) {
     assert.equal(f.messages.length, 0, 'stale metadata failures cannot overwrite new status');
   }
 
+  // Superseded success/error follows the newer in-flight read, even if it fails.
+  // Otherwise callers could report failure early or publish an old fallback snapshot.
+  for (const oldFails of [false, true]) for (const newFails of [false, true]) {
+    const f = fixture(createDeviceConnectionController, makeDevices(1));
+    f.behavior.deferLists = true;
+    let oldFinished = false;
+    const oldLoad = f.controller.loadDevices().then(value => { oldFinished = true; return value; });
+    const newLoad = f.controller.loadDevices();
+    const previous = f.state.devices, newer = [{...previous[0], name: 'Newest'}];
+    for (const entry of f.lists.slice(0, 2)) {
+      if (oldFails && entry.path === '/api/devices') entry.pending.reject(Error('obsolete error'));
+      else entry.pending.resolve({json: async () => []});
+    }
+    await tick();
+    assert.equal(oldFinished, false, 'older caller waits for its replacement instead of reporting a false failure');
+    for (const entry of f.lists.slice(2)) {
+      if (newFails && entry.path === '/api/devices') entry.pending.reject(Error('current error'));
+      else entry.pending.resolve({json: async () => entry.path === '/api/devices' ? newer : [{name: 'Current'}]});
+    }
+    assert.equal(await newLoad, !newFails); assert.equal(await oldLoad, !newFails);
+    assert.deepEqual(f.state.devices, newFails ? previous : newer);
+    assert.deepEqual(f.state.groups, newFails ? [] : [{name: 'Current'}]);
+    assert.equal(f.messages.some(([text]) => text === 'obsolete error'), false);
+    assert.equal(f.renders.length, newFails ? 0 : 1);
+  }
+
+  // The old metadata result remains stale after D1's final refresh clears its
+  // transient connection snapshots. Four-worker incremental behavior is unchanged.
+  {
+    const f = fixture(createDeviceConnectionController, makeDevices(2));
+    f.behavior.deferLists = true;
+    const oldLoad = f.controller.loadDevices(true), oldRows = copy(f.state.devices);
+    f.behavior.deferLists = false; f.state.isBatchBusy = true;
+    const connect = f.controller.connectDevices(f.state.devices.slice(), 0, true, 'latest', 0);
+    for (const entry of f.connections) f.finish(entry);
+    await connect;
+    assert.equal(f.state.resultSnapshots.size, 0);
+    for (const entry of f.lists) entry.pending.resolve({json: async () => entry.path === '/api/devices' ? oldRows : []});
+    assert.equal(await oldLoad, true);
+    assert(f.state.devices.every(device => device.status === 'connected'));
+    assert.deepEqual([...f.state.selectedDeviceIds], ['1', '2']);
+  }
+
   // Per-device busy checks remain active; refresh failure cannot strand the batch lock.
   {
     const f = fixture(createDeviceConnectionController, makeDevices(3));
@@ -257,5 +386,7 @@ function fixture(createController, initial = makeDevices()) {
     assert.equal(page.live.closeCount, 1, 'existing live cleanup callback remains intact');
     page.dispose();
   }
-  console.log('Device connection controller: concurrency, generation isolation, shared state and page integration: OK');
+  await checkPageDeletedRowsStayDeleted();
+  await checkPageConcurrentDiscoveryReads();
+  console.log('Device connection controller: concurrency, generation/read isolation, shared state and page integration: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });
