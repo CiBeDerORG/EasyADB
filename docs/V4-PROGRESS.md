@@ -2,10 +2,10 @@
 
 ## 最新状态（2026-10-21）
 
-- 分支：`refactor/v4-frontend-standards`。本轮新增两项需求 **2/2 完成并推送**：同设备最新页面接管实时画面、设备管理浮窗从最大 900px 收窄到 760px。详细证据见文末「实时画面接管与设备浮窗收窄」。上轮已确认 BUG 修复继续保留。
-- 统一验收：[CI #39575926695](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695) **success**，代码 SHA `8fc7a969696c6f8569d80c636e511decbfedb714`；**414 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
+- 分支：`refactor/v4-frontend-standards`。本轮横竖屏切换退出修复 **1/1 完成并推送（代码与自动化验收）**：正常尺寸变化继续使用原会话、媒体轨道和控制器，更新编码段、画面比例及触控尺寸。详细证据见文末「横竖屏切换导致投屏退出修复」。此前最新页面接管、浮窗收窄及已确认 BUG 修复继续保留。
+- 统一验收：[CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557) **success**，代码 SHA `fd58a1be46105929072891bbe8bc50adf73cfa82`；**448 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
 - 当前执行规则：**每项完成立即独立 commit + push；整批授权改动全部完成后统一 CI。** 验收结果文档使用 `[skip ci]`，核对仅文档差异；最终文档 HEAD 没有另跑 CI。此规则覆盖下方历史记录中的旧执行约定。
-- 真实环境验收未执行，实机切换耗时、兼容性和视觉效果未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
+- 未连接真机或取得 logcat，不能确认或排除 Android App 进程本身崩溃；真实浏览器及设备旋转效果、兼容性未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
 
 ## 历史记录
 
@@ -159,3 +159,35 @@
 - Python 编译与全量 pytest、npm ci、V4 lint/format、4 个架构/模块入口、21 个 Node/UI 入口、JS/Shell 语法与部署契约、OpenWrt smoke 全部适用步骤通过。V2 分支专用 release 步骤按条件 **skipped**，全量 pytest 保留 V2 回归。两项代码完成前未触发 CI，整批一次验收即 success。
 - 验收后更新任务、进度和接管生命周期规范，三份文档以 `[skip ci]` 提交发布，文档 HEAD 未另跑 CI；发布时核对与验收提交仅有这三份文档差异，本地与远端内容一致、工作区干净。
 - **当前结果：本轮 2/2 项完成，代码已推送、统一自动化验收通过、文档已交接。** 未执行真实浏览器、Android、NAS/FNOS、Docker、OpenWrt/EasyTier 部署与设备验收，不承诺实机切换耗时。按用户要求汇报后停止。
+
+## 横竖屏切换导致投屏退出修复（2026-10-21）
+
+### 起点与已确认原因
+
+- 从干净且与远端一致的 `6e6f96be7a5cece6963e3ba02be88686a5e1a331` 接续，重新核对三份文档、当前分支和提交；本轮只处理用户反馈的横屏/竖屏切换退出。
+- 旧 `LiveVideo._stream_to_webrtc()` 收到 session 标志位后直接抛出“手机画面尺寸发生变化；请停止后重新开始投屏”，正常旋转因此会进入投屏终止路径。已用真实解析函数及合法的 12 字节 session header 复现。
+- 核对项目固定使用的 scrcpy v5.0.1 官方 [Streamer.java](https://github.com/Genymobile/scrcpy/blob/v5.0.1/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java)、[SurfaceEncoder.java](https://github.com/Genymobile/scrcpy/blob/v5.0.1/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java) 和 [demuxer.c](https://github.com/Genymobile/scrcpy/blob/v5.0.1/app/src/demuxer.c)：session header 是 flags/width/height，没有媒体 payload；编码器重启后可在同一 socket 继续发送配置与视频包。没有把这一正常通知当断线重连的依据。
+
+### 修复结果
+
+- 有效 session header 更新尺寸，保留原 session、WebSocket、peer、track 和服务端 owner。清除旧视频段状态，新 config + IDR 到达后发送独立 `resize`；首次起播前多次变化只使用最新尺寸初始化一次，同尺寸编码重启只重置媒体段。起播时间、息屏和自动解锁不重复执行。
+- track 增加 `reset_stream()`，清除旧 SPS/PPS 与帧，等待新配置及关键帧。跨线程 pending 使用有界 deque 与一个不携带 payload 的 drain callback；保留 48 项 / 16 MiB 上限，reset 同步归还旧 pending 预算，避免满额积压丢掉新段只发送一次的 config。单条交付与预算释放在同一短锁内，不等待网络或事件循环；每条之间释放锁，并按批次让出事件循环。stop 继续终止接收及唤醒等待者。
+- 对编码器 PTS 回退建立视频段偏移，保留后续帧间隔，输出至少跨过一个实际 90 kHz RTP tick；不把所有新帧逐个压到旧时间戳后 1 微秒。未更改生产零转码路径或增加依赖。
+- 前端只接受当前卡片/WS/SID 的有效 `resize`，原位更新同一个 TouchController，不重新执行 init/SDP/连接/自动解锁；播放比例同时跟随实际视频 `resize`。控制启用、禁用、待确认、全屏、队列和其他设备保持原状态；关闭卡片退订监听，旧回调不能更新替代会话。
+- 触控要求服务端授权尺寸与实际解码尺寸一致。旋转中旧手势在前端只做本地清理，避免补发旧尺寸坐标；服务端用旧尺寸 best-effort cancel 后清本地 pressed。官方 [PositionMapper.java](https://github.com/Genymobile/scrcpy/blob/v5.0.1/server/src/main/java/com/genymobile/scrcpy/control/PositionMapper.java) 会拒绝尺寸不匹配的输入，因此不能声称 Android 已确认取消。尺寸同步期间保留拒绝保护，提示等待画面稳定，不再提示用户停止重开。
+
+### 自动化验证
+
+- 新增 `test_live_rotation.py` **17 项**：执行真实 session/media 头解析与碎片 socket 读取，覆盖横竖往返、起播前连续 header、同尺寸 restart、配置/关键帧不足、旧触摸/新尺寸、非法尺寸/长度、stop 与真正 EOF；init、起播时间和息屏均不重复。
+- 新增 `test_webrtc_rotation.py` **15 项**：满 48 项、满 16 MiB 和缩小预算下，reset 后只发送一次新 config 即可恢复；真实线程验证 in-flight 交付期间不能提前归还预算，1000 次快速 reset 不累积 callback，保留多设备隔离、stop/闭环失败和无效配置保护。实际 `H264Encoder.pack()` 验证 RTP 单调和帧间隔；现有 PyAV 仅在测试内生成 96×160 → 160×96 → 96×160 的六帧，经同一 track、packetizer 和同一个 H264Decoder 全部实际解码。
+- 新增 `test_live_rotation_handler.py` **2 项**：执行真实 handler/准入/注册表/SessionManager/临时 SQLite，仅隔离 ADB/Socket/媒体边界；旋转不重复启动/解锁/预算申请，不影响其他设备，旧 owner 迟到 resize 不影响新接管者。
+- 原 `m2_multi_contract.cjs` 实际运行新 `helpers/live-rotation-contract.cjs`，使用真实页面、MultiView、live 工厂及 TouchController，覆盖媒体先到/WS 先到、拖动中旋转、未派发 resize 前的输入、禁用/待确认/停止、错误 SID、旧 WS/DOM 回调及其他卡片/全屏/队列保持；扩展原 touch contract。没有增加未接入 CI 的独立前端入口。
+- 本地相关 **154 项 Python** 通过，其中新增 34 项；相关前端、20 路、群控、4 个架构/模块入口、ESLint/Prettier、语法及 diff 检查通过。一次在受限环境中的旧组合测试曾出现失败标记并等待，已中断且未记为通过；最终本地正式回归和 CI 均取得完整通过结果。
+
+### 提交、统一 CI 与交接
+
+- 完整修复经定向验收和交叉复核后立即推送：[21454e6](https://github.com/CiBeDerORG/EasyADB/commit/21454e62ef36aa5008c580f53be1e9debb4e7c6b)，消息带 `[skip ci]`。全部代码完成后以同一代码树 `0878f36ae77cd26dc316bac945b1da5f1aeed4b7` 创建验收提交 `fd58a1be46105929072891bbe8bc50adf73cfa82`，只触发一次完整 CI。
+- [CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557) **success**，job [119249572690](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557/job/119249572690)。已读取实际日志：**448 passed, 1 warning in 55.36s**，由起点 414 项增加 34 项；唯一 pytest 警告为既有 Starlette TestClient/httpx 弃用提示。
+- Python 编译、全量 pytest、npm ci、lint/format、4 个架构/模块入口、21 个 Node/UI 入口、JS/Shell 与部署契约、OpenWrt smoke 全部适用步骤通过。V2 分支专用 release 步骤按条件 skipped，全量 pytest 保留 V2 回归；旧门禁、工作流与依赖未删除或修改。
+- 验收后更新三份 V4 文档并以 `[skip ci]` 推送；文档 HEAD 未另跑 CI，发布时核对与验收 SHA 仅有文档差异、本地远端内容一致且工作区干净。
+- **当前结果：本轮 1/1 项已确认代码问题修复、推送、自动化验收及文档交接完成。** 未执行真实浏览器、Android、NAS/FNOS、Docker 或路由器部署；没有真机日志，Android App 进程是否崩溃及是否仍复现未知。真实编解码测试不替代设备验收。汇报后停止。

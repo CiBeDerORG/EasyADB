@@ -4,17 +4,17 @@
 
 ## Agent 接续摘要
 
-更新时间：2026-10-21。本轮从干净的 `eace49f50cafd69163fc5eaadd6e646d4285f8f5` 接续，核对了三份文档、远端分支与工作区，仅处理用户新增的两项需求。
+更新时间：2026-10-21。本轮从干净的 `6e6f96be7a5cece6963e3ba02be88686a5e1a331` 接续，核对了三份文档、远端分支与工作区，仅处理用户反馈的横竖屏切换退出问题。
 
 | 项目 | 当前交接状态 |
 | --- | --- |
 | 仓库与分支 | `CiBeDerORG/EasyADB` / `refactor/v4-frontend-standards` |
-| 原有进度 | V4-01～V4-05、M3 部署入口迁移、记录修改保护及上轮 9 项 BUG 修复已完成；本轮保留既有成果 |
-| 本轮实现 | **2/2 完成**：最新页面接管同一设备实时画面；设备管理浮窗收窄 |
-| 代码提交 | 浮窗 `8325ee3e8c085579ddd75ad33164c2db6d45b4bd`；接管 `0cb5101d982817581c566293a7e25fed10e1ad43`；各项定向验收后独立立即 push，均使用 `[skip ci]` |
-| 统一 CI | `8fc7a969696c6f8569d80c636e511decbfedb714` 仅触发验收，代码树与接管提交相同；[CI #39575926695](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695) **success：414 项 Python，通过全部适用门禁** |
+| 原有进度 | V4-01～V4-05、M3 部署入口迁移、记录修改保护、此前 9 项 BUG 修复、最新页面接管及浮窗收窄已完成；本轮保留既有成果 |
+| 本轮实现 | **1/1 完成（代码与自动化验收）**：正常横竖屏切换在原会话内继续投屏，更新画面比例与触控尺寸 |
+| 代码提交 | [21454e6](https://github.com/CiBeDerORG/EasyADB/commit/21454e62ef36aa5008c580f53be1e9debb4e7c6b)；本项定向验收及交叉复核后立即 push，使用 `[skip ci]` |
+| 统一 CI | `fd58a1be46105929072891bbe8bc50adf73cfa82` 仅触发验收，与修复提交代码树相同；[CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557) **success：448 项 Python，通过全部适用门禁** |
 | 文档交接 | 实际 CI 结果已记录；三份文档以 `[skip ci]` 发布，与验收提交仅有文档差异，文档 HEAD 未另跑 CI |
-| 未验证 | 真实浏览器、Android、FNOS/NAS/Docker、OpenWrt/EasyTier 部署与设备场景；实机切换耗时、兼容性及视觉效果仍未知 |
+| 未验证 | 未连接真机或取得 logcat，不能确认或排除 Android App 进程本身崩溃；真实浏览器、Android、FNOS/NAS/Docker、OpenWrt/EasyTier 部署及实机旋转表现仍待验证 |
 
 以上 SHA 是交接快照，不是要求回退到固定版本。后续继续前读取远端最新 HEAD 与工作区，保留已有改动，不覆盖他人提交、不重复完成项。
 
@@ -23,11 +23,21 @@
 - **全局约定：每完成一项独立修复，在对应本地回归与复核后立即提交并 push。**
 - **批量修 BUG 时连续完成当前已授权清单；中间提交使用 `[skip ci]`，全部代码完成后统一触发完整 CI。** 不逐项停止等待“继续”，不删除或关闭现有门禁。
 - CI 完成后统一更新本清单与进度，区分代码已实现、定向通过、完整 CI 通过和未验证。最终仅记录验收结果的文档提交可 `[skip ci]`，须证明与验收提交仅有文档差异；新的代码、测试、依赖或工作流变更必须重新验收。
-- 既有 REST/WS 字段继续兼容；本轮按用户要求增加接管通知与等待语义。保留数据库结构、SessionManager 的唯一清理权威、DIRTY 保护、20 路逻辑上限和 WebRTC-only。按故障需要调整内部实现，不以回避改动替代修复。
+- 既有 REST/WS 字段继续兼容；本轮新增同会话 `resize` 通知，保留此前的接管通知与等待语义。保留数据库结构、SessionManager 的唯一清理权威、DIRTY 保护、20 路逻辑上限和 WebRTC-only。按故障需要调整内部实现，不以回避改动替代修复。
 - 遵循 [前端命名与架构规范](V4-FRONTEND-STANDARDS.md)，测试执行生产路径，禁止删除断言、放宽保护或修改生产常量来制造通过。
 - 本轮授权是代码修复、测试、提交与推送；不执行真实设备、Docker、cron 或 NAS 部署，不合并其他开发分支。V3 继续暂缓。
 
-## 本轮需求清单（2026-10-21）
+## 本轮 BUG 清单（2026-10-21）
+
+| 用户反馈 | 状态 | 已确认原因与修复结果 | 已推送提交 |
+| --- | --- | --- | --- |
+| 横屏转竖屏、竖屏转横屏时退出 | [x] | 旧 live reader 将 scrcpy 正常 session/尺寸通知直接当异常终止。现在原会话处理新尺寸，清除旧编码配置和积压，等待新 config + IDR 后继续；独立 resize 更新布局与触控，不重建播放器、不重复 init/自动解锁。 | [21454e6](https://github.com/CiBeDerORG/EasyADB/commit/21454e62ef36aa5008c580f53be1e9debb4e7c6b) |
+
+新增 **34 项 Python 回归**：17 项真实媒体头解析、15 项媒体轨道/资源/真实 H.264 编解码、2 项 handler 会话与接管隔离。前端沿原入口运行真实页面、MultiView、TouchController，覆盖双向旋转、媒体与通知两种先后、旧手势取消、错误 SID、停止及旧回调。相关本地 154 项 Python 通过；完整 CI 为 **448 passed, 1 warning**。
+
+本轮修复的是已定位的 EasyADB 投屏退出路径。真实 H.264 回归通过同一个解码器处理 96×160 → 160×96 → 96×160 的六帧，只证明媒体代码路径；没有据此把 Android App 进程闪退写为已确认或已实机修复。
+
+## 上轮需求清单（2026-10-21，已完成）
 
 | 用户需求 | 状态 | 完成结果 | 已推送提交 |
 | --- | --- | --- | --- |
@@ -36,7 +46,7 @@
 
 接管只由显式投屏请求触发，单纯打开网页不主动连接设备或启动视频。旧资源未清理时不能重叠启动；清理等待超时返回 `takeover_timeout`，保留原 DIRTY 所有权。`replaced` 不是 `ended(cleanup_complete=true)`，批量停止仍如实计为清理未确认。其他设备、20 路逻辑容量及启动预算保持原有约束。
 
-新增 22 项真实 handler 接管回归和 19 项请求协调回归；前端通过既有真实页面/四个 live 工厂测试入口新增接管场景。完整 CI 已通过，详见下方验收记录；自动化验收不等于实机验收。
+当时新增 22 项真实 handler 接管回归和 19 项请求协调回归；前端通过既有真实页面/四个 live 工厂测试入口新增接管场景。对应 CI #39575926695 success、414 项 Python 通过；本轮继续保留这些功能与回归。历史验收细节见进度文档，自动化验收不等于实机验收。
 
 ## 一、V4 总体进度
 
@@ -218,6 +228,8 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 | `server/services/session_manager.py`、`live_request.py` | 最新有效请求顺序、高水位、精确 ticket/stream 身份及三项清理证明；请求协调不是第二份资源注册表。 |
 | `tests/test_live_takeover.py`、`tests/test_live_request_coordination.py` | 22 项 handler 接管回归及 19 项协调回归；包含连续页面、无效/慢旧请求、校验/等待退出、迟到 SDP、DIRTY、20 槽与启动预算。 |
 | `tests/helpers/live-handoff-contract.cjs` | 由既有 m2_multi 入口运行，验证旧页面本地释放、不会自动抢回、会话/设备隔离、等待队列及清理计数。 |
+| `server/m2_live.py`、`server/m2_webrtc.py`、`server/m2_touch.py` | 正常 scrcpy session header 原位重置媒体段；有界 pending 队列、同 track 的 SPS/PPS/IDR 与 RTP 时间连续性，触摸保留精确尺寸校验。 |
+| `tests/test_live_rotation.py`、`tests/test_webrtc_rotation.py`、`tests/test_live_rotation_handler.py`、`tests/helpers/live-rotation-contract.cjs` | 34 项新增 Python 与原 m2_multi 入口内的真实前端旋转回归；包含满额积压后只发送一次 config、真实 H.264 解码、会话/手势/旧回调隔离。 |
 | `server/api/static.py`、`tests/test_v4_frontend_assets.py` | 每新增前端资源须同步精确白名单、MIME/缓存与非法路径测试，不能开放任意静态目录。 |
 | `server/services/operations.py`、`device_service.py`、`device_control.py`、`group_service.py` | 记录写入前检查现有会话清理证明；检查和写入共用设备锁，分组先检查全部成员。不得在拒绝前写数据库、清缓存或停止/释放原会话。 |
 | `tests/test_device_mutation_sessions.py` | 18 项真实 HTTP/SQLite/锁/SessionManager 回归，仅隔离 ADB 与 worker 资源完成；包含 DIRTY 删除重建与两种准入竞争顺序，由全量 pytest 自动执行。 |
@@ -225,12 +237,12 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 
 ## 八、验收与交接要求
 
-本轮两项代码对应 [CI #39575926695](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695)，验收 SHA `8fc7a969696c6f8569d80c636e511decbfedb714`；已完成且结论为 **success**，job [119141305646](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695/job/119141305646)。实际日志为 **414 passed, 1 warning in 53.32s**；相对本轮起点的 373 项新增 41 项 Python 回归。唯一 pytest 警告是既有 Starlette TestClient/httpx 弃用提示。
+本轮修复对应 [CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557)，验收 SHA `fd58a1be46105929072891bbe8bc50adf73cfa82`；已完成且结论为 **success**，job [119249572690](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557/job/119249572690)。已读取实际日志：**448 passed, 1 warning in 55.36s**；相对本轮起点的 414 项新增 34 项 Python 回归。唯一 pytest 警告是既有 Starlette TestClient/httpx 弃用提示。
 
-执行当前 `.github/workflows/test.yml` 的全部适用步骤，包括依赖安装、Python 编译与全量 pytest、21 个 Node/UI 入口、4 个架构/模块入口、ESLint/Prettier、JS/Shell 语法及 OpenWrt smoke。新增前端接管 helper 由原 m2_multi 入口实际调用，新增 Python 测试由全量 pytest 收集；工作流和旧门禁未删除。V2 分支专用 release 步骤为 skipped，全量 pytest 仍包含 V2 回归。
+执行当前 `.github/workflows/test.yml` 的全部适用步骤，包括依赖安装、Python 编译与全量 pytest、21 个 Node/UI 入口、4 个架构/模块入口、ESLint/Prettier、JS/Shell 语法及 OpenWrt smoke。新增前端旋转 helper 由原 m2_multi 入口实际调用，新增 Python 测试由全量 pytest 收集；工作流和旧门禁未删除。V2 分支专用 release 步骤为 skipped，全量 pytest 仍包含 V2 回归。
 
-本轮只在两项代码全部推送后触发一次完整 CI，首次 success。验收提交与最后代码提交的 tree 均为 `838d1591eb1285898f274d419ef2715176c03164`。随后仅更新三份 V4 文档并以 `[skip ci]` 发布；文档 HEAD 未另跑 CI，发布时核对它与验收 SHA 只有文档差异、本地和远端内容一致、工作区干净。
+本轮只在该项全部代码完成并推送后触发一次完整 CI，首次 success。验收提交与修复提交的 tree 均为 `0878f36ae77cd26dc316bac945b1da5f1aeed4b7`。随后仅更新三份 V4 文档并以 `[skip ci]` 发布；文档 HEAD 未另跑 CI，发布时核对它与验收 SHA 只有文档差异、本地和远端内容一致、工作区干净。
 
 ## 当前停点
 
-**本轮 2/2 项需求、逐项推送、统一 CI 和文档交接全部完成。** 上轮已确认 BUG 修复继续保留。真实环境尚未执行，不据自动化全绿宣称实机效果或未知缺陷已经验证。本轮汇报后停止。
+**本轮 1/1 项代码修复、推送、统一 CI 和文档交接全部完成。** 此前接管、浮窗及 BUG 修复继续保留。未执行真实设备或浏览器验收，Android App 是否仍发生进程崩溃未知；不据自动化全绿宣称实机问题全部消失。本轮汇报后停止。
