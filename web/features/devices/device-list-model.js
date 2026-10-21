@@ -1,27 +1,25 @@
 // Pure display projection; never owns ADB/session state or mutates the input records.
 export function hasConnectedAdb(device) {
-  return Boolean(
-    device &&
-      device.status === 'connected' &&
-      device.connect_failed !== true &&
-      device.selected_serial &&
-      device.active_serial === device.selected_serial,
+  if (!device) return false;
+  return (
+    device.status === 'connected' &&
+    device.connect_failed !== true &&
+    Boolean(device.selected_serial) &&
+    device.active_serial === device.selected_serial
   );
 }
 
 export function buildDeviceGroups(devices, groups) {
-  const grouped = new Map(
-    groups.map((group) => [
-      'named:' + group.name,
-      {
-        title: group.name,
-        ip_prefix: group.ip_prefix,
-        discovery_configured: group.discovery_configured,
-        discovery_needs_password: group.discovery_needs_password,
-        items: [],
-      },
-    ]),
-  );
+  const grouped = new Map();
+  for (const group of groups) {
+    grouped.set('named:' + group.name, {
+      title: group.name,
+      ip_prefix: group.ip_prefix,
+      discovery_configured: group.discovery_configured,
+      discovery_needs_password: group.discovery_needs_password,
+      items: [],
+    });
+  }
   for (const device of devices) {
     const key = device.group_name ? 'named:' + device.group_name : 'ungrouped';
     if (!grouped.has(key)) {
