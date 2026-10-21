@@ -673,6 +673,16 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                             "message": "正在尝试启动自动解锁；如未成功，可使用悬浮菜单的主动解锁"
                         })
                         unlock_task = asyncio.create_task(run_unlock_attempt(unlock_secret, "auto"))
+            elif kind == "resize":
+                # A scrcpy encoder session changed size inside this same live
+                # owner. Preserve its peer, startup permit and one-time unlock.
+                if (requested_stop.is_set()
+                        or not session_manager.is_latest_request(device_id, request)):
+                    break
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "resize", "session_id": stream.session_id,
+                    "width": payload["width"], "height": payload["height"],
+                }), LIVE_WS_SEND_TIMEOUT)
             elif kind == "screen_power_notice":
                 await asyncio.wait_for(websocket.send_json({
                     "type": "screen_power_notice", "session_id": stream.session_id, **payload

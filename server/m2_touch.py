@@ -32,7 +32,7 @@ def encode_touch(payload, expected_size, pressed):
     if type(payload["width"]) is not int or type(payload["height"]) is not int or (
         payload["width"], payload["height"]
     ) != expected_size:
-        raise InvalidTouch("视频尺寸已变化，请停止后重新开启投屏")
+        raise InvalidTouch("视频尺寸正在同步，请等待画面稳定后重新操作")
     x, y = payload["x"], payload["y"]
     if type(x) is not int or type(y) is not int or not (0 <= x < width and 0 <= y < height):
         raise InvalidTouch("触摸坐标必须在实际视频画面内")

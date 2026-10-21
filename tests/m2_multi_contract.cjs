@@ -32,6 +32,9 @@ class El {
   addEventListener(name, fn) {
     (this.events[name] ??= []).push(fn);
   }
+  removeEventListener(name, fn) {
+    this.events[name] = (this.events[name] || []).filter((listener) => listener !== fn);
+  }
   append(...items) {
     for (const item of items) {
       if (item.parent) {
@@ -1644,6 +1647,7 @@ async function waitForCheck(id) {
   assert.equal(multi.getChoice('id-2').experimental_resolution, null, 'per-device isolation');
   await require('./helpers/queued-stop-contract.cjs')();
   await require('./helpers/live-handoff-contract.cjs')();
+  await require('./helpers/live-rotation-contract.cjs')();
   console.log('M2 modal draft/save/cancel, quality and playback settings: OK');
   console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
   console.log(

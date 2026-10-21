@@ -364,34 +364,67 @@ class LiveVideo:
         """Forward scrcpy H.264 access units directly to the WebRTC track."""
         if self.webrtc_track is None:
             raise VideoProbeError("WebRTC 视频轨道尚未绑定")
+        # Keep optional media imports at the live-session boundary.
+        from .m2_webrtc import MAX_CONFIG_BYTES
         header = first_header
         initialized = False
+        reported_size = None
+        segment_config = False
+        segment_ready = False
         while not self.stop_event.is_set():
             pts, length = struct.unpack(">QI", header)
             if pts & (1 << 63):
-                raise VideoProbeError("手机画面尺寸发生变化；请停止后重新开始投屏")
+                # scrcpy v5 session headers are exactly flags/width/height;
+                # they have no media payload, including on same-size restarts.
+                _, next_width, next_height = struct.unpack(">III", header)
+                if not 0 < next_width <= 8192 or not 0 < next_height <= 8192:
+                    raise VideoProbeError("scrcpy 视频会话尺寸更新无效")
+                with self._touch_lock:
+                    if self.stop_event.is_set():
+                        raise StreamStopped()
+                    # Best-effort cancel keeps the old coordinates/size and
+                    # clears local pressed state. scrcpy may already reject
+                    # that old size; no Android cancellation ack is available.
+                    self._release_touch_locked()
+                    if self.stop_event.is_set():
+                        raise StreamStopped()
+                    self.touch_size = (next_width, next_height)
+                width, height = next_width, next_height
+                self.webrtc_track.reset_stream()
+                segment_config = segment_ready = False
+                header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
+                continue
             if not 0 < length <= MAX_FRAME_BYTES:
                 raise VideoProbeError("scrcpy H.264 媒体包大小异常")
             payload = _socket_read(video, length, self.stop_event, adb_proc=self.adb_proc)
             is_config = bool(pts & (1 << 62))
             is_keyframe = bool(pts & (1 << 61))
-            if not is_config:
+            if is_config:
+                segment_config = 0 < len(payload) <= MAX_CONFIG_BYTES
+            else:
                 self._record_phone_packet()
             self.webrtc_track.submit(pts & ((1 << 61) - 1), payload,
                                      config=is_config, keyframe=is_keyframe)
-            if is_keyframe and not initialized:
-                with self._metric_lock:
-                    self._ready_at = time.monotonic()
-                if self.screen_off:
-                    if self.set_display_power(False, skip_if_wake=True):
-                        self._emit(("screen_power_notice", {"on": False,
-                            "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
-                self._emit(("init", {"width": width, "height": height,
-                                    "profile": self.profile, "requested": dict(self.settings),
-                                    "codec": "h264", "control_available": True,
-                                    "device": name.decode("utf-8", "replace")}))
-                initialized = True
-                self._phase_set("持续传输 · WebRTC H.264")
+            if is_keyframe and not is_config and segment_config and not segment_ready:
+                # Metadata announces a segment only after its new config/IDR.
+                # Reusing init would replay one-time startup/control actions.
+                if not initialized:
+                    with self._metric_lock:
+                        self._ready_at = time.monotonic()
+                    if self.screen_off:
+                        if self.set_display_power(False, skip_if_wake=True):
+                            self._emit(("screen_power_notice", {"on": False,
+                                "message": "已发送物理屏幕关闭指令；编码与浏览器画面继续运行"}))
+                    self._emit(("init", {"width": width, "height": height,
+                                        "profile": self.profile, "requested": dict(self.settings),
+                                        "codec": "h264", "control_available": True,
+                                        "device": name.decode("utf-8", "replace")}))
+                    initialized = True
+                    self._phase_set("持续传输 · WebRTC H.264")
+                elif reported_size != (width, height):
+                    self._emit(("resize", {"width": width, "height": height}))
+                reported_size = (width, height)
+                segment_ready = True
             header = _socket_read(video, HEADER_BYTES, self.stop_event, adb_proc=self.adb_proc)
         raise StreamStopped()
 

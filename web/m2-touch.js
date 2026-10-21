@@ -47,35 +47,54 @@ class TouchController{
     this.onCancel=e=>this.release(e,'cancel');
     this.onLost=e=>{if(this.activeId===e.pointerId)this.cancel();};
     this.onBlur=()=>this.cancel();
+    this.onResize=()=>{
+      if(this.enabled&&this.size&&(this.video.videoWidth!==this.size.width||
+          this.video.videoHeight!==this.size.height))this.cancel({send:false});
+    };
     video.addEventListener('pointerdown',this.onDown);
     video.addEventListener('pointermove',this.onMove);
     video.addEventListener('pointerup',this.onUp);
     video.addEventListener('pointercancel',this.onCancel);
     video.addEventListener('lostpointercapture',this.onLost);
+    video.addEventListener('resize',this.onResize);
     root.addEventListener('blur',this.onBlur);
   }
   release(e,action){
     if(this.activeId===null||this.activeId!==e.pointerId)return;
     e.preventDefault();
+    if(!this.size||this.video.videoWidth!==this.size.width||this.video.videoHeight!==this.size.height){
+      this.cancel({send:false});return;
+    }
     const pos=mapPoint(this.video,this.size,e.clientX,e.clientY,true)||this.last;
     const pointer=this.activeId;
     this.activeId=null;this.last=null;
     try{this.video.releasePointerCapture(pointer);}catch{}
     if(pos)this.send({type:'touch',action,...pos});
   }
-  cancel(){
+  cancel({send=true}={}){
     if(this.activeId===null)return;
     const pointer=this.activeId,pos=this.last;
     this.activeId=null;this.last=null;
     try{this.video.releasePointerCapture(pointer);}catch{}
-    if(pos)this.send({type:'touch',action:'cancel',...pos});
+    // Decoded dimensions may change before the resize event is delivered.
+    // Never finish that old gesture with coordinates for the previous frame.
+    if(pos&&send&&this.size&&this.video.videoWidth===this.size.width&&
+        this.video.videoHeight===this.size.height)this.send({type:'touch',action:'cancel',...pos});
+  }
+  setGeometry(size){
+    if(!size||!Number.isInteger(size.width)||!Number.isInteger(size.height)||
+      size.width<1||size.height<1||size.width>8192||size.height>8192)return false;
+    if(this.size&&this.size.width===size.width&&this.size.height===size.height)return true;
+    // The server clears its old gesture state before changing geometry. Cancel
+    // locally without sending stale coordinates back into the new geometry.
+    // Merely learning a new size must never enable remote control.
+    this.cancel({send:false});
+    this.size={width:size.width,height:size.height};
+    this.lastMoveAt=0;
+    return true;
   }
   enable(size){
-    if(!size||!Number.isInteger(size.width)||!Number.isInteger(size.height)||
-      size.width<1||size.height<1||size.width>8192||size.height>8192){
-      throw Error('投屏尺寸无效，无法启用鼠标控制');
-    }
-    this.size={width:size.width,height:size.height};
+    if(!this.setGeometry(size))throw Error('投屏尺寸无效，无法启用鼠标控制');
     this.enabled=true;
     this.video.style.touchAction='none';this.video.style.cursor='crosshair';
   }
@@ -91,6 +110,7 @@ class TouchController{
     v.removeEventListener('pointerup',this.onUp);
     v.removeEventListener('pointercancel',this.onCancel);
     v.removeEventListener('lostpointercapture',this.onLost);
+    v.removeEventListener('resize',this.onResize);
     root.removeEventListener('blur',this.onBlur);
   }
 }

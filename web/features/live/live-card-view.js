@@ -34,10 +34,12 @@ export function createLiveCardView({ documentRef }) {
     video.playsInline = true;
     video.setAttribute('aria-label', d.name + ' 实时画面');
     screen.append(video);
+    let isDisposed = false;
     // Each live card follows the stream's encoded pixel width, not a grid
     // column or a height-based heuristic. Padding/border total 26 CSS px.
     // max-width:100% only scales a card down when its parent is narrower.
     const fitScreen = (width, height) => {
+      if (isDisposed) return;
       if (!(Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0)) return;
       screen.style.aspectRatio = width + ' / ' + height;
       screen.setAttribute('data-orientation', width > height ? 'landscape' : 'portrait');
@@ -45,10 +47,18 @@ export function createLiveCardView({ documentRef }) {
       box.style.width = width + 26 + 'px';
     };
     fitScreen(360, 640); // neutral placeholder until stream metadata arrives
-    video.addEventListener('loadedmetadata', () => {
-      if (isCurrent() && video.videoWidth > 0 && video.videoHeight > 0)
+    const fitDecodedScreen = () => {
+      if (!isDisposed && isCurrent() && video.videoWidth > 0 && video.videoHeight > 0)
         fitScreen(video.videoWidth, video.videoHeight);
-    });
+    };
+    video.addEventListener('loadedmetadata', fitDecodedScreen);
+    video.addEventListener('resize', fitDecodedScreen);
+    const disposeView = () => {
+      if (isDisposed) return;
+      isDisposed = true;
+      video.removeEventListener('loadedmetadata', fitDecodedScreen);
+      video.removeEventListener('resize', fitDecodedScreen);
+    };
     const state = make('div', 'status', '正在建立本轮会话…');
     const stats = make('div', 'muted', '等待浏览器诊断…');
     const qualityLine = make(
@@ -111,6 +121,7 @@ export function createLiveCardView({ documentRef }) {
       screen,
       video,
       fitScreen,
+      disposeView,
       state,
       stats,
       qualityLine,

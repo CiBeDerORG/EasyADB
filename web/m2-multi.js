@@ -720,6 +720,7 @@
         screen,
         video,
         fitScreen,
+        disposeView,
         state,
         stats,
         qualityLine,
@@ -830,6 +831,7 @@
         box,
         screen,
         fitScreen,
+        disposeView,
         video,
         stateEl: state,
         statsEl: stats,
@@ -1101,6 +1103,35 @@
             mark(message);
             this.end(card, false, { sendStop: false, lastStatus: '已由其他页面接管' });
             if (!wasPendingStop) this.status(card.name + '：' + message);
+            return;
+          }
+          if (m.type === 'resize') {
+            // Rotation updates this session in place. Stale/invalid geometry
+            // must not tear down the current player or create another owner.
+            if (
+              !card.session ||
+              m.session_id !== card.session ||
+              !card.touch ||
+              !card.size ||
+              card.state === 'stopping' ||
+              !Number.isInteger(m.width) ||
+              !Number.isInteger(m.height) ||
+              m.width < 1 ||
+              m.height < 1 ||
+              m.width > 8192 ||
+              m.height > 8192
+            )
+              return;
+            if (m.width === card.size.width && m.height === card.size.height) return;
+            const size = { width: m.width, height: m.height };
+            if (!card.touch.setGeometry(size)) return;
+            card.size = size;
+            // WS metadata and media can arrive in either order. Display the
+            // decoded orientation; touch separately requires an exact match.
+            if (video.videoWidth > 0 && video.videoHeight > 0)
+              card.fitScreen(video.videoWidth, video.videoHeight);
+            else card.fitScreen(m.width, m.height);
+            mark('画面尺寸已更新为 ' + m.width + '×' + m.height);
             return;
           }
           if (m.session_id && card.session && m.session_id !== card.session) {
@@ -1707,6 +1738,7 @@
       // A delayed callback from an old device session must never delete its replacement.
       if (card.closed || this.cards.get(card.id) !== card) return;
       card.closed = true;
+      card.disposeView();
       root.document.removeEventListener?.('fullscreenchange', card.syncFullscreen);
       let fullscreenExit = null;
       if (root.document.fullscreenElement === card.screen) {
