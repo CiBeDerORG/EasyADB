@@ -17,6 +17,7 @@ MODULES = (
     "features/live/live-quality-settings.js",
     "features/devices/device-list-model.js",
     "features/devices/device-list-view.js",
+    "features/devices/device-connection-controller.js",
 )
 
 
@@ -44,7 +45,7 @@ def test_v4_module_urls_only_serve_explicit_assets(monkeypatch):
         assert "<style>" not in page
         for path in (
             "/assets/private.css", "/app/secret.js", "/core/private.js", "/shared/ui/private.js",
-            "/app/../core/private.js", "/shared/ui/../../.env",
+            "/app/../core/private.js", "/shared/ui/../../.env", "/features/devices/private.js",
         ):
             assert client.get(path).status_code == 404, path
         assert client.get("/m2-webrtc.js").status_code == 200

@@ -278,6 +278,7 @@ function adbStatusBadge(d){
 }
 const toastHost=$('toastHost'),toastItems=new Map();
 let frontendModules=null; // populated by a one-time ES Module bootstrap; no window global
+let deviceConnectionController=null;
 function toastSelected(card){
  const selection=typeof window.getSelection==='function'?window.getSelection():null;
  return Boolean(selection&&!selection.isCollapsed&&
@@ -362,6 +363,28 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
  const initialText=originalStatus?.card?.children?.[0]?.textContent||'';
  for(const key of [...toastItems.keys()])dismissToast(key);
  frontendModules=event.detail;
+ if(frontendModules.createDeviceConnectionController){
+  deviceConnectionController=frontendModules.createDeviceConnectionController({
+   state:{
+    get devices(){return devices;},set devices(value){devices=value;},
+    get groups(){return groups;},set groups(value){groups=value;},
+    get selectedDeviceId(){return selected;},set selectedDeviceId(value){selected=value;},
+    get isLoaded(){return loaded;},set isLoaded(value){loaded=value;},
+    get generation(){return connectGeneration;},
+    get resultRevision(){return connectProgressRevision;},
+    set resultRevision(value){connectProgressRevision=value;},
+    get abortController(){return connectController;},
+    set abortController(value){connectController=value;},
+    get isBatchBusy(){return connectionBatchBusy;},
+    set isBatchBusy(value){connectionBatchBusy=value;},
+    selectedDeviceIds:managementSelected,pendingDeviceIds:connectingDevices,
+    resultSnapshots:connectSnapshots
+   },
+   request:api,getToken:()=>$('token').value.trim(),
+   isDeviceBusy:id=>Boolean(multiView&&multiView.isBusyFor(id)),
+   onChange:render,notify:message
+  });
+ }
  if(initialText)message(initialText);
  render(); // use the injected device-list projection after module bootstrap
 });
@@ -600,6 +623,9 @@ function render(){
  all.indeterminate=selectedSelectable.length>0&&selectedSelectable.length<selectable.length;
 }
 async function load(quiet=false){
+ // Old VM fixtures and pre-bootstrap requests retain the explicit legacy path.
+ if(typeof deviceConnectionController!=='undefined'&&deviceConnectionController)
+  return deviceConnectionController.loadDevices(quiet);
  if(!$('token').value.trim()){message('请先输入访问密钥','error');return false;}
  const epoch=connectGeneration,revision=connectProgressRevision;
  try{
@@ -813,6 +839,9 @@ function removeTempAddress(id){
 // individual pending phone is unavailable; completed phones can be projected,
 // selected, edited and otherwise managed while slower phones continue.
 async function connectProgressively(candidates,skipped,selectSuccessful,label,epoch){
+ // Old VM fixtures and pre-bootstrap requests retain the explicit legacy path.
+ if(typeof deviceConnectionController!=='undefined'&&deviceConnectionController)
+  return deviceConnectionController.connectDevices(candidates,skipped,selectSuccessful,label,epoch);
  if(epoch!==connectGeneration)return;
  const controller=new AbortController();
  connectController=controller;connectSnapshots.clear();

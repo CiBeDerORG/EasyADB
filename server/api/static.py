@@ -79,6 +79,7 @@ FRONTEND_MODULES = (
     "features/live/live-quality-settings.js",
     "features/devices/device-list-model.js",
     "features/devices/device-list-view.js",
+    "features/devices/device-connection-controller.js",
 )
 
 
