@@ -158,6 +158,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
             assert r.status_code==200
             assert r.headers["cache-control"]=="no-store"
         html=client.get("/").text
+        css=client.get("/assets/legacy-page.css").text
         assert 'id="multiPanel"' in html and 'id="multiGrid"' in html
         assert 'src="/m2-multi.js"' in html and 'src="/m2-metrics.js"' in html
         assert "multiView.closeAll()" in html
@@ -184,10 +185,10 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert 'id="multiStart"' in html and 'id="multiStop"' in html
         assert html.index('id="multiStart"') < html.index('id="devices"') < html.index('id="multiGrid"')
         # Live cards flow by each stream's own width, not a fixed column count.
-        assert ".multi-grid{display:flex;flex-wrap:wrap;" in html
-        assert ".multi-card{flex:0 1 auto;" in html
-        assert ".multi-grid[data-count=" not in html
-        assert ".multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" not in html
+        assert ".multi-grid{display:flex;flex-wrap:wrap;" in css
+        assert ".multi-card{flex:0 1 auto;" in css
+        assert ".multi-grid[data-count=" not in css
+        assert ".multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" not in css
         assert 'id="multiProfile"' not in html
         assert "runPreflight:async id" in html
         assert "runVideoProbe:async(id,profile)" in html
@@ -204,7 +205,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "this.lastLiveStatus.set(card.id" in multi_js
         assert "projectionButton(d)" in multi_js
         assert "开启此设备投屏" in multi_js and "关闭此设备投屏" in multi_js
-        assert ".device-port.device-projector.ready,.device-port.device-projector.playing" in html
+        assert ".device-port.device-projector.ready,.device-port.device-projector.playing" in css
         assert "portWrap.append(multiView?multiView.projectionButton(d)" in html
         assert "model.append(elem('span','device-tooltip-line','Android：'+d.android_version))" in html
         assert "item.append(liveRow,playback)" not in multi_js
@@ -237,8 +238,8 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "change.title='编辑 '+d.name" in html
         assert "row.append(change)" in html and "title.append(change)" not in html
         assert "if(route==='mesh'){" in html
-        assert ".device-edit-icon{position:absolute;right:-3px;top:-5px;" in html
-        assert ".device-port.device-projector{position:static;" in html
+        assert ".device-edit-icon{position:absolute;right:-3px;top:-5px;" in css
+        assert ".device-port.device-projector{position:static;" in css
         assert "if(multiView)title.append(multiView.projectionButton(d))" not in html
         assert "name.append(model)" in html and "name.tabIndex=0" in html
         assert "if(d.model)title.append(elem('span','device-model'" not in html
@@ -252,26 +253,26 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert "const name=elem('span','item-name',d.name)" in html
         assert "title.append(name)" in html
         assert "name.append(model)" in html
-        assert ".device-title:hover .device-model-tooltip" in html
-        assert ".device-title:focus-within .device-model-tooltip" in html
+        assert ".device-title:hover .device-model-tooltip" in css
+        assert ".device-title:focus-within .device-model-tooltip" in css
         assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "if(d.model||d.android_version)" in html
         assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
-        assert ".device-android{" not in html
+        assert ".device-android{" not in css
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         # Header indicator uses actual active_serial for successful ADB,
         # selected_serial only to explain an explicit failed attempt.
         assert "top.append(managementLabel,info);primary.append(top,addressList)" in html
         assert "row.prepend(adbStatusBadge(d))" not in html
         assert "addressRows.push(row)" in html
-        assert ".device-port.device-projector.adb-connected::before" in html
-        assert ".device-port.device-projector.adb-failed::before" in html
+        assert ".device-port.device-projector.adb-connected::before" in css
+        assert ".device-port.device-projector.adb-failed::before" in css
         assert "const connected=d.status==='connected'&&Boolean(d.active_serial)" in html
         assert "d.connect_failed===true||d.status==='error'" in html
         assert "const serial=connected?d.active_serial:(failed?d.selected_serial:null)" in html
         assert "primary.append(elem('div','muted','ADB 已连接：'+d.active_serial))" not in html
-        assert ".adb-badge.connected{background:#183e31" in html
-        assert ".adb-badge.failed{background:#49252e" in html
+        assert ".adb-badge.connected{background:#183e31" in css
+        assert ".adb-badge.failed{background:#49252e" in css
         assert "low_latency:true" in multi_js
 
 

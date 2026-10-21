@@ -178,6 +178,7 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
 def test_keyboard_ui_is_explicit_and_never_global_key_capture():
     root = Path(__file__).resolve().parents[1]
     html = (root / "web" / "index.html").read_text()
+    css = (root / "web" / "assets" / "legacy-page.css").read_text()
     multi = (root / "web" / "m2-multi.js").read_text()
     assert "make('form','multi-text-panel')" in multi
     assert "const input=make('input'),submit=make('button','','发送')" in multi
@@ -188,9 +189,9 @@ def test_keyboard_ui_is_explicit_and_never_global_key_capture():
     assert "else fab.append(btn);" in multi
     assert "ws.send(JSON.stringify({type:'control_enable',session_id:card.session}))" in multi
     assert "const toggle=icon('fab-remote'" not in multi
-    assert ".multi-fab .fab-nav-back{top:48px;right:0}" in html
-    assert ".multi-fab .fab-nav-home{top:94px;right:0}" in html
-    assert ".multi-fab .fab-nav-recents{top:140px;right:0}" in html
+    assert ".multi-fab .fab-nav-back{top:48px;right:0}" in css
+    assert ".multi-fab .fab-nav-home{top:94px;right:0}" in css
+    assert ".multi-fab .fab-nav-recents{top:140px;right:0}" in css
     assert "logPanel.hidden=false" in multi and "logPanel.hidden=true" in multi
     assert "['recents','最近任务']" in multi
     assert "m.type==='input_accepted'" in multi

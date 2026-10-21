@@ -221,6 +221,7 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
 def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     root = Path(__file__).resolve().parents[1] / "web"
     page = (root / "index.html").read_text()
+    css = (root / "assets" / "legacy-page.css").read_text()
     multi = (root / "m2-multi.js").read_text()
     assert 'id="multiPicker"' in page and 'id="multiGrid"' in page
     assert 'id="legacySolo"' not in page and 'id="liveProfile"' not in page
@@ -228,7 +229,7 @@ def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
     assert "profile:'custom',max_size:960,experimental_resolution:null" in multi
     assert "video_bit_rate:3000000,max_fps:24" in multi
     assert "actions.hidden=true" in multi and "details.hidden=true" in multi
-    assert ".multi-choice>.multi-probe-log[hidden]" in page
+    assert ".multi-choice>.multi-probe-log[hidden]" in css
     assert "choice(CHOICES,value.profile)" not in multi
     assert "item.append(custom)" in multi
     for field in ("max_size", "video_bit_rate", "max_fps", "dpi"):
