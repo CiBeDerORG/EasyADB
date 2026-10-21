@@ -28,9 +28,6 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
-          npx prettier web/features/devices/device-management-controller.js | base64 -w0 | sed 's/^/D2_FORMAT=/'
-          echo
-          node tests/device_management_controller_contract.cjs
           npm run format:check
           npm run test:architecture
       - name: Check modal UI and deployment scripts

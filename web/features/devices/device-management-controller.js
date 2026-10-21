@@ -2,7 +2,16 @@ import { hasConnectedAdb } from './device-list-model.js';
 
 // Batch actions share the page's device array and selection Set with ADB and projection.
 export class DeviceManagementController {
-  constructor({ state, request, refreshDevices, confirmDelete, isDeviceBusy, isDeviceConnecting, onChange, notify }) {
+  constructor({
+    state,
+    request,
+    refreshDevices,
+    confirmDelete,
+    isDeviceBusy,
+    isDeviceConnecting,
+    onChange,
+    notify,
+  }) {
     this.state = state;
     this.request = request;
     this.refreshDevices = refreshDevices;
@@ -17,9 +26,7 @@ export class DeviceManagementController {
   getSelectionSummary() {
     const state = this.state;
     const selected = state.devices.filter((device) => state.selectedDeviceIds.has(device.id));
-    const eligible = selected.filter(
-      (device) => !state.isLoading && !this.isDeviceBusy(device.id),
-    );
+    const eligible = selected.filter((device) => !state.isLoading && !this.isDeviceBusy(device.id));
     const selectable = state.devices.filter((device) => !this.isDeviceConnecting(device.id));
     return {
       selected,
@@ -37,7 +44,8 @@ export class DeviceManagementController {
       !state.isLoaded ||
       !state.devices.some((device) => device.id === deviceId) ||
       this.isDeviceConnecting(deviceId)
-    ) return;
+    )
+      return;
     if (shouldSelect) state.selectedDeviceIds.add(deviceId);
     else state.selectedDeviceIds.delete(deviceId);
     this.onChange();
@@ -78,16 +86,18 @@ export class DeviceManagementController {
     if (
       operation === 'delete' &&
       !this.confirmDelete(
-        '将从列表永久删除以下 ' + eligible.length + ' 台设备：\n' +
-        eligible.map((device) => device.name).join('、') +
-        (skipped ? '\n另有 ' + skipped + ' 台正在投屏或清理中，将跳过。' : '') +
-        '\n不会清除手机上的 ADB 配对授权。确认删除？',
+        '将从列表永久删除以下 ' +
+          eligible.length +
+          ' 台设备：\n' +
+          eligible.map((device) => device.name).join('、') +
+          (skipped ? '\n另有 ' + skipped + ' 台正在投屏或清理中，将跳过。' : '') +
+          '\n不会清除手机上的 ADB 配对授权。确认删除？',
       )
-    ) return false;
+    )
+      return false;
 
     const batch = { generation: state.generation, abortController: new AbortController() };
-    const isCurrent = () =>
-      this.activeBatch === batch && state.generation === batch.generation;
+    const isCurrent = () => this.activeBatch === batch && state.generation === batch.generation;
     this.activeBatch = batch;
     state.isLoading = true;
     this.onChange();
@@ -102,26 +112,40 @@ export class DeviceManagementController {
         if (!isCurrent()) return false;
         if (operation === 'check') {
           this.notify(
-            '批量检查中 ' + (success + failed.length + 1) + ' / ' + eligible.length + '：' + device.name,
+            '批量检查中 ' +
+              (success + failed.length + 1) +
+              ' / ' +
+              eligible.length +
+              '：' +
+              device.name,
           );
         }
         // A phone may become busy or leave the selection during an earlier request.
         // Revalidate immediately before dispatch, ignoring the page's own lock.
         const stillPresent = state.devices.some((entry) => entry.id === device.id);
-        if (!stillPresent || !state.selectedDeviceIds.has(device.id) || this.isDeviceBusy(device.id)) {
+        if (
+          !stillPresent ||
+          !state.selectedDeviceIds.has(device.id) ||
+          this.isDeviceBusy(device.id)
+        ) {
           failed.push(device.name + '：正在连接或投屏，已跳过');
           continue;
         }
         try {
           const response = await this.request(
-            '/api/devices/' + encodeURIComponent(device.id) + (operation === 'check' ? '/refresh' : ''),
-            { method: operation === 'check' ? 'POST' : 'DELETE', signal: batch.abortController.signal },
+            '/api/devices/' +
+              encodeURIComponent(device.id) +
+              (operation === 'check' ? '/refresh' : ''),
+            {
+              method: operation === 'check' ? 'POST' : 'DELETE',
+              signal: batch.abortController.signal,
+            },
           );
           if (!isCurrent()) return false;
           if (operation === 'check') {
             const fresh = await response.json();
             if (!isCurrent()) return false;
-            state.devices = state.devices.map((entry) => entry.id === device.id ? fresh : entry);
+            state.devices = state.devices.map((entry) => (entry.id === device.id ? fresh : entry));
           } else {
             state.selectedDeviceIds.delete(device.id);
             if (state.selectedDeviceId === device.id) state.selectedDeviceId = null;
@@ -157,16 +181,29 @@ export class DeviceManagementController {
     const refreshWarning = refreshFailed ? '；设备列表刷新失败，请手动重新加载' : '';
     if (operation === 'delete') {
       this.notify(
-        '批量删除完成：已删除 ' + success + ' 台，预先跳过投屏中 ' + skipped +
-        ' 台，其他未删除 ' + failed.length + ' 台' +
-        (failed.length ? '；' + failed.join('；') : '') + refreshWarning + '.',
+        '批量删除完成：已删除 ' +
+          success +
+          ' 台，预先跳过投屏中 ' +
+          skipped +
+          ' 台，其他未删除 ' +
+          failed.length +
+          ' 台' +
+          (failed.length ? '；' + failed.join('；') : '') +
+          refreshWarning +
+          '.',
         failed.length || refreshFailed ? 'error' : 'ok',
       );
     } else {
       this.notify(
-        '批量检查完成：已检查 ' + success + ' 台，投屏中预先跳过 ' + skipped +
-        ' 台，其他失败/跳过 ' + failed.length + ' 台；只检查各自选定地址，不自动连接' +
-        (failed.length ? '；' + failed.join('；') : '') + refreshWarning,
+        '批量检查完成：已检查 ' +
+          success +
+          ' 台，投屏中预先跳过 ' +
+          skipped +
+          ' 台，其他失败/跳过 ' +
+          failed.length +
+          ' 台；只检查各自选定地址，不自动连接' +
+          (failed.length ? '；' + failed.join('；') : '') +
+          refreshWarning,
         failed.length || refreshFailed ? 'error' : 'ok',
       );
     }

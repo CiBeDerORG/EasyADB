@@ -192,7 +192,7 @@ function section(html, start, end) {
       REDRAWS: redraws, NOTICES: notices, REQUESTS: requests,
       REQUEST: async (path, options) => {
         requests.push([path, options.method]);
-        return { json: async () => ({ ...devices(['1'])[0], status: 'checked' }) };
+        return { json: async () => ({ ...devices([path.split('/')[3]])[0], status: 'checked' }) };
       },
     };
     const setup = `
@@ -217,7 +217,7 @@ async function load(){return true;}
       section(html, "$('bulkDelete').addEventListener", "$('newDevice').addEventListener") +
       section(html, "$('refreshAll').addEventListener", "window.addEventListener('beforeunload'") +
       `
-globalThis.snapshot=()=>({devices,selection:managementSelected,loading,loaded,controller:deviceManagementController});
+globalThis.snapshot=()=>({devices,selected,selection:managementSelected,loading,loaded,controller:deviceManagementController});
 `;
     vm.runInNewContext(setup, sandbox, { filename: 'device-management-page.js' });
     let installed = 0;
@@ -246,7 +246,7 @@ globalThis.snapshot=()=>({devices,selection:managementSelected,loading,loaded,co
       ['/api/devices/2', 'DELETE'],
     ]);
     assert.equal(selection.size, 0);
-    assert.equal(sandbox.snapshot().selected, undefined);
+    assert.equal(sandbox.snapshot().selected, null);
     handlers.get('token:input')();
     assert.equal(sandbox.snapshot().loaded, false);
     assert.equal(sandbox.snapshot().devices.length, 0);
