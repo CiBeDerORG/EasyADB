@@ -361,6 +361,7 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
  for(const key of [...toastItems.keys()])dismissToast(key);
  frontendModules=event.detail;
  if(initialText)message(initialText);
+ render(); // use the injected device-list projection after module bootstrap
 });
 // Browser requests are async, while FastAPI's sync ADB endpoints execute in
 // separate server threadpool workers. Bound this batch to four concurrent
@@ -394,13 +395,9 @@ function successfulBatchIds(candidates,results){
  });
  return ids;
 }
-function select(id){selected=id;render();}
-function render(){
- // Keep the existing per-device quality state in the hidden staging picker;
- // only the ADB port's edit button exposes these options through a modal.
- // The device list no longer repeats ADB address/status or inline settings.
- if(multiView)multiView.updatePicker(false);
- const list=$('devices');list.replaceChildren();
+// Classic bootstrap and old Node VM fixtures retain the original projection
+// until app/main.js injects the production device-list model.
+function buildLegacyDeviceGroups(){
  const grouped=new Map(groups.map(g=>['named:'+g.name,{title:g.name,ip_prefix:g.ip_prefix,discovery_configured:g.discovery_configured,discovery_needs_password:g.discovery_needs_password,items:[]}]));
  for(const d of devices){
   const key=d.group_name?'named:'+d.group_name:'ungrouped';
@@ -416,6 +413,18 @@ function render(){
   return a===b?0:a==='ungrouped'?1:b==='ungrouped'?-1:
    grouped.get(a).title.localeCompare(grouped.get(b).title,'zh-CN');
  });
+ return {grouped,keys};
+}
+function select(id){selected=id;render();}
+function render(){
+ // Keep the existing per-device quality state in the hidden staging picker;
+ // only the ADB port's edit button exposes these options through a modal.
+ // The device list no longer repeats ADB address/status or inline settings.
+ if(multiView)multiView.updatePicker(false);
+ const list=$('devices');list.replaceChildren();
+ const {grouped,keys}=frontendModules?.deviceList
+  ?frontendModules.deviceList.buildDeviceGroups(devices,groups)
+  :buildLegacyDeviceGroups();
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
  for(const key of keys){
   const g=grouped.get(key),section=elem('details','device-group'),shell=elem('div','group-shell');

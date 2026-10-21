@@ -12,3 +12,6 @@
 - 阶段 A 首次 CI #39519543834：Python 273 passed / 3 failed（旧测试仍从 HTML 寻找 CSS）；V4 格式门禁 1 处；本提交仅调整旧测试从实际外置 stylesheet 断言及格式，保持生产代码不变，后续 CI 结果另核。
 
 - 第二次 CI #39519766739：规范门禁 success；旧 `global_toast_contract.cjs` 和一处 Python CSS 断言仍读取 HTML。此次补齐外置 stylesheet 读取位置，不放宽任何实际断言；待重新复核。
+
+- **V4-05 阶段 A 验收**：最终修复提交 `20c3e6f`，CI #39519904579 success（现有完整 Python/Node/Shell/OpenWrt + V4 门禁）；历史 CSS 测试已对照实际样式资源，生产 CSS 内容未修改。
+- **V4-05 阶段 B（待 CI）**：新增 `features/devices/device-list-model.js`，设备展示分组与连接优先排序不再写入生产页面主体。模块注入后刷新列表，旧经典脚本预装配/Node VM 显式兼容；新增纯模型行为测试与精确 JS 静态路由。连接、CRUD、五个 dialog 与 WebRTC/V2 SessionManager 不变。

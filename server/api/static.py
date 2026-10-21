@@ -77,6 +77,7 @@ FRONTEND_MODULES = (
     "features/live/live-card-view.js",
     "features/live/live-batch-scheduler.js",
     "features/live/live-quality-settings.js",
+    "features/devices/device-list-model.js",
 )
 
 

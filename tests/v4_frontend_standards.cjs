@@ -82,6 +82,7 @@ assert(workflow.includes('npm run lint'));
 assert(workflow.includes('npm run format:check'));
 assert(workflow.includes('npm run test:architecture'));
 assert(packageInfo.scripts['test:architecture'].includes('node tests/v4_frontend_modules.mjs'));
+assert(packageInfo.scripts['test:architecture'].includes('node tests/v4_device_list_model.mjs'));
 assert(workflow.includes('run: python -m pytest -q'), 'must retain complete V2 Python suite');
 
 const standards = fs.readFileSync(path.join(root, 'docs/V4-FRONTEND-STANDARDS.md'), 'utf8');

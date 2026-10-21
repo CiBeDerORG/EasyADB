@@ -70,7 +70,7 @@ export default [
     rules: qualityRules,
   },
   {
-    files: ['tests/v4_frontend_modules.mjs'],
+    files: ['tests/v4_frontend_modules.mjs', 'tests/v4_device_list_model.mjs'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
