@@ -10,15 +10,15 @@
 | --- | --- |
 | 仓库 | `CiBeDerORG/EasyADB` |
 | 工作分支 | `refactor/v4-frontend-standards`；不要使用默认 `main` 作为本轮开发基线 |
-| 已完成 | V4-01～V4-04；V4-05 的 A、B、批量操作锁修复、C、D1、D2、**D3**，均已自动化验收；D 阶段完成 |
-| 当前停点 | **D3 与 D 阶段完成；E 尚未开始，V4-05 仍为进行中** |
-| 下一项 | **V4-05-E：剩余弹窗与事件**；须由用户下一次明确指示后才开始 |
-| 后续顺序 | E（剩余弹窗事件）→ F（兼容清理）→ V4-06 |
-| 最近已验收代码 | [22313af](https://github.com/CiBeDerORG/EasyADB/commit/22313af1c6934516a8909ed20be7dca83db7f5b5)，[CI #39549345999](https://github.com/CiBeDerORG/EasyADB/actions/runs/39549345999) success |
-| 上一项交接文档提交 | [348b3f6](https://github.com/CiBeDerORG/EasyADB/commit/348b3f6cdc1b24cb2703efebe06b02c4198f6227)，[CI #39547085550](https://github.com/CiBeDerORG/EasyADB/actions/runs/39547085550) success；本轮从该干净基线继续 D3 |
+| 已完成 | V4-01～V4-04；V4-05 的 A、B、批量操作锁修复、C、D1、D2、D3、**E**，均已自动化验收；D 阶段完成 |
+| 当前停点 | **E 已完成；F 尚未开始，V4-05 仍为进行中** |
+| 下一项 | **V4-05-F：兼容层清理**；须由用户下一次明确指示后才开始 |
+| 后续顺序 | F（兼容清理）→ V4-06 |
+| 最近已验收代码 | [393de42](https://github.com/CiBeDerORG/EasyADB/commit/393de4236f66704d1689563a0e40141d48b375c2)，[CI #39551875973](https://github.com/CiBeDerORG/EasyADB/actions/runs/39551875973) success |
+| 上一项交接文档提交 | [8abff26](https://github.com/CiBeDerORG/EasyADB/commit/8abff2637976cb03b8c5254d374d82e475787e6c)，[CI #39549890492](https://github.com/CiBeDerORG/EasyADB/actions/runs/39549890492) success；本轮从该干净基线继续 E |
 | 尚未执行 | 真实浏览器、FNOS/NAS、Android、OpenWrt/EasyTier 部署与设备验收；V4-06 未开始，V3 暂缓 |
 
-以上 SHA 是交接快照，不是要求回退到固定版本。下一位 Agent 必须先读取远端最新分支 HEAD、工作区改动以及本文件和进度文件；若已有更新，基于新状态接续，不覆盖他人提交、不重复完成项。本轮仅完成 D3 设备与线路协调的代码提交和自动化验收，保留 D1/D2 的状态所有权及已有回归；完成交接后停止，不启动 E。
+以上 SHA 是交接快照，不是要求回退到固定版本。下一位 Agent 必须先读取远端最新分支 HEAD、工作区改动以及本文件和进度文件；若已有更新，基于新状态接续，不覆盖他人提交、不重复完成项。本轮仅完成 E 剩余弹窗与事件的代码提交和自动化验收，继续复用 D1/D2/D3 与已有 Dialog；完成交接后停止，不启动 F。
 
 ## 执行规则
 
@@ -39,12 +39,12 @@
 | V4-02 | P0 | [x] | **公共 ES Modules 抽离**：新增 API Client、DOM、Toast、Dialog 模块及 `app/main.js` 一次性装配；原页面通过兼容适配层使用，无新增 window 业务全局。Toast 键值替换、计时、旧回调隔离，Dialog 焦点和表单校验仍兼容。静态服务新增五个精确 GET 资源白名单、不开放通配目录；补 Node 模块行为、HTTP 白名单、原页面契约测试。最终代码 [485ecc3](https://github.com/CiBeDerORG/EasyADB/commit/485ecc34c90929c4e290cb2fd34fde46074d55dc)，[CI #39458266192](https://github.com/CiBeDerORG/EasyADB/actions/runs/39458266192) success；未改 V2 SessionManager/DB/协议。 |
 | V4-03 | P0 | [x] | **单路 LiveSessionController 资源所有权**：新增 `web/features/live/live-session-controller.js`，由 V4-02 的一次性 ES Module 装配注入生产 `MultiView`；每台设备本轮独占 WS、WebRTC Player、Touch、Meter/QualityMeter、sessionId、帧回调及停止计时器。卡片旧字段仅为兼容访问器，服务端 SessionManager 仍为清理与槽位释放权威。回调核对当前卡片/Socket，Session ID 不允许被另一个值覆盖，迟到结束/错误/停止超时不能影响替代会话；仅服务端确认清理后允许显式一次性重连。保留原多画面、群控、20 路及页面接口，旧 Node VM fixture 已注入真实新控制器执行集成回归；新增独立生命周期/诊断隔离测试和精确静态资源白名单。最终代码 [a205512](https://github.com/CiBeDerORG/EasyADB/commit/a2055120185c823bcc6065ddabc372221ee70d9a)，[CI #39461806736](https://github.com/CiBeDerORG/EasyADB/actions/runs/39461806736) success。真实环境验收仍待 V2-F10。 |
 | V4-04 | P0 | [x] | **MultiView 职责拆分**：新增 `features/live/live-batch-scheduler.js`（启动队列、批量代次、并发预算与完成回调）、`live-card-view.js`（画面容器、宽高自适应、会话诊断与悬浮日志 DOM）、`live-quality-settings.js`（设备画质 Map、wire payload、实验性分辨率及参数弹窗），通过 `app/main.js` 单次 ES Module 装配注入。首次使用懒装配，继承页面已有画质选项与服务器下发 `max_starting`；保留原字段兼容代理及旧 VM 回退，供 V4-05 逐项清理。新增三个精确静态 JS 白名单；旧多画面/20 路 Node 契约已注入真实三个模块，增强了先建页面后装配的数据保留回归。最终代码 [5335af0](https://github.com/CiBeDerORG/EasyADB/commit/5335af034b039346994c6495706d2500e9875a01)，[CI #39464539417](https://github.com/CiBeDerORG/EasyADB/actions/runs/39464539417) success。 |
-| V4-05 | P1 | [~] | **设备管理及页面 JS/CSS 模块化**：保持现有 DOM、五个 dialog 和交互。A 样式外置、B 设备模型、C 列表 View、D1 加载/连接、D2 选择/批量管理、D3 设备/线路协调均已完成自动化验收，D 阶段完成。D3 代码 [22313af](https://github.com/CiBeDerORG/EasyADB/commit/22313af1c6934516a8909ed20be7dca83db7f5b5)，[CI #39549345999](https://github.com/CiBeDerORG/EasyADB/actions/runs/39549345999) success。设备列表与选择 Set 继续共享；E 弹窗与 F 兼容清理仍待分步迁移，整项不打勾。 |
+| V4-05 | P1 | [~] | **设备管理及页面 JS/CSS 模块化**：保持现有 DOM、五个 dialog 和交互。A 样式外置、B 设备模型、C 列表 View、D1 加载/连接、D2 选择/批量管理、D3 设备/线路协调、E 剩余弹窗事件均已完成自动化验收。E 代码 [393de42](https://github.com/CiBeDerORG/EasyADB/commit/393de4236f66704d1689563a0e40141d48b375c2)，[CI #39551875973](https://github.com/CiBeDerORG/EasyADB/actions/runs/39551875973) success。设备列表与选择 Set 继续共享；F 兼容清理仍待执行，整项不打勾。 |
 | V4-06 | P0 | [ ] | **收尾全量回归与验收记录**：V4-05 完成后执行全量 Python/Node/Shell/OpenWrt + V2/V4 门禁；明确剩余实机项目归 V2-F10/单独验收，不以 Mock 替代，不把之前各步的 CI 通过当成本项已经执行。 |
 
 ## 二、V4-05 细分任务清单
 
-D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，不新增业务需求。D1、D2、D3 均已完成自动化验收，D 阶段完成；V4-05 整项仍待 E、F。
+D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，不新增业务需求。D1、D2、D3 均已完成自动化验收，D 阶段完成；E 也已完成，V4-05 整项仍待 F。
 
 | 子项 | 状态 | 工作内容与边界 |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 | V4-05-D1：加载与连接 Controller | [x] | `device-connection-controller.js` 接管列表加载、逐台连接及结果回写；4 台并发、完成一台开放一台、失败隔离、访问密钥代次隔离。代码 `e0f93b9`，CI #39538918141 success。 |
 | **V4-05-D2：批量设备管理** | **[x]** | `device-management-controller.js` 接管选择、全选、批量删除和批量检查；共用页面 `managementSelected`，保留旧 VM 兼容路径、删除确认、设备忙碌与选择复核、失败汇总、一次最终刷新及密钥代次隔离；预装配/生产入口共享 `managementBatch`，旧响应不能释放新批次锁。代码 `c76ba59`，CI #39546828783 success；未执行实机验收。 |
 | **V4-05-D3：设备与线路协调** | **[x]** | `device-configuration-controller.js` 接管设备新增/编辑、临时 IP 保存/移除及线路保存后一次显式连接；沿用原 API、共用端口、删除确认和设备级忙碌规则。共享 `configurationOperation`，隔离密钥代次与迟到结果，并兼容 D1 并行元数据刷新。代码 `22313af`，CI #39549345999 success；弹窗布局与校验保持原样，其余事件留待 E，旧回退留待 F，未执行实机验收。 |
-| V4-05-E：剩余弹窗与事件 | [ ] | 迁出剩余弹窗业务事件；复用已有 Dialog 基础能力，保持五个既有 dialog 的校验、关闭保护、键盘/焦点及原有交互。已经外置的功能不重复重写。 |
+| **V4-05-E：剩余弹窗与事件** | **[x]** | `device-dialog-controller.js`、`group-dialog-controller.js`、`group-discovery-view.js` 接管尚内联的弹窗事件、两类配对、分组保存/删除/发现及结果 DOM；复用 D3 和 shared Dialog，保留五个既有 dialog、校验、关闭/键盘/焦点及已外置功能。共享配对/分组/扫描 owner 与弹窗 revision，覆盖旧请求跨 bootstrap、密钥代次隔离及部分保存重试。代码 `393de42`，CI #39551875973 success；兼容回退留待 F，未执行实机验收。 |
 | V4-05-F：兼容层清理 | [ ] | 在生产入口和行为测试稳定后，逐项删除已替代的重复实现、迁移旧 VM/源码位置测试、收紧 ESLint/Prettier 豁免。不得通过删测、跳过门禁或保留永久双实现冒充迁移完成。 |
 
 ## 三、V4-05-D2 已完成：批量设备管理拆分与验收（历史记录）
@@ -103,17 +103,44 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 
 以上由 `tests/device_configuration_controller_contract.cjs` 和完整 CI 验证；代码 `22313af` 的 CI #39549345999 success。静态资源增加精确 HTTP 白名单、MIME/no-store 与非法同目录路径回归。自动化通过不等于实机验收通过。
 
-## 五、关键代码与测试入口
+## 五、V4-05-E 已完成：剩余弹窗与事件拆分及验收
+
+### 实现范围
+
+- 新增 `device-dialog-controller.js`，负责设备、临时 IP、首次配对弹窗的填值、打开/关闭、焦点、表单及配对事件；设备/临时地址保存继续委托 D3，不创建第二份设备列表、选择集合或保存业务。
+- 两类配对分别沿用 `/api/pair` 和 `/api/devices/:id/pair`；首次配对绑定打开时的设备及 `selected_serial`，发请求前复核设备、线路与忙碌状态。成功只反馈本次配对结果并清码，仍由用户手动连接。
+- 新增 `group-dialog-controller.js`，负责分组弹窗、保存/删除、发现授权测试及显式扫描；`group-discovery-view.js` 只呈现本次端点结果。测试使用当前未保存表单，不保存配置或刷新设备；正式扫描单次刷新并显示原 keyed toast，不自动连接或投屏。
+- 保存开始时快照完整表单；基本分组保存成功即记录 `saved.name`，发现配置失败后的重试继续 PUT。原发现配置状态跨重命名、部分失败及模块装配保留，避免重试遗漏应执行的配置 DELETE。保存或扫描已成功但后续列表刷新失败时单独提示，保留已完成结果及扫描明细。
+- 配对与分组变更共享页面操作 owner，扫描使用原 `scanningGroups` 与每组 owner Map，保持不同组独立并发。请求、JSON 和最终刷新后核对身份/代次，写入弹窗再核对 revision/目标；旧响应不清新码、不改新密码、不关闭新弹窗、不释放新锁或移除新一轮同名扫描。
+- 页面一次性注入后由新模块绑定事件，旧监听显式退出，公开包装函数转发；装配前操作仍共享所有权。五个静态 dialog 与原生校验属性保持原样，`display-lab.js` 及既有画质弹窗继续复用，临时 IP 弹窗不增加背景点击关闭。显式旧回退保留到 F，本轮不清理兼容层或收紧豁免。
+
+### 已执行的行为回归
+
+- [x] 实际 HTML ID、五个 dialog、required/端口范围/配对码 pattern、只读 IP、焦点、关闭/取消/背景点击及忙碌保护。
+- [x] 真实 shared Dialog、D3 与页面 View/表单入口；重复 bootstrap、重复 bind 和旧/新监听并存时仅执行一次请求。
+- [x] 通用地址与设备限定配对、参数快照、目标忙碌/消失/线路变化，以及 request/JSON 迟到成功失败和异常释放。
+- [x] 新建/编辑/删除分组、取消确认/确认后变忙、发现配置 PUT/DELETE、部分成功后 PUT 重试及重命名删除配置失败跨 bootstrap 重试。
+- [x] 发现测试不刷新、正式扫描一次刷新/结果 DOM 一致、同组排他/不同组并发；刷新 false/抛错保留本次扫描明细。
+- [x] 旧内联配对、D3 配置和分组保存/删除/测试/扫描在 request、JSON、适用的最终刷新阶段跨 bootstrap/token，保护新 owner、锁、表单、按钮和扫描状态。
+- [x] 新增三个精确 HTTP 资源白名单及非法同目录路径回归；全部旧 Node/UI、Python、Shell/OpenWrt、V2/V4 适用门禁保留。
+
+以上由 `tests/device_dialog_controller_contract.cjs`、`tests/group_dialog_controller_contract.cjs` 与完整 CI 验证。代码 `393de42` 对应 CI #39551875973 success；自动化通过不等于真实浏览器或实机验收通过。
+
+## 六、关键代码与测试入口
 
 | 文件 | 接续时关注点 |
 | --- | --- |
-| `web/index.html` | 仍包含共享页面状态、各 Controller 的事件适配、分组/发现/配对与弹窗事件，以及显式旧兼容路径；按最新源码定位，不依赖旧行号。 |
+| `web/index.html` | 保留共享页面状态、各 Controller 装配与包装入口，以及显式旧兼容实现/监听 guard；E 生产弹窗与分组/发现/配对事件已委托新模块，旧回退待 F 清理。按最新源码定位，不依赖旧行号。 |
 | `web/app/main.js` | ES Module 一次性装配入口，不新增 window 业务全局，不在初始化时主动连接设备。 |
 | `web/features/devices/device-list-model.js` | 已完成的分组、连接判断与展示排序，后续迁移继续复用。 |
 | `web/features/devices/device-list-view.js` | 已完成的列表 DOM；通过状态和动作接口衔接，不接管网络请求或视频会话。 |
 | `web/features/devices/device-connection-controller.js` | 已完成的 D1；通过页面访问器共享设备、选择、连接中集合、结果快照、代次与 AbortController，不复制业务状态。 |
 | `web/features/devices/device-management-controller.js` | 已完成的 D2；共享页面选择 Set、设备状态与批次所有者，提供选择汇总、确认删除、状态检查和代次隔离；保留删除后刷新失败时移除已删记录的行为。 |
 | `web/features/devices/device-configuration-controller.js` | 已完成的 D3；共享设备列表、单设备焦点、页面锁与操作所有者，协调设备/临时地址保存及线路一次连接，不接管 Dialog 或 D1/D2 状态。 |
+| `web/features/devices/device-dialog-controller.js` | E 的设备/临时地址/首次配对弹窗及两类配对；共享表单身份与配对 owner，设备保存委托 D3，复用 shared Dialog。 |
+| `web/features/devices/group-dialog-controller.js`、`group-discovery-view.js` | E 的分组弹窗、部分保存重试、删除与每组发现生命周期；结果 View 只呈现本次扫描。 |
+| `tests/device_dialog_controller_contract.cjs` | 严格真实 HTML + 多监听页面 fixture；执行实际 Dialog/D3/View/配对与旧内联跨 bootstrap/token，含分组 owner 交接。 |
+| `tests/group_dialog_controller_contract.cjs` | 真实分组表单/事件、部分成功重试、确认后复核、每组扫描、异步隔离、刷新失败与结果 DOM 一致性；已接入 CI。 |
 | `tests/device_configuration_controller_contract.cjs` | D3 真实 Controller 与页面 form/temp/View/token/旧内联跨 bootstrap 回归，覆盖保存/刷新失败、各异步阶段隔离及真实 D1 元数据交错；已接入 CI。 |
 | `tests/bulk_management_lock_contract.cjs` | 同一组原有断言覆盖旧内联与真实 Controller 两条路径，验证批量任务不自锁、设备忙碌状态会再次复核。 |
 | `tests/device_management_controller_contract.cjs` | D2 真实 Controller + 页面装配、全选/单选、确认取消、前后忙碌、失败/刷新失败和代次重置行为回归，已接入 CI。 |
@@ -124,9 +151,9 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 | `server/api/static.py`、`tests/test_v4_frontend_assets.py` | 每新增前端资源须同步精确白名单、MIME/缓存与非法路径测试，不能开放任意静态目录。 |
 | `.github/workflows/test.yml`、`package.json` | 验收命令与现有全部门禁的执行入口；新增测试必须接入，不能只新建文件不执行。 |
 
-## 六、验收与交接要求
+## 七、验收与交接要求
 
-D3 代码 `22313af` 对应 CI #39549345999 success：276 项 Python、19 个 Node/UI 入口、4 个架构/模块入口、V4 ESLint/Prettier、JS/Shell 语法、部署脚本契约和 OpenWrt 烟测通过；本地与该提交 CI 均已执行。V2 专用 release gate 因分支条件 skipped，不能写为此分支独立通过。下一位 Agent 须以当次实际 CI 结果为准。
+E 代码 `393de42` 对应 CI #39551875973 success：276 项 Python、21 个 Node/UI 入口、4 个架构/模块入口、V4 ESLint/Prettier、JS/Shell 语法、部署脚本契约和 OpenWrt 烟测通过；本地与该提交 CI 均已执行。V2 专用 release gate 因分支条件 skipped，全量 pytest 保留 V2 回归，不能写为此分支独立步骤通过。下一位 Agent 须以当次实际 CI 结果为准。
 
 执行当前 `.github/workflows/test.yml` 的全部适用步骤，包括依赖安装、Python 编译和全量 pytest、所有 Node/UI 回归、`npm run lint`、`npm run format:check`、`npm run test:architecture`、Shell 语法及 OpenWrt 烟测。CI 中有分支条件的步骤须按实际记录 passed/skipped，不把 skipped 写成单独执行通过。禁止临时格式化后只检查修改后的工作区来掩盖未提交的格式问题。
 
@@ -136,6 +163,6 @@ D3 代码 `22313af` 对应 CI #39549345999 success：276 项 Python、19 个 Nod
 
 ## 当前停点
 
-**已完成 V4-01～V4-04，以及 V4-05-A/B/C/D1/D2/D3 和批量操作锁修复。D3 自动化验收通过，D 阶段完成，V4-05 整项仍为进行中，V4-06 未开始。**
+**已完成 V4-01～V4-04，以及 V4-05-A/B/C/D1/D2/D3/E 和批量操作锁修复。E 自动化验收通过，V4-05 整项仍为进行中，F 与 V4-06 未开始。**
 
-本轮 D3 已完成、提交、验收并更新文档，到此停止。下一轮只有收到用户明确“继续”后，才处理 **V4-05-E：剩余弹窗与事件**；F、V4-06 不提前执行。
+本轮 E 已完成、提交、验收并更新文档，到此停止。下一轮只有收到用户明确“继续”后，才处理 **V4-05-F：兼容层清理**；V4-06 不提前执行。
