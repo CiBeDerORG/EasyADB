@@ -268,6 +268,7 @@ export function createPageController({
     controllers.configuration.invalidate();
     controllers.deviceDialogs.invalidate();
     controllers.groupDialogs.invalidate();
+    displayLabView?.invalidate?.();
     state.pendingDeviceIds.clear();
     state.resultSnapshots.clear();
     if (state.isBatchBusy) state.isLoading = false;
@@ -336,6 +337,7 @@ export function createPageController({
   displayLabView = createDisplayLab({
     dialog: getElement('displayLabDialog'),
     getDevice: (id) => state.devices.find((device) => device.id === id),
+    getGeneration: () => state.generation,
     api,
     multiView,
   });

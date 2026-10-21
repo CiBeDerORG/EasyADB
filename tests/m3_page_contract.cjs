@@ -112,4 +112,6 @@ assert.match(groups, /if \(isTest\) \{[\s\S]*?groupOpenWrtUrl[\s\S]*?groupOpenWr
 has(groups, 'options.body = JSON.stringify(');
 assert(!store.includes('password=excluded.password'));
 assert(source.includes('SCANNER = "/usr/libexec/luci-avahi-scan"'));
-console.log('M3 real module wiring, configuration, conditional discovery, shared ports and drawer contracts: OK');
+require('./helpers/display-lab-contract.cjs')().then(() => {
+  console.log('M3 real module wiring, configuration, conditional discovery, shared ports and drawer contracts: OK');
+}).catch(error => { console.error(error); process.exitCode = 1; });
