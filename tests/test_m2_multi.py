@@ -257,7 +257,7 @@ def test_multi_page_and_static_modules_are_served(monkeypatch):
         assert ".device-title:focus-within .device-model-tooltip" in css
         assert "if(d.model)title.append(elem('span','device-model'" not in html
         assert "if(d.model||d.android_version)" in html
-        assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in html
+        assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in css
         assert ".device-android{" not in css
         assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
         # Header indicator uses actual active_serial for successful ADB,

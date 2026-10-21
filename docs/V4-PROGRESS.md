@@ -10,3 +10,5 @@
 - V3 继续暂缓，V2-F10 真实 FNOS/Android/OpenWrt/EasyTier 验收仍待执行。
 
 - 阶段 A 首次 CI #39519543834：Python 273 passed / 3 failed（旧测试仍从 HTML 寻找 CSS）；V4 格式门禁 1 处；本提交仅调整旧测试从实际外置 stylesheet 断言及格式，保持生产代码不变，后续 CI 结果另核。
+
+- 第二次 CI #39519766739：规范门禁 success；旧 `global_toast_contract.cjs` 和一处 Python CSS 断言仍读取 HTML。此次补齐外置 stylesheet 读取位置，不放宽任何实际断言；待重新复核。

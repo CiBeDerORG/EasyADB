@@ -4,12 +4,13 @@
 'use strict';
 const fs=require('node:fs'),assert=require('node:assert/strict'),vm=require('node:vm');
 const page=fs.readFileSync('web/index.html','utf8');
+const css=fs.readFileSync('web/assets/legacy-page.css','utf8');
 const inline=page.split('<script>',2)[1].split('</script>',1)[0];
 const source=inline.slice(inline.indexOf("const toastHost=$('toastHost')"),inline.indexOf('async function api('));
 assert(source.startsWith("const toastHost=$('toastHost')"));
 assert(!page.includes('id="message"'));
 assert(page.indexOf('id="toastHost"')>page.indexOf('</main>'),'Toast host is outside the transparent drawer');
-assert(page.includes('.toast-host{position:fixed;'),'Toast must overlay the page');
+assert(css.includes('.toast-host{position:fixed;'),'Toast must overlay the page');
 assert(!inline.includes("'/discovery/last'"),'history is not replayed as a fresh toast');
 class El{
  constructor(tag='div'){this.tagName=tag.toUpperCase();this.className='';this.children=[];this.parentNode=null;this.listeners={};this.attrs={};this.textContent='';this.type='';}
