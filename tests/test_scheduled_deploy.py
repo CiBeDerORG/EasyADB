@@ -20,8 +20,8 @@ def shell(*args, cwd, env=None, check=True):
                           capture_output=True, check=check)
 
 
-def setup_project(tmp_path):
-    project = tmp_path / "EasyADB"
+def setup_project(tmp_path, project_name="EasyADB"):
+    project = tmp_path / project_name
     scripts = project / "scripts"
     scripts.mkdir(parents=True)
     for name in ("scheduled-deploy.sh", "build-with-mihomo.sh", "update-m2.sh", "deploy-lock.sh"):
@@ -123,6 +123,63 @@ def test_invalid_interval_never_modifies_crontab(tmp_path, interval):
     result = invoke(project, env, "scheduled-deploy.sh", "start", interval)
     assert result.returncode == 2
     assert not (tmp_path / "cron.txt").exists()
+
+
+@pytest.mark.parametrize("project_name", ("EasyADB", "EasyADB [lab].+", "EasyADB\\tools"))
+def test_cron_exact_job_identity_preserves_prefix_projects_and_unrelated_lines(tmp_path, project_name):
+    project, env, _ = setup_project(tmp_path, project_name)
+    sibling = project.with_name(project_name + "-staging")
+    shutil.copytree(project, sibling)
+    marker = "EASYADB_SCHEDULED_DEPLOY:" + str(project)
+    unrelated = [
+        "@reboot echo unrelated",
+        "# Notes about " + marker,
+        "15 * * * * echo archived # " + marker + "-archive",
+        "30 * * * * echo marker-reference " + marker + " --dry-run",
+    ]
+    cron = tmp_path / "cron.txt"
+    cron.write_text("\n".join(unrelated) + "\n")
+
+    # A longer sibling name and text references do not enable this checkout.
+    started = invoke(sibling, env, "scheduled-deploy.sh", "start", "2m", "--no-proxy")
+    assert started.returncode == 0, started.stderr
+    sibling_table = cron.read_text()
+    assert "Status: disabled" in invoke(project, env, "scheduled-deploy.sh", "status").stdout
+    assert invoke(project, env, "scheduled-deploy.sh", "stop").returncode == 0
+    assert cron.read_text() == sibling_table
+
+    started = invoke(project, env, "scheduled-deploy.sh", "start", "1m", "--no-proxy")
+    assert started.returncode == 0, started.stderr
+    lines = cron.read_text().splitlines()
+    assert lines[:len(unrelated)] == unrelated
+    assert len(lines) == len(unrelated) + 2
+    sibling_entry = next(line for line in lines if line.endswith(" # " + marker + "-staging"))
+    assert sibling_entry in sibling_table.splitlines()
+    assert sum(line.endswith(" # " + marker) for line in lines) == 1
+    assert "Status: enabled" in invoke(project, env, "scheduled-deploy.sh", "status").stdout
+    assert "Status: enabled" in invoke(sibling, env, "scheduled-deploy.sh", "status").stdout
+
+    # Reconfiguration replaces our entry once, retaining the sibling exactly.
+    assert invoke(project, env, "scheduled-deploy.sh", "start", "3m").returncode == 0
+    lines = cron.read_text().splitlines()
+    assert lines[:len(unrelated)] == unrelated
+    assert sibling_entry in lines and len(lines) == len(unrelated) + 2
+    assert sum(line.endswith(" # " + marker) for line in lines) == 1
+    assert "3 minute(s)" in invoke(project, env, "scheduled-deploy.sh", "status").stdout
+
+    assert invoke(project, env, "scheduled-deploy.sh", "stop").returncode == 0
+    assert cron.read_text().splitlines() == unrelated + [sibling_entry]
+    assert "Status: disabled" in invoke(project, env, "scheduled-deploy.sh", "status").stdout
+    assert "Status: enabled" in invoke(sibling, env, "scheduled-deploy.sh", "status").stdout
+    # Stopped checkout still has config on disk; its sibling must not make
+    # installed() true and allow a stale cron/manual run to deploy it.
+    state = project / "data/storage/.easyadb-schedule-last-check"
+    state.write_text("0\n")
+    for command in ("run", "run-locked"):
+        assert invoke(project, env, "scheduled-deploy.sh", command).returncode == 0
+    assert state.read_text() == "0\n" and not (tmp_path / "docker.log").exists()
+    assert invoke(sibling, env, "scheduled-deploy.sh", "stop").returncode == 0
+    assert cron.read_text().splitlines() == unrelated
 
 
 def test_changed_tree_skips_rebuild_then_deploys_and_retries_failure(tmp_path):

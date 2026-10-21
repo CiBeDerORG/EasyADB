@@ -29,9 +29,24 @@ case "$ROOT" in
 esac
 
 read_crontab() { crontab -l 2>/dev/null || :; }
-installed() { read_crontab | grep -F "$MARKER" >/dev/null 2>&1; }
-# Filter only this project's uniquely marked entry, never other cron tasks.
-without_ours() { read_crontab | grep -Fv "$MARKER" || :; }
+managed_crontab() {
+  # Match the complete generated comment at end of line. A checkout whose
+  # name begins with ours is a different job; marker mentions elsewhere are
+  # not managed entries. ENVIRON preserves literal backslashes in paths.
+  EASYADB_CRON_MARKER="$MARKER" awk -v mode="$1" '
+    BEGIN { suffix = " # " ENVIRON["EASYADB_CRON_MARKER"] }
+    {
+      ours = length($0) >= length(suffix) &&
+        substr($0, length($0) - length(suffix) + 1) == suffix
+      if (ours) found = 1
+      else if (mode == "without") print
+    }
+    END { if (mode == "installed") exit !found }
+  '
+}
+installed() { read_crontab | managed_crontab installed; }
+# Filter only this project's exact job marker, preserving all other lines.
+without_ours() { read_crontab | managed_crontab without; }
 require_cron() {
   command -v crontab >/dev/null 2>&1 || {
     echo 'ERROR: crontab is required. Enable/install cron on the NAS first.' >&2; exit 1;
