@@ -164,8 +164,11 @@ function snapshot(node) {
   const settingsButtons = findAll(elements.get('devices'),
     node => node.className === 'projection-settings-edit');
   assert.equal(settingsButtons.length, 3);
-  assert.equal(settingsButtons[0].disabled, true, 'connecting device settings remain locked');
-  settingsButtons[1].fire('click');
+  const pendingSettings = settingsButtons.find(button => button.title.includes('Pending'));
+  const readySettings = settingsButtons.find(button => button.title.includes('Ready'));
+  assert.equal(pendingSettings.disabled, true, 'connecting device settings remain locked');
+  assert.equal(readySettings.disabled, false);
+  readySettings.fire('click');
   assert.equal(settings, 1);
   assert.equal(injectedCalls, 3, 'projection-enabled redraw keeps the production module');
   console.log('Device list view injected/legacy DOM parity, actions and state ownership: OK');
