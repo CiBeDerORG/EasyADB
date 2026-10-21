@@ -2,10 +2,10 @@
 
 ## 最新状态（2026-10-21）
 
-- 分支：`refactor/v4-frontend-standards`。本轮 9 项已确认 BUG 与连续取消边界均已修复并推送；下文「本轮批量 BUG 修复已完成」记录每项证据。
-- 统一验收：[CI #39571468668](https://github.com/CiBeDerORG/EasyADB/actions/runs/39571468668) **success**，代码 SHA `f8634ba284ae380ca6369cbaeedb13079c8d3834`；**373 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
-- 当前执行规则：**每项完成立即独立 commit + push；整批 BUG 全修完再统一 CI。** 验收结果文档使用 `[skip ci]`，核对仅文档差异；最终文档 HEAD 没有另跑 CI。此规则覆盖下方历史记录中的旧执行约定。
-- 真实环境验收未执行，未知之处保持未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
+- 分支：`refactor/v4-frontend-standards`。本轮新增两项需求 **2/2 完成并推送**：同设备最新页面接管实时画面、设备管理浮窗从最大 900px 收窄到 760px。详细证据见文末「实时画面接管与设备浮窗收窄」。上轮已确认 BUG 修复继续保留。
+- 统一验收：[CI #39575926695](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695) **success**，代码 SHA `8fc7a969696c6f8569d80c636e511decbfedb714`；**414 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
+- 当前执行规则：**每项完成立即独立 commit + push；整批授权改动全部完成后统一 CI。** 验收结果文档使用 `[skip ci]`，核对仅文档差异；最终文档 HEAD 没有另跑 CI。此规则覆盖下方历史记录中的旧执行约定。
+- 真实环境验收未执行，实机切换耗时、兼容性和视觉效果未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
 
 ## 历史记录
 
@@ -122,3 +122,40 @@
 - 本轮中间代码提交没有产生 CI run；整批只触发上述一次完整 CI，首次即 success。GitHub Actions 的最终 head_sha 与触发提交一致。任务清单和本进度在确认结果后更新，三份文档随 `[skip ci]` 提交发布；该文档 HEAD 未另跑 CI，验收结论属于上述代码 SHA，发布时核对两者差异仅为三份 V4 文档。
 - **当前结果：本轮 9/9 项已确认 BUG 均完成；含此前的记录修改保护，当前已确认审计清单全部处理。** 这不表示未知问题不存在。真实浏览器、NAS/FNOS、Docker、Android、OpenWrt/EasyTier 环境未执行，真实设备兼容性与部署效果仍未知；`.env` 单引号兼容和依赖方向门禁仍只是低优先级建议。普通连接失败提示的旧怀疑继续撤回。
 - 已按要求完成整批代码、逐项推送、统一验收和文档交接；本轮到此停止。
+
+
+## 实时画面接管与设备浮窗收窄（2026-10-21，已完成）
+
+### 范围与提交
+
+- 从干净的 `eace49f50cafd69163fc5eaadd6e646d4285f8f5` 接续，先读三份 V4 文档并核对最新远端与工作区。用户明确新增两项：最后请求 A 设备实时画面的页面接管旧页面，以及设备管理浮窗稍微收窄。本轮仅实施这两项。
+- 浮窗完成后立即独立推送 [8325ee3](https://github.com/CiBeDerORG/EasyADB/commit/8325ee3e8c085579ddd75ad33164c2db6d45b4bd)，接管前后端及回归整体完成后立即推送 [0cb5101](https://github.com/CiBeDerORG/EasyADB/commit/0cb5101d982817581c566293a7e25fed10e1ad43)，均带 `[skip ci]`。随后以 `8fc7a969696c6f8569d80c636e511decbfedb714` 统一触发一次完整 CI；其 tree 与接管提交同为 `838d1591eb1285898f274d419ef2715176c03164`。
+
+### 接管行为与所有权
+
+- 为显式请求建立独立 ticket，在慢设备校验前确定先后顺序；只有鉴权、参数、设备/当前地址、在线状态及显示源验证通过后，才发布新请求。无效请求不撤销旧页面；高水位在最新请求退出后保留，较早但校验较慢的请求不能再夺回设备。请求 ticket 只协调先后，LiveRegistry 仍是唯一资源注册表。
+- 发布新请求立即设置捕获的旧 stream 的 stop_event，并在旧请求所属事件循环停止 track、取消控制接收，发送 `replaced`；通知中的 session_id 只属于旧流。前端验证当前卡片、WS 和会话身份，关闭该设备的本地播放器/触控/帧回调/计时器，清除重连意图，以 `clean=false, sendStop=false` 结束本地会话。其他设备不受影响；用户仍可再次主动开启。
+- 旧资源尚未清理时，新页面收到 `waiting(reason=takeover)`，沿同一 WebSocket 等待；若资源已经确认清理，可以直接尝试准入。旧 worker、ADB/scrcpy、peer 的清理证明全部满足后，由既有 SessionManager 通知最新等待者；重新验证设备，并在容量及启动预算允许时自动进入原 `starting/init` 与 SDP 流程；预算满时仍返回 `start_budget_full`。三页面连续请求时只有最后一个有效请求能够继续，旧通知不能释放替代流。
+- 等待不占服务端启动预算，也不提前完成前端启动队列，不轮询 ADB；清理事件等待超时设为 35 秒，超时返回 `takeover_timeout` 并保留未清理的旧 owner。`replaced` 不代表清理完成，旧页面批量停止结果仍计为清理未确认，不发送虚假的 `ended(cleanup_complete=true)`。
+- 验证和等待期间监听 stop/断线；取消的请求不能在校验或清理迟到完成后自动启动。SDP 各异步阶段后再次检查最新请求，旧协商即使在取消后返回，也不能启动旧 worker。保留 executor Future 的准入结果所有权、反复取消时取得清理报告的边界和直接取消清理子任务时的 DIRTY 保护。
+- 单纯打开网页不会主动连设备或投屏；WebRTC-only、真实 20 路逻辑上限、配置的启动并发预算、现有设备修改保护及数据库结构保持。未强行释放 DIRTY 或并行启动同设备第二路 scrcpy 来制造切换成功。
+
+### 浮窗调整
+
+- 只将 `web/assets/legacy-page.css` 的 `.inventory-drawer` 宽度从 `min(900px, calc(100vw - 62px))` 改为 `min(760px, calc(100vw - 62px))`，桌面最大宽度减少 140px。窄屏仍按视口缩小，原边距、展开/收起、透明度和全屏交互保持。
+- 对应 `inventory_drawer_contract.cjs` 与真实页面契约通过；没有把简单 CSS 修改扩展为布局或业务重写。浏览器可执行环境未就绪，本轮未进行真实浏览器截图或人工视觉验收，实际视觉效果仍需实测。
+
+### 针对性回归
+
+- `test_live_request_coordination.py` 新增 **19 项**：最新请求、高水位、旧 finish 不移除新 owner、scope/manager 隔离、锁外回调、原子预留、三项清理证明及真实 20 路限制。与原 SessionManager/状态机/迟到清理回归共 35 项通过。
+- `test_live_takeover.py` 新增 **22 项**，执行真实 handler、准入、SQLite、DeviceManager、SessionManager、LiveRegistry、生产 peer-close 包装函数与 LiveVideo 完成通知；只替换 Socket、ADB 在线查询和媒体边界。覆盖 worker/peer 延迟、A→B→C、六类无效请求、慢旧验证、等待 stop/断线/取消、校验途中退出、取消后迟到 SDP、三项证明分别缺失、超时、20 槽替换及启动预算。收到 replaced 时明确检查旧 stop_event 和 track ended；无关设备保持运行。
+- 原生命周期 DIRTY 测试仅将第二次连接的立即拒绝改为 waiting→takeover_timeout→关闭，仍保留同一个未清理 owner；原 shutdown 回归仅适配新增的唯一 pending-start WS reader，准入 Future 不变成可丢失的独立 Task、重复取消及精确资源归属断言均保留。相关既有 58 项 Python 通过，最终取消/排序/生命周期补验 36 项通过。
+- 前端在原 `m2_multi_contract.cjs` 中实际调用新 `helpers/live-handoff-contract.cjs`，执行真实页面、MultiView 和四个 live 工厂；覆盖多设备隔离、外来 SID 忽略、旧 WS/媒体/帧/Offer/停止计时器回调、清除重连意图、等待时队列归属、批量清理计数与手动重开。单路 controller、20 路、群控、抽屉、4 个架构/模块入口、ESLint/Prettier 通过。
+- 本地测试仅使用临时 SQLite 与假 ADB/媒体。首轮满额测试的夹具因派生 LAN 地址重复被真实 Store 正确拒绝，修正为唯一地址后通过；没有改动生产唯一性校验或放宽断言。
+
+### 统一 CI 与交接
+
+- [CI #39575926695](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695) **success**，head_sha 为 `8fc7a969696c6f8569d80c636e511decbfedb714`，job [119141305646](https://github.com/CiBeDerORG/EasyADB/actions/runs/39575926695/job/119141305646)。已读取实际 job 日志：**414 passed, 1 warning in 53.32s**；较起点 373 项新增 41 项，唯一 pytest 警告是既有 Starlette TestClient/httpx 弃用提示。
+- Python 编译与全量 pytest、npm ci、V4 lint/format、4 个架构/模块入口、21 个 Node/UI 入口、JS/Shell 语法与部署契约、OpenWrt smoke 全部适用步骤通过。V2 分支专用 release 步骤按条件 **skipped**，全量 pytest 保留 V2 回归。两项代码完成前未触发 CI，整批一次验收即 success。
+- 验收后更新任务、进度和接管生命周期规范，三份文档以 `[skip ci]` 提交发布，文档 HEAD 未另跑 CI；发布时核对与验收提交仅有这三份文档差异，本地与远端内容一致、工作区干净。
+- **当前结果：本轮 2/2 项完成，代码已推送、统一自动化验收通过、文档已交接。** 未执行真实浏览器、Android、NAS/FNOS、Docker、OpenWrt/EasyTier 部署与设备验收，不承诺实机切换耗时。按用户要求汇报后停止。

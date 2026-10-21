@@ -1,6 +1,6 @@
 # EasyADB V4 · 前端架构与代码命名规范
 
-> 生效范围：V4 新增及逐项完成迁移的前端代码；先冻结契约再迁移。页面、ES Modules 和已清理的 `m2-multi.js` 执行格式与代码规范检查。剩余六份尚无替代实现的历史 IIFE（`m2-webrtc.js`、`m2-traffic.js`、`m2-touch.js`、`m2-metrics.js`、`m2-group.js`、`display-lab.js`）及原样 `assets/legacy-page.css` 保留**逐文件豁免**。例外名单在 .prettierignore、eslint.config.mjs 和架构门禁中对齐，禁止通配符扩大豁免；每完成一个旧文件的迁移，就删除该项豁免。七个既有根级脚本 URL 的兼容名单与六个样式/lint 豁免分开维护。
+> 生效范围：V4 新增及逐项完成迁移的前端代码；先冻结契约再迁移。页面、ES Modules 和已清理的 `m2-multi.js` 执行格式与代码规范检查。剩余六份尚无替代实现的历史 IIFE（`m2-webrtc.js`、`m2-traffic.js`、`m2-touch.js`、`m2-metrics.js`、`m2-group.js`、`display-lab.js`）及遗留 `assets/legacy-page.css` 保留**逐文件豁免**。例外名单在 .prettierignore、eslint.config.mjs 和架构门禁中对齐，禁止通配符扩大豁免；每完成一个旧文件的迁移，就删除该项豁免。七个既有根级脚本 URL 的兼容名单与六个样式/lint 豁免分开维护。
 
 ## 一、架构责任及依赖
 
@@ -37,6 +37,8 @@
 - **状态只能有一个写入所有者**。设备选择状态属于 DeviceController；批量待启动列表属于 LiveBatchScheduler；一台设备本轮 WebSocket、RTCPeerConnection、触控、诊断和 sessionId 属于 LiveSessionController；服务端 SessionManager 是资源释放的最终权威。
 - startSession() 发起显式投屏；requestStopSession() **只表示请求停止**；finalizeSession() 仅在核对当前 deviceId + sessionId 及服务端清理结果后执行；dispose() 负责局部事件监听/DOM/对象清理。不得以 WebSocket close 或黑屏推断服务端 Session 已 RELEASED。
 - 停止、重复回调、页面离开、ICE 失败和旧会话异步完成均需要显式边界；旧会话回调不得更新或释放新会话；未清理的 DIRTY 槽位不复用。
+- **2026-10-21 用户授权的跨页面接管**：同一设备以最新有效、显式投屏请求为准。鉴权、参数及设备/地址/显示源校验通过后才撤销旧请求；请求顺序在慢校验前确定，迟到的旧校验、SDP 或清理回调不得夺回新请求。请求 ticket 只协调顺序，资源仍由现有 LiveRegistry/SessionManager 管理。
+- 旧页面收到 `replaced` 后仅关闭对应本地画面和控制，清除重连意图，使用 `clean=false, sendStop=false` 释放本地资源；不伪报服务端清理成功。新页面的 `waiting(reason=takeover)` 不提前分配 sessionId、启动播放器或完成启动队列。旧资源未清理时沿原 WebSocket 等待；服务端确认旧 worker、ADB/scrcpy、peer 三项清理证明后，重新验证设备，并在容量及启动预算允许时自动继续启动；等待期间 stop/断线/取消不得迟到启动，超时保留 DIRTY。
 - 新增代码不得在页面打开时主动 ADB 连接、扫描路由器、自动重连设备、触发投屏或建立无人页面媒体通信。视频保持 WebRTC-only，逻辑 20 路上限和服务端启动预算不改变。
 
 ## 四、编写与样式要求
