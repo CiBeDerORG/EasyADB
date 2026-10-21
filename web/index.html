@@ -428,6 +428,32 @@ function render(){
   ?frontendModules.deviceList.buildDeviceGroups(devices,groups)
   :buildLegacyDeviceGroups();
  $('count').textContent=devices.length+' 台设备 · '+keys.length+' 个分组';
+ if(frontendModules?.deviceListView){
+  frontendModules.deviceListView.renderDeviceGroups({
+   list,grouped,keys,
+   state:{
+    selectedId:selected,selectedDeviceIds:managementSelected,isLoading:loading,isLoaded:loaded,
+    groupOpen,scanningGroups,isDeviceConnecting:deviceConnecting,isDeviceLocked:deviceLocked,
+    hasConnectedAdb
+   },
+   ui:{
+    hasProjection:Boolean(multiView),
+    projectionButton:d=>multiView.projectionButton(d),
+    openProjectionSettings:d=>multiView.openSettings(d),
+    openDisplayLab:id=>displayLabView.open(id)
+   },
+   on:{
+    onSelectionChange:(id,checked)=>{
+     if(checked)managementSelected.add(id);else managementSelected.delete(id);
+     render();
+    },
+    switchRoute,editDevice:edit,removeTempAddress,openFirstPair,openTempEditor,
+    openGroup,scanGroup
+   },
+   elem,action
+  });
+ }else{
+  // Classic-script render before deferred ES Module bootstrap (legacy VM compatibility).
  for(const key of keys){
   const g=grouped.get(key),section=elem('details','device-group'),shell=elem('div','group-shell');
   section.open=groupOpen.has(key)?groupOpen.get(key):true;
@@ -551,6 +577,7 @@ function render(){
    tools.append(config);shell.append(tools);
   }
   list.append(shell);
+ }
  }
  if(!groups.length&&!devices.length)list.append(elem('p','hint','暂无设备。点击「添加分组」或「添加设备」开始。'));
  const d=devices.find(x=>x.id===selected);

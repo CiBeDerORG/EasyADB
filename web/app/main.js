@@ -7,6 +7,7 @@ import { createLiveQualitySettings } from '../features/live/live-quality-setting
 import { createLiveBatchScheduler } from '../features/live/live-batch-scheduler.js';
 import { createLiveCardView } from '../features/live/live-card-view.js';
 import * as deviceList from '../features/devices/device-list-model.js';
+import * as deviceListView from '../features/devices/device-list-view.js';
 
 // One-time dependency injection into the existing inline compatibility adapter.
 // No additional business global, automatic ADB connection or page polling.
@@ -16,6 +17,7 @@ const modules = {
   createLiveBatchScheduler,
   createLiveCardView,
   deviceList,
+  deviceListView,
   api: createApiClient({
     getToken: () => document.getElementById('token').value,
     request: (path, options) => fetch(path, options),

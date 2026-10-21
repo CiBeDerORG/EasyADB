@@ -16,6 +16,7 @@ MODULES = (
     "features/live/live-batch-scheduler.js",
     "features/live/live-quality-settings.js",
     "features/devices/device-list-model.js",
+    "features/devices/device-list-view.js",
 )
 
 
