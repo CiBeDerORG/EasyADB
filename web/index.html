@@ -182,6 +182,9 @@ const connectingDevices=new Set(),connectSnapshots=new Map();
 let connectionBatchBusy=false,connectGeneration=0,connectProgressRevision=0,connectController=null;
 let managementBatch=null; // shared across the temporary inline and module adapters
 let configurationOperation=null; // preserve pre-bootstrap device mutations across injection
+let pairingOperation=null,groupOperation=null;
+let deviceDialogRevision=0,tempDialogRevision=0,firstPairDialogRevision=0,groupDialogRevision=0;
+let groupHasSavedDiscovery=false;
 function deviceConnecting(id){return connectingDevices.has(id);}
 // The global management lock must not cause a running batch to skip itself.
 function deviceBusy(id){return deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
@@ -200,7 +203,63 @@ function applyConnectionResult(device,result){
 }
 let multiView=null,displayLabView=null;
 const scanningGroups=new Set();
+const groupScanOperations=new Map(); // owners share the existing per-group scan state
 const groupOpen=new Map();
+// Temporary E compatibility owners: requests started before module injection
+// retain the same identity. F will remove these duplicate implementations.
+function beginLegacyPairOperation(kind){
+ const operation={kind,generation:connectGeneration,
+  revision:kind==='device'?firstPairDialogRevision:deviceDialogRevision,
+  deviceId:kind==='device'?pairingDeviceId:editing,
+  serial:kind==='device'?pairingSerial:null,abortController:new AbortController()};
+ pairingOperation=operation;loading=true;return operation;
+}
+function isCurrentLegacyPairOperation(operation){
+ return pairingOperation===operation&&connectGeneration===operation.generation;
+}
+function isCurrentLegacyPairDialog(operation){
+ if(!isCurrentLegacyPairOperation(operation))return false;
+ if(operation.kind==='address')return $('deviceDialog').open&&
+  deviceDialogRevision===operation.revision&&editing===operation.deviceId;
+ const device=devices.find(d=>d.id===operation.deviceId);
+ return Boolean($('firstPairDialog').open&&firstPairDialogRevision===operation.revision&&
+  pairingDeviceId===operation.deviceId&&pairingSerial===operation.serial&&
+  device?.selected_serial===operation.serial&&!deviceBusy(operation.deviceId));
+}
+function finishLegacyPairOperation(operation){
+ if(!isCurrentLegacyPairOperation(operation))return;
+ pairingOperation=null;loading=false;
+ if(operation.kind==='device')$('submitFirstPair').disabled=false;
+ render();
+}
+function beginLegacyGroupOperation(){
+ const operation={generation:connectGeneration,abortController:new AbortController(),
+  dialogRevision:groupDialogRevision,groupName:editingGroup};
+ groupOperation=operation;loading=true;return operation;
+}
+function isCurrentLegacyGroupOperation(operation){
+ return groupOperation===operation&&connectGeneration===operation.generation;
+}
+function isCurrentLegacyGroupDialog(operation){
+ return $('groupDialog').open&&groupDialogRevision===operation.dialogRevision&&
+  editingGroup===operation.groupName;
+}
+function finishLegacyGroupOperation(operation){
+ if(!isCurrentLegacyGroupOperation(operation))return;
+ groupOperation=null;loading=false;render();
+}
+async function refreshLegacyGroupOperation(operation,failureMessage){
+ if(!isCurrentLegacyGroupOperation(operation))return false;
+ try{
+  const refreshed=await load(true);
+  if(!isCurrentLegacyGroupOperation(operation))return false;
+  if(refreshed===false){message(failureMessage+'：请检查访问密钥或服务端连接','error');return false;}
+  return true;
+ }catch(e){
+  if(isCurrentLegacyGroupOperation(operation))message(failureMessage+'：'+e.message,'error');
+  return false;
+ }
+}
 const inventoryDrawer=$('inventoryDrawer'),inventoryPanel=$('inventoryPanel');
 const inventoryToggle=$('inventoryToggle'),inventoryOpacity=$('inventoryOpacity');
 // The drawer stays open indefinitely. Only the handle, a deliberate
@@ -281,6 +340,7 @@ function adbStatusBadge(d){
 const toastHost=$('toastHost'),toastItems=new Map();
 let frontendModules=null; // populated by a one-time ES Module bootstrap; no window global
 let deviceConnectionController=null,deviceManagementController=null,deviceConfigurationController=null;
+let deviceDialogController=null,groupDialogController=null;
 function toastSelected(card){
  const selection=typeof window.getSelection==='function'?window.getSelection():null;
  return Boolean(selection&&!selection.isCollapsed&&
@@ -423,6 +483,54 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
     if($('tempDialog').open){$('tempMessage').hidden=false;$('tempMessage').textContent=text;}
    }
   });
+ }
+ if(frontendModules.createDeviceDialogController){
+  deviceDialogController=frontendModules.createDeviceDialogController({
+   state:{
+    get devices(){return devices;},get groups(){return groups;},
+    get editingDeviceId(){return editing;},set editingDeviceId(value){editing=value;},
+    get editingTempDeviceId(){return editingTemp;},set editingTempDeviceId(value){editingTemp=value;},
+    get pairingDeviceId(){return pairingDeviceId;},set pairingDeviceId(value){pairingDeviceId=value;},
+    get pairingSerial(){return pairingSerial;},set pairingSerial(value){pairingSerial=value;},
+    get isLoaded(){return loaded;},
+    get isLoading(){return loading;},set isLoading(value){loading=value;},
+    get generation(){return connectGeneration;},
+    get activePairOperation(){return pairingOperation;},set activePairOperation(value){pairingOperation=value;},
+    get deviceDialogRevision(){return deviceDialogRevision;},set deviceDialogRevision(value){deviceDialogRevision=value;},
+    get tempDialogRevision(){return tempDialogRevision;},set tempDialogRevision(value){tempDialogRevision=value;},
+    get firstPairDialogRevision(){return firstPairDialogRevision;},set firstPairDialogRevision(value){firstPairDialogRevision=value;}
+   },
+   getElement:$,createElement:tag=>document.createElement(tag),dialog:frontendModules.dialog,
+   saveDevice:(id,payload)=>deviceConfigurationController.saveDevice(id,payload),
+   saveTempAddress:(id,ip,port)=>deviceConfigurationController.saveTempAddress(id,ip,port),
+   request:api,isDeviceBusy:deviceBusy,isDeviceConnecting:deviceConnecting,onChange:render,notify:message
+  });
+  deviceDialogController.bindEvents();
+ }
+ if(frontendModules.createGroupDialogController){
+  groupDialogController=frontendModules.createGroupDialogController({
+   state:{
+    get devices(){return devices;},get groups(){return groups;},
+    get editingGroupName(){return editingGroup;},set editingGroupName(value){editingGroup=value;},
+    get isLoaded(){return loaded;},
+    get isLoading(){return loading;},set isLoading(value){loading=value;},
+    get generation(){return connectGeneration;},
+    get activeOperation(){return groupOperation;},set activeOperation(value){groupOperation=value;},
+    get dialogRevision(){return groupDialogRevision;},set dialogRevision(value){groupDialogRevision=value;},
+    get hasSavedDiscovery(){return groupHasSavedDiscovery;},set hasSavedDiscovery(value){groupHasSavedDiscovery=value;},
+    scanningGroupNames:scanningGroups,scanOperations:groupScanOperations,groupOpen
+   },
+   getElement:$,dialog:frontendModules.dialog,request:api,refreshDevices:()=>load(true),
+   isDeviceBusy:deviceBusy,isDeviceConnecting:deviceConnecting,confirmDelete:text=>confirm(text),
+   onChange:render,notify:message,dismissToast,
+   showScanResult:(name,result)=>{
+    const panel=renderDiscoveryResult(result);
+    panel.prepend(elem('div','discovery-group-name','「'+name+'」ADB 扫描结果 · 不自动连接或投屏'));
+    showToast(panel,{key:'discovery:'+name,kind:'ok'});
+   },
+   showScanError:(name,text)=>showToast('「'+name+'」发现失败：'+text,{key:'discovery:'+name,kind:'error'})
+  });
+  groupDialogController.bindEvents();
  }
  if(initialText)message(initialText);
  render(); // use the injected device-list projection after module bootstrap
@@ -690,6 +798,8 @@ async function load(quiet=false){
  }catch(e){if(!quiet)message(e.message,'error');return false;}
 }
 function reset(){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.resetDevice();
+ deviceDialogRevision++;
  editing=null;$('form').reset();$('formTitle').textContent='添加设备';$('save').textContent='保存设备';
  $('formMessage').hidden=true;$('formMessage').textContent='';
  $('pairMessage').hidden=true;$('pairMessage').textContent='';
@@ -707,8 +817,12 @@ function closeDialog(id){
  if(frontendModules?.dialog)return frontendModules.dialog.closeDialog(id);
  $(id).close();
 }
-function closeModal(){if(loading)return;closeDialog('deviceDialog');}
+function closeModal(){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.closeDevice();
+ if(loading)return;closeDialog('deviceDialog');
+}
 function openModal(id=null){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.openDevice(id);
  if(loading||!loaded)return;
  if(id&&deviceLocked(id)){
   message('这台设备正在连接 ADB 或投屏中，请完成当前操作后再修改配置。','error');
@@ -729,13 +843,14 @@ function openModal(id=null){
 }
 function edit(id){openModal(id);}
 function openGroup(name=null){
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return groupDialogController.openGroup(name);
  if(loading||!loaded)return;
  const g=name?groups.find(x=>x.name===name):null;if(name&&!g)return;
  if(g&&devices.some(d=>d.group_name===name&&deviceLocked(d.id))){
   message('该分组包含正在投屏的设备：可新建分组，但修改此分组请先停止相关设备。','error');
   return;
  }
- editingGroup=g?g.name:null;
+ editingGroup=g?g.name:null;groupDialogRevision++;groupHasSavedDiscovery=Boolean(g?.discovery_configured);
  $('groupForm').reset();$('groupMessage').hidden=true;$('groupMessage').textContent='';
  $('groupFormTitle').textContent=g?'编辑分组':'添加分组';
  $('saveGroup').textContent=g?'保存修改':'保存分组';
@@ -750,6 +865,7 @@ function openGroup(name=null){
  showDialog('groupDialog','groupName');
 }
 function renderDiscoveryResult(last){
+ if(frontendModules?.groupDiscoveryView)return frontendModules.groupDiscoveryView.renderDiscoveryResult(last,{elem});
  const panel=elem('div','group-discovery-status'+(last.error?' error':''));
  if(last.error){panel.textContent=last.error;return panel;}
  const conflicts=(last.ambiguous||[]).length+(last.conflicting||[]).length+(last.route_conflict||[]).length;
@@ -773,12 +889,17 @@ function renderDiscoveryResult(last){
  panel.append(rows);return panel;
 }
 async function scanGroup(name,test=false){
- if(loading||scanningGroups.has(name)||
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return groupDialogController.scanGroup(name,test);
+ if(!loaded||loading||scanningGroups.has(name)||
   devices.some(d=>d.group_name===name&&deviceConnecting(d.id)))return;
- scanningGroups.add(name);if(test)$('testGroupDiscovery').disabled=true;render();
+ const operation={generation:connectGeneration,abortController:new AbortController(),
+  dialogRevision:groupDialogRevision,groupName:name,isTest:test};
+ const isCurrent=()=>groupScanOperations.get(name)===operation&&connectGeneration===operation.generation;
+ groupScanOperations.set(name,operation);scanningGroups.add(name);
  try{
+  if(test)$('testGroupDiscovery').disabled=true;
   const base='/api/groups/'+encodeURIComponent(name)+'/discovery/';
-  const options={method:'POST'};
+  const options={method:'POST',signal:operation.abortController.signal};
   if(test){
    options.headers={'Content-Type':'application/json'};
    options.body=JSON.stringify({
@@ -787,33 +908,56 @@ async function scanGroup(name,test=false){
     password:$('groupOpenWrtPassword').value
    });
   }
-  const result=await(await api(base+(test?'test':'scan'),options)).json();
-  if(test)modalMessage('鉴权及扫描权限正常，本次返回 '+result.found+' 条记录（不会更新设备端口）。','ok','groupMessage');
+  render();if(!isCurrent())return;
+  const response=await api(base+(test?'test':'scan'),options);
+  if(!isCurrent())return;
+  const result=await response.json();
+  if(!isCurrent())return;
+  if(test){
+   if(isCurrentLegacyGroupDialog(operation))modalMessage('鉴权及扫描权限正常，本次返回 '+result.found+' 条记录（不会更新设备端口）。','ok','groupMessage');
+  }
   else {
-   await load(true);
+   try{
+    if(await load(true)===false&&isCurrent())message('扫描已完成，但列表刷新失败：请检查访问密钥或服务端连接','error');
+   }catch(e){if(isCurrent())message('扫描已完成，但列表刷新失败：'+e.message,'error');}
+   if(!isCurrent())return;
    const panel=renderDiscoveryResult(result);
    panel.prepend(elem('div','discovery-group-name','「'+name+'」ADB 扫描结果 · 不自动连接或投屏'));
    showToast(panel,{key:'discovery:'+name,kind:'ok'});
   }
  }catch(e){
-  if(test)modalMessage(e.message,'error','groupMessage');
+  if(!isCurrent())return;
+  if(test){if(isCurrentLegacyGroupDialog(operation))modalMessage(e.message,'error','groupMessage');}
   else showToast('「'+name+'」发现失败：'+e.message,{key:'discovery:'+name,kind:'error'});
- }finally{scanningGroups.delete(name);if(test)$('testGroupDiscovery').disabled=false;render();}
+ }finally{
+  if(isCurrent()){
+   groupScanOperations.delete(name);scanningGroups.delete(name);
+   if(test&&isCurrentLegacyGroupDialog(operation))$('testGroupDiscovery').disabled=false;
+   render();
+  }
+ }
 }
 
-function closeGroup(){if(!loading&&!scanningGroups.has(editingGroup))closeDialog('groupDialog');}
+function closeGroup(){
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return groupDialogController.closeGroup();
+ if(!loading&&!scanningGroups.has(editingGroup))closeDialog('groupDialog');
+}
 function openFirstPair(id){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.openFirstPair(id);
  if(loading||!loaded)return;
  const d=devices.find(x=>x.id===id);
  if(!d||deviceLocked(id)||!d.connect_failed||!d.selected_serial)return;
- pairingDeviceId=d.id;pairingSerial=d.selected_serial;
+ pairingDeviceId=d.id;pairingSerial=d.selected_serial;firstPairDialogRevision++;
  $('firstPairForm').reset();
  $('firstPairTitle').textContent='首次连接 · '+d.name;
  $('firstPairIp').value=d.selected_serial.slice(0,d.selected_serial.lastIndexOf(':'));
  $('firstPairMessage').hidden=true;$('firstPairMessage').textContent='';
  showDialog('firstPairDialog','firstPairPort');
 }
-function closeFirstPair(){if(!loading)closeDialog('firstPairDialog');}
+function closeFirstPair(){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.closeFirstPair();
+ if(!loading)closeDialog('firstPairDialog');
+}
 // Temporary pre-module ownership helpers. F will remove this legacy path once
 // all page event contracts use the injected controllers.
 function beginConfigurationOperation(){
@@ -895,26 +1039,37 @@ async function switchRoute(id,route){
  return success;
 }
 function openTempEditor(d){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.openTemp(d.id);
  if(deviceLocked(d.id))return;
- editingTemp=d.id;
+ editingTemp=d.id;tempDialogRevision++;
  $('tempDialogTitle').textContent=d.temp_ip?'修改临时 IP':'添加临时 IP';
  $('tempIp').value=d.temp_ip||'';
  $('tempSharedPort').value=String(d.port);
  $('tempMessage').hidden=true;$('tempMessage').textContent='';
  showDialog('tempDialog','tempIp');
 }
-function closeTempDialog(){if(loading)return;closeDialog('tempDialog');}
-$('closeTempDialog').addEventListener('click',closeTempDialog);
-$('cancelTempDialog').addEventListener('click',closeTempDialog);
-$('tempDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
-$('tempDialog').addEventListener('close',()=>{editingTemp=null;});
+function closeTempDialog(){
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return deviceDialogController.closeTemp();
+ if(loading)return;closeDialog('tempDialog');
+}
+$('closeTempDialog').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeTempDialog();});
+$('cancelTempDialog').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeTempDialog();});
+$('tempDialog').addEventListener('cancel',ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ if(loading)ev.preventDefault();
+});
+$('tempDialog').addEventListener('close',()=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ editingTemp=null;tempDialogRevision++;
+});
 $('tempForm').addEventListener('submit',async ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
  ev.preventDefault();
- const id=editingTemp,epoch=connectGeneration;
+ const id=editingTemp,epoch=connectGeneration,revision=tempDialogRevision;
  if(!id||loading)return;
  const ip=$('tempIp').value.trim(),port=Number($('tempSharedPort').value);
  const success=await saveTempAddress(id,ip,port);
- if(success&&epoch===connectGeneration&&editingTemp===id)closeDialog('tempDialog');
+ if(success&&epoch===connectGeneration&&editingTemp===id&&revision===tempDialogRevision)closeDialog('tempDialog');
 });
 async function saveTempAddress(id,ip,port){
  if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
@@ -1040,6 +1195,27 @@ $('token').addEventListener('input',()=>{
  }else if(typeof configurationOperation!=='undefined'&&configurationOperation){
   const operation=configurationOperation;configurationOperation=null;operation.abortController.abort();loading=false;
  }
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController){
+  deviceDialogController.invalidate();
+ }else if(typeof pairingOperation!=='undefined'){
+  if(pairingOperation){
+   const operation=pairingOperation;pairingOperation=null;loading=false;
+   if(operation.kind==='device')$('submitFirstPair').disabled=false;
+   operation.abortController.abort();
+  }
+  deviceDialogRevision++;tempDialogRevision++;firstPairDialogRevision++;
+ }
+ if(typeof groupDialogController!=='undefined'&&groupDialogController){
+  groupDialogController.invalidate();
+ }else if(typeof groupOperation!=='undefined'){
+  if(groupOperation){const operation=groupOperation;groupOperation=null;loading=false;operation.abortController.abort();}
+  for(const [name,operation] of groupScanOperations){
+   groupScanOperations.delete(name);scanningGroups.delete(name);
+   if(operation.isTest&&operation.dialogRevision===groupDialogRevision&&editingGroup===name)$('testGroupDiscovery').disabled=false;
+   operation.abortController.abort();
+  }
+  groupDialogRevision++;
+ }
  connectingDevices.clear();connectSnapshots.clear();
  if(connectionBatchBusy)loading=false;
  connectionBatchBusy=false;
@@ -1104,41 +1280,53 @@ $('bulkDelete').addEventListener('click',async()=>{
   failed.length+' 台'+(failed.length?'；'+failed.join('；'):'')+'.'+
   (refreshError?'；'+refreshError:''),failed.length||refreshError?'error':'ok');
 });
-$('newDevice').addEventListener('click',()=>openModal());
-$('newGroup').addEventListener('click',()=>openGroup());
-$('closeFirstPair').addEventListener('click',closeFirstPair);
-$('cancelFirstPair').addEventListener('click',closeFirstPair);
-$('firstPairDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
+$('newDevice').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)openModal();});
+$('newGroup').addEventListener('click',()=>{if(typeof groupDialogController==='undefined'||!groupDialogController)openGroup();});
+$('closeFirstPair').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeFirstPair();});
+$('cancelFirstPair').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeFirstPair();});
+$('firstPairDialog').addEventListener('cancel',ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ if(loading)ev.preventDefault();
+});
 $('firstPairDialog').addEventListener('close',()=>{
- pairingDeviceId=null;pairingSerial=null;
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ pairingDeviceId=null;pairingSerial=null;firstPairDialogRevision++;
  $('firstPairForm').reset();$('firstPairMessage').hidden=true;
 });
 $('firstPairDialog').addEventListener('click',ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
  if(ev.target===$('firstPairDialog')&&!loading)closeFirstPair();
 });
 $('firstPairForm').addEventListener('submit',async ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
  ev.preventDefault();
- if(loading||!pairingDeviceId||!pairingSerial||deviceConnecting(pairingDeviceId))return;
- const id=pairingDeviceId;
- loading=true;$('submitFirstPair').disabled=true;render();
+ if(loading||!loaded||pairingOperation||!pairingDeviceId||!pairingSerial||!$('firstPairDialog').open)return;
+ const id=pairingDeviceId,device=devices.find(d=>d.id===id);
+ if(!device||device.selected_serial!==pairingSerial||deviceBusy(id)){
+  modalMessage('设备已移除、连接地址已变更或正在连接/投屏，请关闭后重新选择设备。','error','firstPairMessage');return;
+ }
+ const payload={port:Number($('firstPairPort').value),code:$('firstPairCode').value.trim(),selected_serial:pairingSerial};
+ const operation=beginLegacyPairOperation('device');
  try{
-  const response=await(await api('/api/devices/'+encodeURIComponent(id)+'/pair',{
+  $('submitFirstPair').disabled=true;render();
+  if(!isCurrentLegacyPairDialog(operation))return;
+  const response=await api('/api/devices/'+encodeURIComponent(id)+'/pair',{
    method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({
-    port:Number($('firstPairPort').value),
-    code:$('firstPairCode').value.trim(),
-    selected_serial:pairingSerial
-   })
-  })).json();
+   body:JSON.stringify(payload),signal:operation.abortController.signal
+  });
+  if(!isCurrentLegacyPairDialog(operation))return;
+  const result=await response.json();
+  if(!isCurrentLegacyPairDialog(operation))return;
   $('firstPairCode').value='';
-  modalMessage(response.message+'。请关闭弹窗，再手动点击「连接」；不会自动重试。','ok','firstPairMessage');
+  modalMessage(result.message+'。请关闭弹窗，再手动点击「连接」；不会自动重试。','ok','firstPairMessage');
  }catch(e){
-  modalMessage(e.message,'error','firstPairMessage');
- }finally{loading=false;$('submitFirstPair').disabled=false;render();}
+  if(isCurrentLegacyPairDialog(operation))modalMessage(e.message,'error','firstPairMessage');
+ }finally{finishLegacyPairOperation(operation);}
 });
 $('deleteGroup').addEventListener('click',async()=>{
- if(loading||!editingGroup||scanningGroups.has(editingGroup))return;
- const name=editingGroup;
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ if(loading||!loaded||groupOperation||!editingGroup||scanningGroups.has(editingGroup))return;
+ const name=editingGroup,epoch=connectGeneration,revision=groupDialogRevision;
  if(devices.some(d=>d.group_name===name&&deviceLocked(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备，再删除分组。','error','groupMessage');
   return;
@@ -1146,59 +1334,99 @@ $('deleteGroup').addEventListener('click',async()=>{
  const count=devices.filter(d=>d.group_name===name).length;
  const detail=count?'列表中的 '+count+' 台设备会移入「未分组」。':'这是一个空分组。';
  if(!confirm('确认删除分组「'+name+'」？\n'+detail+'\n设备记录和 ADB 授权会保留，原分组内网 IP 映射会取消。'))return;
- loading=true;render();
+ if(epoch!==connectGeneration||revision!==groupDialogRevision||editingGroup!==name||loading||!loaded||
+  scanningGroups.has(name)||devices.some(d=>d.group_name===name&&deviceBusy(d.id)))return;
+ const operation=beginLegacyGroupOperation();
  try{
-  const response=await(await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE'})).json();
-  closeDialog('groupDialog');groupOpen.delete('named:'+name);dismissToast('discovery:'+name);
-  await load(true);
-  message('分组已删除，'+response.moved_count+' 台设备已移入「未分组」','ok');
- }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+  render();if(!isCurrentLegacyGroupOperation(operation))return;
+  const response=await api('/api/groups/'+encodeURIComponent(name),{method:'DELETE',signal:operation.abortController.signal});
+  if(!isCurrentLegacyGroupOperation(operation))return;
+  const result=await response.json();
+  if(!isCurrentLegacyGroupOperation(operation))return;
+  if(isCurrentLegacyGroupDialog(operation))closeDialog('groupDialog');
+  groupOpen.delete('named:'+name);dismissToast('discovery:'+name);
+  message('分组已删除，'+result.moved_count+' 台设备已移入「未分组」','ok');
+  await refreshLegacyGroupOperation(operation,'分组已删除，但列表刷新失败');
+ }catch(e){
+  if(isCurrentLegacyGroupOperation(operation)&&isCurrentLegacyGroupDialog(operation))modalMessage(e.message,'error','groupMessage');
+ }finally{finishLegacyGroupOperation(operation);}
 });
-$('testGroupDiscovery').addEventListener('click',()=>{if(editingGroup)scanGroup(editingGroup,true);});
-$('closeGroup').addEventListener('click',closeGroup);
-$('cancelGroup').addEventListener('click',closeGroup);
-$('groupDialog').addEventListener('cancel',ev=>{if(loading||scanningGroups.has(editingGroup))ev.preventDefault();});
-$('groupDialog').addEventListener('close',()=>{editingGroup=null;});
-$('groupDialog').addEventListener('click',ev=>{if(ev.target===$('groupDialog')&&!loading)closeGroup();});
+$('testGroupDiscovery').addEventListener('click',()=>{
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ if(editingGroup)scanGroup(editingGroup,true);
+});
+$('closeGroup').addEventListener('click',()=>{if(typeof groupDialogController==='undefined'||!groupDialogController)closeGroup();});
+$('cancelGroup').addEventListener('click',()=>{if(typeof groupDialogController==='undefined'||!groupDialogController)closeGroup();});
+$('groupDialog').addEventListener('cancel',ev=>{
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ if(loading||scanningGroups.has(editingGroup))ev.preventDefault();
+});
+$('groupDialog').addEventListener('close',()=>{
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ editingGroup=null;groupHasSavedDiscovery=false;groupDialogRevision++;
+});
+$('groupDialog').addEventListener('click',ev=>{
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ if(ev.target===$('groupDialog')&&!loading)closeGroup();
+});
 $('groupForm').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading||scanningGroups.has(editingGroup))return;
+ if(typeof groupDialogController!=='undefined'&&groupDialogController)return;
+ ev.preventDefault();if(loading||!loaded||groupOperation||scanningGroups.has(editingGroup))return;
  if(editingGroup&&devices.some(d=>d.group_name===editingGroup&&deviceLocked(d.id))){
   modalMessage('该分组包含正在投屏的设备，请先停止这些设备再修改；新建分组不受限制。','error','groupMessage');
   return;
  }
- loading=true;render();
  const payload={name:$('groupName').value,ip_prefix:$('groupPrefix').value.trim()||null};
+ const previousName=editingGroup,previous=groups.find(g=>g.name===editingGroup);
+ const routerUrl=$('groupOpenWrtUrl').value.trim(),routerUser=$('groupOpenWrtUser').value.trim();
+ const password=$('groupOpenWrtPassword').value;
+ const hadDiscovery=groupHasSavedDiscovery||Boolean(previous&&previous.discovery_configured);
+ const operation=beginLegacyGroupOperation();
  try{
-  const previousName=editingGroup,previous=groups.find(g=>g.name===editingGroup);
+  render();if(!isCurrentLegacyGroupOperation(operation))return;
   const url=editingGroup?'/api/groups/'+encodeURIComponent(editingGroup):'/api/groups';
-  const saved=await(await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+  const response=await api(url,{method:editingGroup?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:operation.abortController.signal});
+  if(!isCurrentLegacyGroupOperation(operation))return;
+  const saved=await response.json();
+  if(!isCurrentLegacyGroupOperation(operation)||!isCurrentLegacyGroupDialog(operation))return;
+  if(!saved?.name)throw Error('分组保存响应缺少分组名称');
   editingGroup=saved.name; // If discovery config fails, retry PUT rather than duplicate POST.
+  operation.groupName=saved.name;groupHasSavedDiscovery=hadDiscovery;
   if(previousName&&previousName!==saved.name)dismissToast('discovery:'+previousName);
-  const routerUrl=$('groupOpenWrtUrl').value.trim(),routerUser=$('groupOpenWrtUser').value.trim();
-  const hadDiscovery=Boolean(previous&&previous.discovery_configured);
   if(routerUrl){
    await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{
     method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({url:routerUrl,username:routerUser||'easyadb',password:$('groupOpenWrtPassword').value})
+    body:JSON.stringify({url:routerUrl,username:routerUser||'easyadb',password}),signal:operation.abortController.signal
    });
+   if(!isCurrentLegacyGroupOperation(operation)||!isCurrentLegacyGroupDialog(operation))return;
+   groupHasSavedDiscovery=true;
   }else if(hadDiscovery){
-   await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{method:'DELETE'});
+   await api('/api/groups/'+encodeURIComponent(saved.name)+'/discovery',{method:'DELETE',signal:operation.abortController.signal});
+   if(!isCurrentLegacyGroupOperation(operation)||!isCurrentLegacyGroupDialog(operation))return;
+   groupHasSavedDiscovery=false;
    dismissToast('discovery:'+saved.name);
   }
   $('groupOpenWrtPassword').value='';
   closeDialog('groupDialog');
   message('分组设置已保存','ok');
-  try{await load(true);}catch(e){message('分组已保存，但列表刷新失败：'+e.message,'error');}
- }catch(e){modalMessage(e.message,'error','groupMessage');}finally{loading=false;render();}
+  await refreshLegacyGroupOperation(operation,'分组已保存，但列表刷新失败');
+ }catch(e){
+  if(isCurrentLegacyGroupOperation(operation)&&isCurrentLegacyGroupDialog(operation))modalMessage(e.message,'error','groupMessage');
+ }finally{finishLegacyGroupOperation(operation);}
 });
-$('closeDialog').addEventListener('click',closeModal);
-$('cancelDialog').addEventListener('click',closeModal);
-$('deviceDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();});
-$('deviceDialog').addEventListener('close',reset);
+$('closeDialog').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeModal();});
+$('cancelDialog').addEventListener('click',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)closeModal();});
+$('deviceDialog').addEventListener('cancel',ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ if(loading)ev.preventDefault();
+});
+$('deviceDialog').addEventListener('close',()=>{if(typeof deviceDialogController==='undefined'||!deviceDialogController)reset();});
 $('deviceDialog').addEventListener('click',ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
  if(ev.target===$('deviceDialog')&&!loading)closeModal();
 });
 $('form').addEventListener('submit',async ev=>{
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
  ev.preventDefault();
  const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
  if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
@@ -1266,11 +1494,19 @@ window.addEventListener('beforeunload',()=>{if(multiView)multiView.closeAll();})
 window.addEventListener('pagehide',()=>{if(multiView)multiView.closeAll();});
 window.addEventListener('offline',()=>{if(multiView)multiView.closeAll();});
 $('pair').addEventListener('click',async()=>{
- if(loading)return;loading=true;render();message('正在配对…');
+ if(typeof deviceDialogController!=='undefined'&&deviceDialogController)return;
+ if(loading||!loaded||pairingOperation||!$('deviceDialog').open)return;
+ const payload={ip:$('pairIp').value.trim()||$('ip').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()};
+ const operation=beginLegacyPairOperation('address');
  try{
-  const r=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('pairIp').value.trim()||$('ip').value.trim(),port:Number($('pairPort').value),code:$('pairCode').value.trim()})});
-  $('pairCode').value='';modalMessage((await r.json()).message,'ok','pairMessage');
- }catch(e){modalMessage(e.message,'error','pairMessage');}finally{loading=false;render();}
+  render();message('正在配对…');if(!isCurrentLegacyPairDialog(operation))return;
+  const response=await api('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:operation.abortController.signal});
+  if(!isCurrentLegacyPairDialog(operation))return;
+  const result=await response.json();
+  if(!isCurrentLegacyPairDialog(operation))return;
+  $('pairCode').value='';modalMessage(result.message,'ok','pairMessage');
+ }catch(e){if(isCurrentLegacyPairDialog(operation))modalMessage(e.message,'error','pairMessage');}
+ finally{finishLegacyPairOperation(operation);}
 });
 multiView=EasyADBMulti.create({
  picker:$('multiPicker'),grid:$('multiGrid'),startButton:$('multiStart'),

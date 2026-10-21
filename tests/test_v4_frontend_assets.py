@@ -20,6 +20,9 @@ MODULES = (
     "features/devices/device-connection-controller.js",
     "features/devices/device-management-controller.js",
     "features/devices/device-configuration-controller.js",
+    "features/devices/device-dialog-controller.js",
+    "features/devices/group-dialog-controller.js",
+    "features/devices/group-discovery-view.js",
 )
 
 
@@ -50,6 +53,9 @@ def test_v4_module_urls_only_serve_explicit_assets(monkeypatch):
             "/app/../core/private.js", "/shared/ui/../../.env", "/features/devices/private.js",
             "/features/devices/device-management-private.js",
             "/features/devices/device-configuration-private.js",
+            "/features/devices/device-dialog-private.js",
+            "/features/devices/group-dialog-private.js",
+            "/features/devices/group-discovery-private.js",
         ):
             assert client.get(path).status_code == 404, path
         assert client.get("/m2-webrtc.js").status_code == 200

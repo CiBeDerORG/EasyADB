@@ -82,6 +82,9 @@ FRONTEND_MODULES = (
     "features/devices/device-connection-controller.js",
     "features/devices/device-management-controller.js",
     "features/devices/device-configuration-controller.js",
+    "features/devices/device-dialog-controller.js",
+    "features/devices/group-dialog-controller.js",
+    "features/devices/group-discovery-view.js",
 )
 
 
