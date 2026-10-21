@@ -26,7 +26,7 @@ export class DeviceDialogController {
     this.onChange = onChange;
     this.notify = notify;
     this.hasBoundEvents = false;
-    // The classic adapter may already have an open form or pairing request.
+    // Preserve form revisions and the pairing owner in the shared page state.
     if (state.activePairOperation === undefined) state.activePairOperation = null;
     for (const key of ['deviceDialogRevision', 'tempDialogRevision', 'firstPairDialogRevision']) {
       if (state[key] === undefined) state[key] = 0;

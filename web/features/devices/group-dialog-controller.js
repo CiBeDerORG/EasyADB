@@ -1,5 +1,5 @@
 // Group dialogs share the page's state and request owners. Construction does
-// not load devices, scan routers or replace work started before module bootstrap.
+// not load devices, scan routers or replace an existing operation owner.
 export class GroupDialogController {
   constructor({
     state,

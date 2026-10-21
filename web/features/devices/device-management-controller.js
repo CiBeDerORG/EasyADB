@@ -20,8 +20,7 @@ export class DeviceManagementController {
     this.isDeviceConnecting = isDeviceConnecting;
     this.onChange = onChange;
     this.notify = notify;
-    // The page also exposes this owner to the temporary inline adapter. Never
-    // replace an in-flight legacy batch when the deferred module is installed.
+    // A supplied state retains its operation identity; construction does not start work.
     if (state.activeBatch === undefined) state.activeBatch = null;
   }
 

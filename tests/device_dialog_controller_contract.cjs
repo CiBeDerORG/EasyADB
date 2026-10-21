@@ -2,7 +2,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const vm = require('node:vm');
+const {createPageFixture} = require('./helpers/page-fixture.cjs');
 
 const html = fs.readFileSync('web/index.html', 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -518,31 +518,10 @@ function findAll(root, predicate) {
   return [...(predicate(root) ? [root] : []), ...root.children.flatMap(child => findAll(child, predicate))];
 }
 
-async function pageFixture(modules, shouldBootstrap = true) {
-  const {createDeviceConnectionController} = await import('../web/features/devices/device-connection-controller.js');
-  const {createDeviceManagementController} = await import('../web/features/devices/device-management-controller.js');
-  const {createGroupDialogController} = await import('../web/features/devices/group-dialog-controller.js');
-  const deviceList = await import('../web/features/devices/device-list-model.js');
-  const deviceListView = await import('../web/features/devices/device-list-view.js');
-  const groupDiscoveryView = await import('../web/features/devices/group-discovery-view.js');
-  const source = fs.readFileSync('web/index.html', 'utf8');
-  const section = (first, last) => {
-    const start = source.indexOf(first), end = source.indexOf(last, start);
-    assert(start >= 0 && end > start, 'missing page boundary: ' + first);
-    return source.slice(start, end);
-  };
-  const dom = makeDOM(), get = dom.getElement, documentEvents = new Element('document');
+async function pageFixture() {
   const server = new Map(makeDevices().map(device => [device.id, {...device}]));
   const groups = new Map(makeGroups().map(group => [group.name, {...group}]));
-  const requests = [], messages = [], toasts = [], dismissed = [], busy = new Set();
-  const controllers = {}, factoryCounts = {connection: 0, management: 0, configuration: 0, deviceDialog: 0, groupDialog: 0};
   const behavior = {deferRequests: false, deferGets: false, onRequest: null, confirm: true};
-  const elem = (tag, className = '', text = '') => new Element(tag, className, text);
-  const action = (label, callback, className = 'secondary') => {
-    const button = elem('button', className, label); button.addEventListener('click', callback); return button;
-  };
-  const live = {isBusyFor: id => busy.has(id), updatePicker() {}, closeAll() {}, openSettings() {},
-    projectionButton: device => elem('button', 'projector', device.name)};
   const scanResult = {found: 1, updated: ['1'], unmatched: [], busy: [],
     endpoints: [{ip: '192.168.0.1', port: 5555, status: 'updated', device_name: 'Phone 1'}]};
   const response = (entry, updateServer = true) => {
@@ -577,79 +556,27 @@ async function pageFixture(modules, shouldBootstrap = true) {
     if (updateServer) server.set(device.id, device);
     return {json: async () => device};
   };
-  const api = async (path, options = {}) => {
-    const entry = {path, entityId: decodeURIComponent(path.split('/')[3] || ''),
-      method: options.method || 'GET', body: options.body && JSON.parse(options.body),
-      signal: options.signal, token: get('token').value, pending: deferred()};
-    requests.push(entry);
-    if (behavior.onRequest) {
-      const overridden = await behavior.onRequest(entry);
-      if (overridden !== undefined) return overridden;
-    }
-    if (entry.method === 'GET' ? behavior.deferGets : behavior.deferRequests) return entry.pending.promise;
-    return response(entry);
-  };
-  const sandbox = {
-    AbortController, api, elem, action, LIVE: live, document: {
-      getElementById: get, createElement: dom.createElement,
-      addEventListener: (name, callback) => documentEvents.addEventListener(name, callback),
+  const f = await createPageFixture({devices: makeDevices(), groups: makeGroups(), confirm: () => behavior.confirm,
+    request: async (path, options, entry) => {
+      entry.entityId = decodeURIComponent(path.split('/')[3] || '');
+      if (behavior.onRequest) {
+        const overridden = await behavior.onRequest(entry);
+        if (overridden !== undefined) return overridden;
+      }
+      if (entry.method === 'GET' ? behavior.deferGets : behavior.deferRequests) return entry.pending.promise;
+      return response(entry);
     },
-    confirm: () => behavior.confirm,
-    message: (text, kind = '') => messages.push({text, kind}),
-    showToast: (content, options) => toasts.push({content, ...options}),
-    dismissToast: key => dismissed.push(key),
-    hasConnectedAdb: deviceList.hasConnectedAdb,
-    connectedFirst: (left, right) => Number(deviceList.hasConnectedAdb(right)) - Number(deviceList.hasConnectedAdb(left)),
-  };
-  const setup = section('const $=id=>', 'const inventoryDrawer=') + '\nconst toastItems=new Map();\n' +
-    section('let frontendModules=', 'function toastSelected(') +
-    section("document.addEventListener('easyadb:frontend-modules-ready'", '// Browser requests') +
-    section('function buildLegacyDeviceGroups()', '// Each connect uses') +
-    section("$('token').addEventListener('input'", "$('bulkSelectAll').addEventListener") +
-    section("$('newDevice').addEventListener", "$('refreshAll').addEventListener") +
-    section("$('pair').addEventListener", 'multiView=EasyADBMulti.create') + `
-multiView=LIVE;
-globalThis.readState=()=>({devices,groups,selected,editing,editingTemp,editingGroup,pairingDeviceId,pairingSerial,
- loaded,loading,connectGeneration,managementSelected,connectingDevices,connectionBatchBusy,configurationOperation,
- pairingOperation,groupOperation,scanningGroups,groupScanOperations,groupHasSavedDiscovery,
- deviceDialogRevision,tempDialogRevision,firstPairDialogRevision,groupDialogRevision});
-globalThis.installRows=(rows,configs)=>{devices=rows;groups=configs;loaded=true;render();};
-globalThis.openDevice=id=>openModal(id);
-globalThis.openTemp=id=>openTempEditor(devices.find(device=>device.id===id));
-globalThis.openPair=id=>openFirstPair(id);
-globalThis.openGroupEditor=name=>openGroup(name);
-globalThis.runScan=(name,isTest=false)=>scanGroup(name,isTest);
-`;
-  get('token').value = 'current-token';
-  vm.runInContext(setup, vm.createContext(sandbox), {filename: 'device-dialog-page.js'});
-  const installRows = () => sandbox.installRows(makeDevices(), makeGroups());
-  installRows();
-  const recordFactory = (name, factory) => options => {
-    factoryCounts[name]++; controllers[name] = factory(options); return controllers[name];
-  };
-  const detail = {
-    deviceList, deviceListView, groupDiscoveryView,
-    dialog: modules.createDialogController({getElement: get}),
-    createDeviceConnectionController: recordFactory('connection', createDeviceConnectionController),
-    createDeviceManagementController: recordFactory('management', createDeviceManagementController),
-    createDeviceConfigurationController: recordFactory('configuration', modules.createDeviceConfigurationController),
-    createDeviceDialogController: recordFactory('deviceDialog', modules.createDeviceDialogController),
-    createGroupDialogController: recordFactory('groupDialog', createGroupDialogController),
-  };
-  const bootstrap = () => documentEvents.fire('easyadb:frontend-modules-ready', {detail});
-  if (shouldBootstrap) { await bootstrap(); await bootstrap(); }
-  return { ...dom, get, sandbox, installRows, requests, messages, toasts, dismissed, busy, server, groups,
-    behavior, controllers, factoryCounts, bootstrap, response,
-    finish(entry) { entry.pending.resolve(response(entry)); }};
+  });
+  return {...f, server, groups, behavior, response, finish(entry) { entry.pending.resolve(response(entry)); }};
 }
 
 function openPagePair(f, kind, code = '123456') {
   if (kind === 'address') {
-    f.sandbox.openDevice('1');
+    f.controllers.deviceDialogs.openDevice('1');
     f.get('pairIp').value = ' 192.168.99.1 ';
     f.get('pairPort').value = '37123'; f.get('pairCode').value = code;
   } else {
-    f.sandbox.openPair('1');
+    f.controllers.deviceDialogs.openFirstPair('1');
     f.get('firstPairPort').value = '37123'; f.get('firstPairCode').value = code;
   }
 }
@@ -657,35 +584,35 @@ const pagePairAction = (f, kind) => f.get(kind === 'address' ? 'pair' : 'firstPa
   .fire(kind === 'address' ? 'click' : 'submit');
 
 async function checkPageWiring(modules) {
-  const main = fs.readFileSync('web/app/main.js', 'utf8');
-  assert(main.includes("from '../features/devices/device-dialog-controller.js'"));
-  const f = await pageFixture(modules), state = () => f.sandbox.readState();
-  assert.deepEqual(f.factoryCounts, {connection: 1, management: 1, configuration: 1, deviceDialog: 1, groupDialog: 1});
+  const f = await pageFixture(), state = () => f.state;
+  assert.deepEqual(f.ports, {multi: 1, group: 1, lab: 1});
+  assert.equal(f.bootstrap(), f.page);
+  assert.equal(f.bootstrap(), f.page);
   assert.equal(f.requests.length, 0, 'all real page factories install without requests');
-  assert.equal(f.controllers.deviceDialog.state.devices, state().devices);
-  assert.equal(f.controllers.deviceDialog.state.devices, f.controllers.configuration.state.devices);
-  assert.equal(f.controllers.deviceDialog.state.groups, f.controllers.groupDialog.state.groups);
+  assert.equal(f.controllers.deviceDialogs.state.devices, state().devices);
+  assert.equal(f.controllers.deviceDialogs.state.devices, f.controllers.configuration.state.devices);
+  assert.equal(f.controllers.deviceDialogs.state.groups, f.controllers.groupDialogs.state.groups);
   for (const [id, event] of [['newDevice', 'click'], ['form', 'submit'], ['tempForm', 'submit'],
     ['firstPairForm', 'submit'], ['pair', 'click'], ['groupForm', 'submit'], ['deleteGroup', 'click']]) {
-    assert.equal(f.get(id).events.get(event).length, 2, 'fixture executes both retained classic and module listeners');
+    assert.equal(f.get(id).events.get(event).length, 1, 'the complete production page binds one owner per event');
   }
-  f.controllers.deviceDialog.bindEvents(); f.controllers.groupDialog.bindEvents();
-  assert.equal(f.get('form').events.get('submit').length, 2);
+  f.controllers.deviceDialogs.bindEvents(); f.controllers.groupDialogs.bindEvents();
+  assert.equal(f.get('form').events.get('submit').length, 1);
   const beforeReset = f.get('form').resetCount;
   await f.get('newDevice').fire('click');
-  assert.equal(f.get('form').resetCount, beforeReset + 1, 'classic listener must not forward into the module twice');
+  assert.equal(f.get('form').resetCount, beforeReset + 1, 'one page owner resets the form exactly once');
   assert.equal(f.get('name').focusCount, 1);
   f.get('name').value = 'New from page'; f.get('ip').value = ' 10.9.8.7 '; f.get('port').value = '6000';
   await f.get('form').fire('submit');
   assert.deepEqual(f.requests.map(entry => [entry.path, entry.method]),
     [['/api/devices', 'POST'], ['/api/devices', 'GET'], ['/api/groups', 'GET']]);
   assert.equal(f.get('deviceDialog').open, false);
-  assert.equal(state().selected, 'new');
+  assert.equal(state().selectedDeviceId, 'new');
   const revision = state().deviceDialogRevision;
   const editButton = findAll(f.get('devices'), node => node.attrs['aria-label'] === '编辑设备 Phone 1')[0];
   assert(editButton, 'real device-list view exposes the editor callback');
   await editButton.fire('click');
-  assert.equal(state().editing, '1');
+  assert.equal(state().editingDeviceId, '1');
   assert.equal(state().deviceDialogRevision, revision + 1);
   const beforeEdit = f.requests.length;
   f.get('name').value = 'Renamed'; await f.get('form').fire('submit');
@@ -710,7 +637,7 @@ async function checkPageWiring(modules) {
   f.get('firstPairPort').value = '37123'; f.get('firstPairCode').value = '123456';
   const beforePair = f.requests.length;
   await f.get('firstPairForm').fire('submit');
-  assert.equal(f.requests.length, beforePair + 1, 'two registered listeners issue one scoped pair request');
+  assert.equal(f.requests.length, beforePair + 1, 'the page issues one scoped pair request');
   assert.equal(f.requests[beforePair].path, '/api/devices/1/pair');
   await f.get('closeFirstPair').fire('click');
   assert.equal(state().pairingDeviceId, null);
@@ -720,10 +647,10 @@ async function checkPageWiring(modules) {
   assert.equal(f.requests[beforeRaw].path, '/api/pair');
   assert(f.requests.every(entry => !entry.path.endsWith('/connect')), 'dialog work retains explicit connection semantics');
   await f.get('cancelDialog').fire('click');
-  assert.equal(state().editing, null);
-  assert.equal(state().loading, false);
+  assert.equal(state().editingDeviceId, null);
+  assert.equal(state().isLoading, false);
 
-  f.sandbox.openGroupEditor('Home');
+  f.controllers.groupDialogs.openGroup('Home');
   assert.equal(f.get('groupName').focusCount, 1);
   f.get('groupOpenWrtUrl').value = ' http://draft-router/ubus ';
   f.get('groupOpenWrtUser').value = '  '; f.get('groupOpenWrtPassword').value = 'draft-secret';
@@ -740,24 +667,26 @@ async function checkPageWiring(modules) {
   assert.equal(f.get('groupDialog').open, false);
   assert.equal(f.get('groupOpenWrtPassword').value, '');
   const beforeScan = f.requests.length;
-  await f.sandbox.runScan('Home');
+  await f.controllers.groupDialogs.scanGroup('Home');
   assert.deepEqual(f.requests.slice(beforeScan).map(entry => [entry.path, entry.method]), [
     ['/api/groups/Home/discovery/scan', 'POST'], ['/api/devices', 'GET'], ['/api/groups', 'GET'],
   ]);
   assert.equal(f.toasts.at(-1).key, 'discovery:Home');
   assert.equal(f.toasts.at(-1).kind, 'ok');
   assert(findAll(f.toasts.at(-1).content, node => node.textContent === '192.168.0.1:5555').length);
+  f.dispose();
 }
 
-async function checkPagePairAdoption(modules) {
-  for (const startWithModules of [false, true]) {
+async function checkPagePairLifecycle(modules) {
+  for (const remountBeforeAction of [false, true]) {
     for (const kind of ['address', 'device']) {
       for (const stage of ['request', 'json']) {
         for (const reject of [false, true]) {
-          const f = await pageFixture(modules, startWithModules);
+          const f = await pageFixture();
+          if (remountBeforeAction) assert.equal(f.bootstrap(), f.page);
           f.behavior.deferRequests = true; openPagePair(f, kind);
           const oldRun = pagePairAction(f, kind), old = f.requests[0];
-          const owner = f.sandbox.readState().pairingOperation;
+          const owner = f.state.activePairOperation;
           assert(owner, 'the current pairing implementation establishes shared ownership');
           let pending = old.pending;
           if (stage === 'json') {
@@ -766,20 +695,21 @@ async function checkPagePairAdoption(modules) {
             await until(() => reading);
           }
           await f.bootstrap(); await f.bootstrap();
-          assert.equal(f.controllers.deviceDialog.state.activePairOperation, owner);
-          assert.equal(f.factoryCounts.deviceDialog, 1);
+          assert.equal(f.controllers.deviceDialogs.state.activePairOperation, owner);
+          assert.equal(f.ports.multi, 1);
+          assert.equal(f.get('pair').events.get('click').length, 1);
           f.get('token').value = 'replacement-token'; await f.get('token').fire('input');
           assert.equal(old.signal.aborted, true);
-          assert.equal(f.sandbox.readState().loading, false);
-          assert.equal(f.sandbox.readState().devices.length, 0);
+          assert.equal(f.state.isLoading, false);
+          assert.equal(f.state.devices.length, 0);
           f.installRows(); openPagePair(f, kind, '654321');
-          const newRun = pagePairAction(f, kind), newOwner = f.sandbox.readState().pairingOperation;
+          const newRun = pagePairAction(f, kind), newOwner = f.state.activePairOperation;
           const snapshot = [f.messages.length, f.toasts.length, f.get('deviceDialog').closeCount, f.get('firstPairDialog').closeCount];
           if (reject) pending.reject(Error('stale pair error'));
           else pending.resolve(stage === 'json' ? {message: 'stale pair success'} : {json: async () => ({message: 'stale pair success'})});
           await oldRun;
-          assert.equal(f.sandbox.readState().pairingOperation, newOwner);
-          assert.equal(f.sandbox.readState().loading, true);
+          assert.equal(f.state.activePairOperation, newOwner);
+          assert.equal(f.state.isLoading, true);
           assert.equal(f.get(pairField(kind)).value, '654321');
           assert.equal(f.get(pairMessage(kind)).hidden, true);
           if (kind === 'device') assert.equal(f.get('submitFirstPair').disabled, true);
@@ -787,22 +717,23 @@ async function checkPagePairAdoption(modules) {
           assert.equal(f.requests.length, 2, 'stale pairing cannot issue requests or duplicate the newly bound handler');
           assert.equal(f.requests[1].token, 'replacement-token');
           f.finish(f.requests[1]); await newRun;
-          assert.equal(f.sandbox.readState().loading, false);
-          assert.equal(f.sandbox.readState().pairingOperation, null);
+          assert.equal(f.state.isLoading, false);
+          assert.equal(f.state.activePairOperation, null);
+          f.dispose();
         }
       }
     }
   }
 }
 
-async function checkPageConfigurationAdoption(modules) {
+async function checkPageConfigurationLifecycle(modules) {
   for (const kind of ['device', 'temp']) {
     for (const stage of ['request', ...(kind === 'device' ? ['json'] : []), 'refresh']) {
       for (const reject of [false, true]) {
-        const f = await pageFixture(modules, false), form = kind === 'device' ? 'form' : 'tempForm';
-        const open = () => kind === 'device' ? f.sandbox.openDevice('1') : f.sandbox.openTemp('1');
+        const f = await pageFixture(), form = kind === 'device' ? 'form' : 'tempForm';
+        const open = () => kind === 'device' ? f.controllers.deviceDialogs.openDevice('1') : f.controllers.deviceDialogs.openTemp('1');
         f.behavior.deferRequests = true; f.behavior.deferGets = stage === 'refresh'; open();
-        const oldRun = f.get(form).fire('submit'), old = f.requests[0], owner = f.sandbox.readState().configurationOperation;
+        const oldRun = f.get(form).fire('submit'), old = f.requests[0], owner = f.state.configurationOperation;
         assert(owner);
         let pending = old.pending, oldGets = [];
         if (stage === 'json') {
@@ -820,7 +751,7 @@ async function checkPageConfigurationAdoption(modules) {
         assert.equal(old.signal.aborted, true);
         f.installRows(); open(); f.behavior.deferGets = false;
         const start = f.requests.length;
-        const newRun = f.get(form).fire('submit'), newOwner = f.sandbox.readState().configurationOperation;
+        const newRun = f.get(form).fire('submit'), newOwner = f.state.configurationOperation;
         const snapshot = [f.messages.length, f.get('deviceDialog').closeCount, f.get('tempDialog').closeCount];
         if (stage === 'refresh') {
           for (const entry of oldGets) {
@@ -830,15 +761,16 @@ async function checkPageConfigurationAdoption(modules) {
         } else if (reject) pending.reject(Error('stale save error'));
         else pending.resolve(stage === 'json' ? {...makeDevices()[0], name: 'stale saved'} : f.response(old, false));
         await oldRun;
-        assert.equal(f.sandbox.readState().configurationOperation, newOwner);
-        assert.equal(f.sandbox.readState().loading, true);
+        assert.equal(f.state.configurationOperation, newOwner);
+        assert.equal(f.state.isLoading, true);
         assert.deepEqual([f.messages.length, f.get('deviceDialog').closeCount, f.get('tempDialog').closeCount], snapshot,
-          'retained classic callbacks cannot close a new module-owned editor after token change');
+          'old callbacks cannot close a new editor after token change');
         assert.equal(f.requests.length, start + 1);
         f.finish(f.requests[start]); await newRun;
         assert.equal(f.requests.length, start + 3, 'only the current save refreshes device and group metadata');
-        assert.equal(f.sandbox.readState().loading, false);
+        assert.equal(f.state.isLoading, false);
         assert.equal(f.get(kind === 'device' ? 'deviceDialog' : 'tempDialog').open, false);
+        f.dispose();
       }
     }
   }
@@ -847,20 +779,20 @@ async function checkPageConfigurationAdoption(modules) {
 function startGroupAction(f, kind) {
   if (kind === 'save') return f.get('groupForm').fire('submit');
   if (kind === 'delete') return f.get('deleteGroup').fire('click');
-  return f.sandbox.runScan('Home', kind === 'test');
+  return f.controllers.groupDialogs.scanGroup('Home', kind === 'test');
 }
 
-async function checkPageGroupAdoption(modules) {
+async function checkPageGroupLifecycle(modules) {
   for (const kind of ['save', 'delete', 'scan', 'test']) {
     for (const stage of ['request', 'json', ...(kind === 'test' ? [] : ['refresh'])]) {
       for (const reject of [false, true]) {
-        const f = await pageFixture(modules, false);
+        const f = await pageFixture();
         f.behavior.deferRequests = true; f.behavior.deferGets = stage === 'refresh';
-        f.sandbox.openGroupEditor('Home'); f.get('groupOpenWrtPassword').value = 'old-secret';
+        f.controllers.groupDialogs.openGroup('Home'); f.get('groupOpenWrtPassword').value = 'old-secret';
         const oldRun = startGroupAction(f, kind), old = f.requests[0];
-        const oldState = f.sandbox.readState();
-        const oldOwner = kind === 'save' || kind === 'delete' ? oldState.groupOperation : oldState.groupScanOperations.get('Home');
-        assert(oldOwner, 'classic group work owns its shared operation: ' + kind);
+        const oldState = f.state;
+        const oldOwner = kind === 'save' || kind === 'delete' ? oldState.groupOperation : oldState.scanOperations.get('Home');
+        assert(oldOwner, 'real group work owns its shared operation: ' + kind);
         let pending = old.pending, oldGets = [];
         if (stage === 'json') {
           pending = deferred(); let reading = false;
@@ -876,18 +808,19 @@ async function checkPageGroupAdoption(modules) {
           oldGets = f.requests.filter(entry => entry.method === 'GET');
         }
         await f.bootstrap();
-        const moduleState = f.controllers.groupDialog.state;
+        const moduleState = f.controllers.groupDialogs.state;
         assert.equal(kind === 'save' || kind === 'delete' ? moduleState.activeOperation : moduleState.scanOperations.get('Home'), oldOwner);
         f.get('token').value = 'replacement-token'; await f.get('token').fire('input');
         assert.equal(old.signal.aborted, true);
-        assert.equal(f.sandbox.readState().loading, false);
-        assert.equal(f.sandbox.readState().scanningGroups.size, 0);
-        f.installRows(); f.sandbox.openGroupEditor('Home'); f.get('groupOpenWrtPassword').value = 'new-secret';
+        assert.equal(f.state.isLoading, false);
+        assert.equal(f.state.scanningGroupNames.size, 0);
+        f.installRows(); f.controllers.groupDialogs.openGroup('Home'); f.get('groupOpenWrtPassword').value = 'new-secret';
         f.behavior.deferGets = false;
         const start = f.requests.length, newRun = startGroupAction(f, kind), newRequest = f.requests[start];
         assert(newRequest);
-        const state = f.sandbox.readState();
-        const newOwner = kind === 'save' || kind === 'delete' ? state.groupOperation : state.groupScanOperations.get('Home');
+        const state = f.state;
+        const newOwner = kind === 'save' || kind === 'delete' ? state.groupOperation : state.scanOperations.get('Home');
+        const currentToast = f.page.toast.showToast('Current scan result', {key: 'discovery:Home', kind: 'ok'});
         const snapshot = [f.messages.length, f.toasts.length, f.dismissed.length, f.get('groupDialog').closeCount];
         if (stage === 'refresh') {
           for (const entry of oldGets) {
@@ -897,32 +830,34 @@ async function checkPageGroupAdoption(modules) {
         } else if (reject) pending.reject(Error('stale group error'));
         else pending.resolve(stage === 'json' ? await f.response(old, false).json() : f.response(old, false));
         await oldRun;
-        const after = f.sandbox.readState();
-        assert.equal(kind === 'save' || kind === 'delete' ? after.groupOperation : after.groupScanOperations.get('Home'), newOwner,
+        const after = f.state;
+        assert.equal(kind === 'save' || kind === 'delete' ? after.groupOperation : after.scanOperations.get('Home'), newOwner,
           'old group finally must preserve the replacement owner: ' + kind + '/' + stage);
-        assert.equal(after.loading, kind === 'save' || kind === 'delete');
-        if (kind === 'scan' || kind === 'test') assert.equal(after.scanningGroups.has('Home'), true);
+        assert.equal(after.isLoading, kind === 'save' || kind === 'delete');
+        if (kind === 'scan' || kind === 'test') assert.equal(after.scanningGroupNames.has('Home'), true);
         if (kind === 'test') assert.equal(f.get('testGroupDiscovery').disabled, true);
-        assert.equal(after.editingGroup, 'Home');
+        assert.equal(after.editingGroupName, 'Home');
         assert.equal(after.devices.length, 2, 'old metadata cannot replace the new token inventory');
         assert.equal(f.get('groupOpenWrtPassword').value, 'new-secret');
         assert.equal(f.get('groupMessage').hidden, true);
+        assert(f.get('toastHost').contains(currentToast), 'stale group work cannot remove current scan details');
         assert.deepEqual([f.messages.length, f.toasts.length, f.dismissed.length, f.get('groupDialog').closeCount], snapshot);
         assert.equal(f.requests.length, start + 1, 'old group work cannot continue discovery persistence or metadata reads');
         f.behavior.deferRequests = false;
         f.finish(newRequest); await newRun;
-        assert.equal(f.sandbox.readState().loading, false);
-        assert.equal(f.sandbox.readState().groupOperation, null);
-        assert.equal(f.sandbox.readState().scanningGroups.size, 0);
+        assert.equal(f.state.isLoading, false);
+        assert.equal(f.state.groupOperation, null);
+        assert.equal(f.state.scanningGroupNames.size, 0);
         assert.equal(f.get('testGroupDiscovery').disabled, false);
+        f.dispose();
       }
     }
   }
 }
 
 async function checkPageDiscoveryRetry(modules) {
-  const f = await pageFixture(modules, false);
-  f.sandbox.openGroupEditor('Home');
+  const f = await pageFixture();
+  f.controllers.groupDialogs.openGroup('Home');
   f.get('groupName').value = 'Renamed'; f.get('groupOpenWrtUrl').value = '';
   let failOnce = true;
   f.behavior.onRequest = entry => {
@@ -931,21 +866,22 @@ async function checkPageDiscoveryRetry(modules) {
     }
   };
   await f.get('groupForm').fire('submit');
-  assert.equal(f.sandbox.readState().editingGroup, 'Renamed');
-  assert.equal(f.sandbox.readState().groupHasSavedDiscovery, true);
-  assert.equal(f.sandbox.readState().groups.some(group => group.name === 'Renamed'), false,
+  assert.equal(f.state.editingGroupName, 'Renamed');
+  assert.equal(f.state.hasSavedDiscovery, true);
+  assert.equal(f.state.groups.some(group => group.name === 'Renamed'), false,
     'saved group metadata is deliberately stale after partial persistence');
   assert.equal(f.get('groupDialog').open, true);
   await f.bootstrap();
-  assert.equal(f.controllers.groupDialog.state.hasSavedDiscovery, true);
+  assert.equal(f.controllers.groupDialogs.state.hasSavedDiscovery, true);
   await f.get('groupForm').fire('submit');
   assert.deepEqual(f.requests.map(entry => [entry.path, entry.method]), [
     ['/api/groups/Home', 'PUT'], ['/api/groups/Renamed/discovery', 'DELETE'],
     ['/api/groups/Renamed', 'PUT'], ['/api/groups/Renamed/discovery', 'DELETE'],
     ['/api/devices', 'GET'], ['/api/groups', 'GET'],
-  ], 'bootstrap preserves a partially saved rename and its pending discovery deletion');
+  ], 'repeated mounting preserves a partially saved rename and its pending discovery deletion');
   assert.equal(f.get('groupDialog').open, false);
-  assert.equal(f.sandbox.readState().loading, false);
+  assert.equal(f.state.isLoading, false);
+  f.dispose();
 }
 
 (async () => {
@@ -961,9 +897,9 @@ async function checkPageDiscoveryRetry(modules) {
   await checkPairing(modules);
   await checkPairLifecycle(modules);
   await checkPageWiring(modules);
-  await checkPagePairAdoption(modules);
-  await checkPageConfigurationAdoption(modules);
-  await checkPageGroupAdoption(modules);
+  await checkPagePairLifecycle(modules);
+  await checkPageConfigurationLifecycle(modules);
+  await checkPageGroupLifecycle(modules);
   await checkPageDiscoveryRetry(modules);
-  console.log('E device dialogs: forms, D3 delegation, pairing, group adoption and real page lifecycle: OK');
+  console.log('E device dialogs: forms, D3 delegation, pairing, group owners and real page lifecycle: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

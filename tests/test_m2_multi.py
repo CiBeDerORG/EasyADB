@@ -150,130 +150,138 @@ def test_two_device_sessions_and_controls_are_not_cross_routed(monkeypatch,tmp_p
 
 
 def test_multi_page_and_static_modules_are_served(monkeypatch):
-    monkeypatch.setenv("EASYADB_TOKEN","local-test-token-123")
-    mod=importlib.import_module("server.app")
+    import re
+    monkeypatch.setenv("EASYADB_TOKEN", "local-test-token-123")
+    mod = importlib.import_module("server.app")
+    compact = lambda value: re.sub(r",(?=[)\]}])", "", re.sub(r"\s+", "", value))
     with TestClient(mod.app) as client:
-        for url in ("/m2-metrics.js","/m2-multi.js"):
-            r=client.get(url)
-            assert r.status_code==200
-            assert r.headers["cache-control"]=="no-store"
-        html=client.get("/").text
-        css=client.get("/assets/legacy-page.css").text
+        def javascript(url):
+            response = client.get(url)
+            assert response.status_code == 200, url
+            assert response.headers["cache-control"] == "no-store", url
+            assert response.headers["content-type"].startswith("application/javascript"), url
+            return response.text
+
+        multi = javascript("/m2-multi.js")
+        javascript("/m2-metrics.js")
+        page = javascript("/app/page-controller.js")
+        view = javascript("/features/devices/device-list-view.js")
+        management_view = javascript("/features/devices/device-management-view.js")
+        management = javascript("/features/devices/device-management-controller.js")
+        configuration = javascript("/features/devices/device-configuration-controller.js")
+        dialogs = javascript("/features/devices/device-dialog-controller.js")
+        drawer = javascript("/shared/ui/inventory-drawer.js")
+        quality = javascript("/features/live/live-quality-settings.js")
+        html = client.get("/").text
+        css = client.get("/assets/legacy-page.css").text
+        p, v, m, d, config, dialog, manage, q = map(
+            compact, (page, view, multi, drawer, configuration, dialogs, management, quality)
+        )
+        actual = compact(page + view + management_view + management + configuration + dialogs + drawer + multi + quality)
         assert 'id="multiPanel"' in html and 'id="multiGrid"' in html
         assert 'src="/m2-multi.js"' in html and 'src="/m2-metrics.js"' in html
-        assert "multiView.closeAll()" in html
-        # Old screenshot panel and hidden single-player state are completely gone.
-        assert 'id="legacySolo"' not in html
-        assert 'id="shotButton"' not in html and 'id="liveVideo"' not in html
-        assert 'id="previewTitle"' not in html
-        assert 'class="workspace"' in html
-        assert 'class="panel inventory-panel"' in html
-        assert 'id="inventoryDrawer"' in html and 'id="inventoryToggle"' in html
-        assert 'id="inventoryPanel"' in html and 'id="inventoryOpacity"' in html
-        assert 'aria-label="设备管理" inert' in html
-        assert "inventoryPanel.inert=true" in html and "inventoryPanel.inert=false" in html
-        assert "inventoryCollapseTimer" not in html
-        assert "document.addEventListener('pointerdown',event=>{" in html
-        assert "if(inventoryDrawer.contains(event.target))return;" in html
+        assert "multiView.closeAll()" in p
+        assert not re.search(r"<script\s*>", html), "only the module assembly owns page behavior"
+        # Old screenshot panel and hidden single-player state remain absent.
+        for marker in ('id="legacySolo"', 'id="shotButton"', 'id="liveVideo"', 'id="previewTitle"',
+                       'class="stage-main"', 'class="stage-settings"', 'id="multiProfile"',
+                       'class="panel access-panel"', 'class="device-quality"'):
+            assert marker not in html
+        for marker in ('class="workspace"', 'class="panel inventory-panel"', 'id="inventoryDrawer"',
+                       'id="inventoryToggle"', 'id="inventoryPanel"', 'id="inventoryOpacity"',
+                       'class="stage-view"', 'id="multiStart"', 'id="multiStop"', 'id="tempDialog"'):
+            assert marker in html
+        panel = re.search(r'<[^>]+id="inventoryPanel"[^>]*>', html).group()
+        assert 'aria-label="设备管理"' in panel and re.search(r"\binert(?:\s|>)", panel)
+        assert "panel.inert=true" in d and "panel.inert=false" in d
+        assert "inventoryCollapseTimer" not in actual
+        assert "documentRef.addEventListener('pointerdown',(event)=>{" in d
+        assert "drawer.contains(event.target)" in d
         assert "点击抽屉以外的位置即可立即收起" in html
-        assert 'class="stage-view"' in html
-        assert 'class="stage-main"' not in html and 'class="stage-settings"' not in html
-        assert 'id="multiPicker" hidden aria-hidden="true"' in html
-        assert "qualityRows.get(d.id)" not in html
-        assert 'class="device-quality"' not in html
-        assert "const configure=action('✎',()=>multiView.openSettings(d),'projection-settings-edit')" in html
-        assert 'id="multiStart"' in html and 'id="multiStop"' in html
+        picker = re.search(r'<[^>]+id="multiPicker"[^>]*>', html).group()
+        assert 'aria-hidden="true"' in picker and re.search(r"\bhidden(?:\s|>)", picker)
+        assert "qualityRows.get(d.id)" not in actual
+        assert compact("action('✎', () => ui.openProjectionSettings(device), 'projection-settings-edit')") in v
         assert html.index('id="multiStart"') < html.index('id="devices"') < html.index('id="multiGrid"')
         # Live cards flow by each stream's own width, not a fixed column count.
         assert ".multi-grid{display:flex;flex-wrap:wrap;" in css
         assert ".multi-card{flex:0 1 auto;" in css
         assert ".multi-grid[data-count=" not in css
         assert ".multi-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" not in css
-        assert 'id="multiProfile"' not in html
-        assert "runPreflight:async id" in html
-        assert "runVideoProbe:async(id,profile)" in html
+        assert "runPreflight:async(id)" in p
+        assert "runVideoProbe:async(id,profile)" in p
         assert "左侧「选择」用于全部批量操作" in html
-        assert 'class="panel access-panel"' not in html
         assert html.index('<h2>设备管理</h2>') < html.index('id="token"') < html.index('id="load"')
         assert '批量检查状态' in html and '批量停止投屏' in html
-        assert "if(d.temp_ip)addAddress('临时 IP','temp',d.temp_ip)" in html
-        assert "/temp-address" in html
-        multi_js=client.get("/m2-multi.js").text
-        assert "liveState(id)" in multi_js
-        assert "startFor(id)" in multi_js and "stopFor(id)" in multi_js
-        assert "this._startDevices([d])" in multi_js
-        assert "this.lastLiveStatus.set(card.id" in multi_js
-        assert "projectionButton(d)" in multi_js
-        assert "开启此设备投屏" in multi_js and "关闭此设备投屏" in multi_js
+        assert compact("if (device.temp_ip) addAddress('临时 IP', 'temp', device.temp_ip)") in v
+        assert "/temp-address" in configuration
+        for fragment in ("liveState(id)", "startFor(id)", "stopFor(id)", "this._startDevices([d])",
+                         "this.lastLiveStatus.set(card.id", "projectionButton(d)"):
+            assert fragment in m
+        assert "开启此设备投屏" in multi and "关闭此设备投屏" in multi
         assert ".device-port.device-projector.ready,.device-port.device-projector.playing" in css
-        assert "portWrap.append(multiView?multiView.projectionButton(d)" in html
-        assert "model.append(elem('span','device-tooltip-line','Android：'+d.android_version))" in html
-        assert "item.append(liveRow,playback)" not in multi_js
-        assert "getManagementBusy:()=>loading" in html
-        # The existing batch-management checkboxes now also drive at-most-four
-        # video launches. Destructive actions still require confirmation.
-        for marker in ('id="bulkSelectAll"', 'id="bulkConnect"',
-                       'id="bulkDelete"', 'id="bulkCount"'):
+        assert compact("portWrap.append(ui.hasProjection ? ui.projectionButton(device)") in v
+        assert compact("model.append(elem('span', 'device-tooltip-line', 'Android：' + device.android_version))") in v
+        assert "item.append(liveRow,playback)" not in m
+        assert "getManagementBusy:()=>state.isLoading" in p
+        # One management selection Set drives all batch operations and projection.
+        for marker in ('id="bulkSelectAll"', 'id="bulkConnect"', 'id="bulkDelete"', 'id="bulkCount"'):
             assert marker in html
-        assert "const managementSelected=new Set()" in html
-        assert "managementCheck.checked=managementSelected.has(d.id)" in html
-        assert "getBatchSelection:()=>managementSelected" in html
-        assert "getBatchSelection" in multi_js
-        assert "参与本轮投屏" not in multi_js
-        assert "const candidates=picked.filter(d=>!deviceLocked(d.id))" in html
-        assert "const connectingDevices=new Set()" in html
-        assert "await connectProgressively(candidates,skipped,false,'首次加载连接',epoch)" in html
-        assert "if(!confirm('将从列表永久删除以下 " in html
-        assert "managementSelected.clear();render();" in html
-        # Route selection acts directly on its IP and triggers one explicit connect.
-        # The separate batch status check remains probe-only.
-        assert "action(label+'：'+ip,()=>switchRoute(d.id,route),'address-target')" in html
-        assert "portWrap.append(multiView?multiView.projectionButton(d):elem('span','device-port','ADB '+d.port))" in html
-        assert "addressList.append(...addressRows)" in html
-        assert "addressList.append(plus)" in html
-        assert "removeButton=action('删除'" not in html
-        assert "$('tempSharedPort').value=String(d.port)" in html
-        assert 'id="tempDialog"' in html
-        assert "multiView.projectionButton(d)" in html
-        assert "change.title='编辑 '+d.name" in html
-        assert "row.append(change)" in html and "title.append(change)" not in html
-        assert "if(route==='mesh'){" in html
-        assert ".device-edit-icon{position:absolute;right:-3px;top:-5px;" in css
-        assert ".device-port.device-projector{position:static;" in css
-        assert "if(multiView)title.append(multiView.projectionButton(d))" not in html
-        assert "name.append(model)" in html and "name.tabIndex=0" in html
-        assert "if(d.model)title.append(elem('span','device-model'" not in html
-        assert "const connect=action('连接'" not in html
-        assert "$('load').addEventListener('click',loadAndConnect)" in html
-        assert "if(current.selected_route!==route)" in html
-        assert "function runConnect(id)" not in html
-        assert "临时 ADB 端口：" not in html
-        assert "target.setAttribute('aria-pressed',String(chosen))" in html
-        assert "⇄ 切换" not in html and "✓ 当前选择" not in html
-        assert "const name=elem('span','item-name',d.name)" in html
-        assert "title.append(name)" in html
-        assert "name.append(model)" in html
-        assert ".device-title:hover .device-model-tooltip" in css
-        assert ".device-title:focus-within .device-model-tooltip" in css
-        assert "if(d.model)title.append(elem('span','device-model'" not in html
-        assert "if(d.model||d.android_version)" in html
-        assert "device-title{display:flex;align-items:center;flex-wrap:wrap" in css
+        assert "selectedDeviceIds:newSet()" in p
+        assert "managementCheck.checked=selectedDeviceIds.has(device.id)" in v
+        assert "getBatchSelection:()=>state.selectedDeviceIds" in p
+        assert "constpicked=this.getBatchSelection()" in m
+        assert "参与本轮投屏" not in multi
+        assert "constcandidates=selected.filter((device)=>!isDeviceLocked(device.id))" in p
+        assert "pendingDeviceIds:newSet()" in p
+        assert compact("await controllers.connection.connectDevices(candidates, skipped, false, '首次加载连接', generation)") in p
+        assert "!this.confirmDelete(" in manage and "将从列表永久删除以下 " in management
+        assert "state.selectedDeviceIds.clear();render();" in p
+        # Route address buttons issue one explicit connect; status checks remain probe-only.
+        for fragment in ("action(label + '：' + ip, () => switchRoute(device.id, route), 'address-target')",
+                         "portWrap.append(ui.hasProjection ? ui.projectionButton(device) : elem('span', 'device-port', 'ADB ' + device.port))",
+                         "addressList.append(...addressRows)", "addressList.append(plus)",
+                         "change.title = '编辑 ' + device.name", "row.append(change)",
+                         "if (route === 'mesh') {", "name.append(model)", "name.tabIndex = 0",
+                         "target.setAttribute('aria-pressed', String(chosen))",
+                         "const name = elem('span', 'item-name', device.name)", "title.append(name)",
+                         "if (device.model || device.android_version)",
+                         "top.append(managementLabel, info); primary.append(top, addressList)",
+                         "addressRows.push(row)"):
+            assert compact(fragment) in v, fragment
+        assert compact("this.getElement('tempSharedPort').value = String(device.port)") in dialog
+        assert "multiView.projectionButton(device)" in p
+        assert compact("getElement('load').addEventListener('click', loadAndConnect)") in p
+        assert "if(current.selected_route!==route)" in config
+        for forbidden in ("removeButton=action('删除'", "title.append(change)",
+                          "title.append(elem('span','device-model'", "const connect=action('连接'",
+                          "function runConnect(id)", "临时 ADB 端口：", "⇄ 切换", "✓ 当前选择",
+                          "row.prepend(adbStatusBadge("):
+            assert compact(forbidden) not in actual, forbidden
+        # Guard both the current view ports and the retired page spellings.
+        # Renaming a record or injection port must not weaken these UI contracts.
+        for record in ("device", "d"):
+            for projection in ("ui", "multiView"):
+                assert compact(f"title.append({projection}.projectionButton({record}))") not in actual
+            for forbidden in (
+                f"primary.append(elem('div','muted','Android '+{record}.android_version))",
+                f"primary.append(elem('div','muted','ADB 已连接：'+{record}.active_serial))",
+            ):
+                assert compact(forbidden) not in actual, forbidden
+        for selector in (".device-edit-icon{position:absolute;right:-3px;top:-5px;",
+                         ".device-port.device-projector{position:static;",
+                         ".device-title:hover .device-model-tooltip", ".device-title:focus-within .device-model-tooltip",
+                         "device-title{display:flex;align-items:center;flex-wrap:wrap",
+                         ".device-port.device-projector.adb-connected::before",
+                         ".device-port.device-projector.adb-failed::before",
+                         ".adb-badge.connected{background:#183e31", ".adb-badge.failed{background:#49252e"):
+            assert selector in css
         assert ".device-android{" not in css
-        assert "primary.append(elem('div','muted','Android '+d.android_version))" not in html
-        # Header indicator uses actual active_serial for successful ADB,
-        # selected_serial only to explain an explicit failed attempt.
-        assert "top.append(managementLabel,info);primary.append(top,addressList)" in html
-        assert "row.prepend(adbStatusBadge(d))" not in html
-        assert "addressRows.push(row)" in html
-        assert ".device-port.device-projector.adb-connected::before" in css
-        assert ".device-port.device-projector.adb-failed::before" in css
-        assert "const connected=d.status==='connected'&&Boolean(d.active_serial)" in html
-        assert "d.connect_failed===true||d.status==='error'" in html
-        assert "const serial=connected?d.active_serial:(failed?d.selected_serial:null)" in html
-        assert "primary.append(elem('div','muted','ADB 已连接：'+d.active_serial))" not in html
-        assert ".adb-badge.connected{background:#183e31" in css
-        assert ".adb-badge.failed{background:#49252e" in css
-        assert "low_latency:true" in multi_js
+        # Check the live port chip's actual ADB predicate, not the removed dead badge helper.
+        assert "d.status==='connected'&&d.connect_failed!==true&&Boolean(d.selected_serial)&&d.active_serial===d.selected_serial" in m
+        assert "d.connect_failed===true||d.status==='error'" in m
+        assert "constadbAddress=adbReady?d.active_serial:d.selected_serial" in m
+        assert "low_latency:true" in q
 
 
 def test_new_device_and_group_do_not_interrupt_another_live_session(monkeypatch, tmp_path):

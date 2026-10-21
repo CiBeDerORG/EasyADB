@@ -1,5 +1,5 @@
 // Device preferences are page-local; wire payload keys deliberately remain snake_case.
-export function createLiveQualitySettings({ documentRef, initialChoices = new Map() }) {
+export function createLiveQualitySettings({ documentRef }) {
   const make = (tag, cls = '', label) => {
     const element = documentRef.createElement(tag);
     if (cls) element.className = cls;
@@ -87,6 +87,8 @@ export function createLiveQualitySettings({ documentRef, initialChoices = new Ma
     select.value = String(value);
     return select;
   };
+  const makeQualityChoice = (key, value) =>
+    key === 'max_size' ? resolutionChoice(value) : choice(CUSTOM[key], value);
   const defaults = () => ({
     profile: 'custom',
     max_size: 960,
@@ -127,7 +129,7 @@ export function createLiveQualitySettings({ documentRef, initialChoices = new Ma
         (v.experimental_resolution ? ' / ' + v.dpi + ' DPI' : '')
       : (CHOICES.find((x) => x[0] === v.profile) || CHOICES[0])[1];
 
-  const choices = initialChoices;
+  const choices = new Map();
   const getChoice = (id) => {
     if (!choices.has(id)) choices.set(id, defaults());
     return choices.get(id);
@@ -169,8 +171,7 @@ export function createLiveQualitySettings({ documentRef, initialChoices = new Ma
             ? 'exp:' + previous.experimental_resolution
             : previous.max_size
           : previous[key];
-      const select =
-        key === 'max_size' ? resolutionChoice(selected) : choice(CUSTOM[key], selected);
+      const select = makeQualityChoice(key, selected);
       select.setAttribute('aria-label', d.name + ' ' + label);
       selectors[key] = select;
       field.append(select);
@@ -309,14 +310,12 @@ export function createLiveQualitySettings({ documentRef, initialChoices = new Ma
   }
 
   return {
-    choices,
     getChoice,
     setChoice,
     qualityPayload,
     resolutionExperiment,
     briefQuality,
-    makeChoice: choice,
-    makeResolutionChoice: resolutionChoice,
+    makeQualityChoice,
     openSettings,
   };
 }

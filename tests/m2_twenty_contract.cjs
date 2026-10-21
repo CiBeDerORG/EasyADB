@@ -1,82 +1,166 @@
 /* Production (not test-overridden) 20-session browser capacity contract. */
 'use strict';
-const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const {createLiveQualitySettings}=require('../web/features/live/live-quality-settings.js');
-const {createLiveBatchScheduler}=require('../web/features/live/live-batch-scheduler.js');
-const {createLiveCardView}=require('../web/features/live/live-card-view.js');
-class El{
- constructor(tag){this.tagName=tag;this.children=[];this.handlers={};this.value='';this.checked=false;this.disabled=false;this.textContent='';this.style={};this.open=false;}
- addEventListener(name,fn){(this.handlers[name]??=[]).push(fn);}
- append(...nodes){this.children.push(...nodes);}
- replaceChildren(...nodes){this.children=[];this.append(...nodes);}
- setAttribute(key,value){this[key]=value;}
- fire(event){for(const handler of this.handlers[event]||[])handler({preventDefault(){}});}
+const assert = require('node:assert/strict'),
+  fs = require('node:fs'),
+  vm = require('node:vm');
+const { createLiveQualitySettings } = require('../web/features/live/live-quality-settings.js');
+const { createLiveBatchScheduler } = require('../web/features/live/live-batch-scheduler.js');
+const { createLiveCardView } = require('../web/features/live/live-card-view.js');
+const { createLiveSessionController } = require('../web/features/live/live-session-controller.js');
+const featureModules = {
+  createLiveSessionController,
+  createLiveQualitySettings,
+  createLiveBatchScheduler,
+  createLiveCardView,
+};
+class El {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.handlers = {};
+    this.value = '';
+    this.checked = false;
+    this.disabled = false;
+    this.textContent = '';
+    this.style = {};
+    this.open = false;
+  }
+  addEventListener(name, fn) {
+    (this.handlers[name] ??= []).push(fn);
+  }
+  append(...nodes) {
+    this.children.push(...nodes);
+  }
+  replaceChildren(...nodes) {
+    this.children = [];
+    this.append(...nodes);
+  }
+  setAttribute(key, value) {
+    this[key] = value;
+  }
+  fire(event) {
+    for (const handler of this.handlers[event] || []) handler({ preventDefault() {} });
+  }
 }
-const frontendModuleListeners=[];
-const root={document:{createElement:tag=>new El(tag),addEventListener(type,fn){
- if(type==='easyadb:frontend-modules-ready')frontendModuleListeners.push(fn);
-}},EasyADBMetrics:{fmt:v=>String(v)}};
-root.window=root;
-const source=fs.readFileSync('web/m2-multi.js','utf8');
-vm.runInNewContext(source,root,{filename:'m2-multi.js'});
-assert.equal(frontendModuleListeners.length,1);
-assert.equal(root.EasyADBMulti.MAX_DEVICES,20,'browser production maximum is twenty');
-const server=fs.readFileSync('server/m2_live.py','utf8');
-assert.match(server,/MAX_LIVE_SESSIONS = 20/,'server authoritative maximum matches UI');
-const devices=Array.from({length:21},(_,index)=>{
- const n=index+1;
- return{id:'phone-'+n,name:'Phone '+n,status:'connected',port:5555,
- selected_serial:'10.10.10.'+n+':5555',active_serial:'10.10.10.'+n+':5555',connect_failed:false};
+const root = {
+  document: { createElement: (tag) => new El(tag) },
+  EasyADBMetrics: { fmt: (v) => String(v) },
+};
+root.window = root;
+const source = fs.readFileSync('web/m2-multi.js', 'utf8');
+vm.runInNewContext(source, root, { filename: 'm2-multi.js' });
+assert.equal(root.EasyADBMulti.MAX_DEVICES, 20, 'browser production maximum is twenty');
+const server = fs.readFileSync('server/m2_live.py', 'utf8');
+assert.match(server, /MAX_LIVE_SESSIONS = 20/, 'server authoritative maximum matches UI');
+const devices = Array.from({ length: 21 }, (_, index) => {
+  const n = index + 1;
+  return {
+    id: 'phone-' + n,
+    name: 'Phone ' + n,
+    status: 'connected',
+    port: 5555,
+    selected_serial: '10.10.10.' + n + ':5555',
+    active_serial: '10.10.10.' + n + ':5555',
+    connect_failed: false,
+  };
 });
-const selected=new Set(devices.map(d=>d.id)),launches=[];
-const picker=new El('div'),grid=new El('div'),startButton=new El('button'),
- stopButton=new El('button'),info=new El('div');
-const view=root.EasyADBMulti.create({picker,grid,startButton,stopButton,info,
- getDevices:()=>devices,getToken:()=> 'test-token',getManagementBusy:()=>false,
- getBatchSelection:()=>selected,onBatchSelectionRemove:id=>selected.delete(id),
- onChange:()=>{}});
+const selected = new Set(devices.map((d) => d.id)),
+  launches = [];
+const picker = new El('div'),
+  grid = new El('div'),
+  startButton = new El('button'),
+  stopButton = new El('button'),
+  info = new El('div');
+const view = root.EasyADBMulti.create({
+  picker,
+  grid,
+  startButton,
+  stopButton,
+  info,
+  featureModules,
+  getDevices: () => devices,
+  getToken: () => 'test-token',
+  getManagementBusy: () => false,
+  getBatchSelection: () => selected,
+  onBatchSelectionRemove: (id) => selected.delete(id),
+  onChange: () => {},
+});
 // Isolate the quota scheduler from video codec and mock-WebSocket transport.
 // Every open call reserves a unique card as the real open() does before init.
-view.open=function(device,_quality,onStartupSettled){assert(!this.cards.has(device.id));launches.push(device.id);
- this.cards.set(device.id,{id:device.id,state:'connecting',settleLaunch:onStartupSettled});};
-// The classic view is created before the deferred ES Module bootstrap.
-const earlierChoice=view.getChoice('phone-1');earlierChoice.max_fps=55;
-assert.equal(view.qualitySettings,null);
-frontendModuleListeners[0]({detail:{createLiveQualitySettings,createLiveBatchScheduler,createLiveCardView}});
+view.open = function (device, _quality, onStartupSettled) {
+  assert(!this.cards.has(device.id));
+  launches.push(device.id);
+  this.cards.set(device.id, { id: device.id, state: 'connecting', settleLaunch: onStartupSettled });
+};
+// Production modules exist before the first picker render and remain the sole owners.
+assert(view.cardView && view.batchScheduler && view.qualitySettings);
+assert.equal(view.selected, selected, 'projection and management share the identical selection');
+const earlierChoice = view.getChoice('phone-1');
+earlierChoice.max_fps = 55;
+const qualityOwner = view.qualitySettings,
+  schedulerOwner = view.batchScheduler,
+  cardView = view.cardView;
 view.updatePicker();
-assert.equal(view.getChoice('phone-1'),earlierChoice,'late injection preserves per-device choices');
-assert.equal(view.getChoice('phone-1').max_fps,55);
-assert(view.cardView&&view.batchScheduler&&view.qualitySettings);
-assert.equal(startButton.disabled,true,'21 selected devices cannot exceed remaining 20');
-selected.delete('phone-21');view.updatePicker();
-assert.equal(startButton.disabled,false,'any subset up to twenty can start');
-assert.match(startButton.textContent,/待新增 20 台 \/ 剩余 20 路/);
+assert.equal(view.getChoice('phone-1'), earlierChoice, 'redraw preserves per-device choices');
+assert.equal(view.getChoice('phone-1').max_fps, 55);
+assert.equal(view.qualitySettings, qualityOwner);
+assert.equal(view.batchScheduler, schedulerOwner);
+assert.equal(view.cardView, cardView);
+assert.equal(startButton.disabled, true, '21 selected devices cannot exceed remaining 20');
+assert.equal(view.start(), false, 'over-capacity selection cannot launch through the direct entry');
+assert.equal(view.cards.size, 0);
+assert.equal(launches.length, 0, 'invalid batch creates no partial sessions');
+selected.delete('phone-21');
+view.updatePicker();
+assert.equal(startButton.disabled, false, 'any subset up to twenty can start');
+assert.match(startButton.textContent, /待新增 20 台 \/ 剩余 20 路/);
 startButton.fire('click');
-assert(view.batchScheduler,'20-slot fixture exercises extracted scheduler');
-assert.equal(view.cards.size,3,'only three devices enter startup concurrently');
-assert.equal(view.launchQueue.length,17,'remaining 17 retain a queued place');
-for(let i=0;i<20;i++){
- const card=view.cards.get(launches[i]);
- assert(card,'every queued device starts after a previous session settles');
- card.settleLaunch();
+assert(view.batchScheduler, '20-slot fixture exercises extracted scheduler');
+assert.equal(view.cards.size, 3, 'only three devices enter startup concurrently');
+assert.equal(view.launchQueue.length, 17, 'remaining 17 retain a queued place');
+for (let i = 0; i < 20; i++) {
+  const card = view.cards.get(launches[i]);
+  assert(card, 'every queued device starts after a previous session settles');
+  card.settleLaunch();
 }
-assert.equal(view.cards.size,20);
-assert.equal(view.launchQueue.length,0);
-assert.equal(launches.length,20);
-assert.equal(new Set(launches).size,20,'each control session is uniquely reserved');
-assert.equal(startButton.disabled,true,'full pool cannot append');
-assert.equal(view.projectionButton(devices[20]).disabled,true,'21st port also blocks');
-selected.clear();selected.add('phone-21');view.updatePicker();
-assert.equal(startButton.disabled,true,'a newly selected 21st device cannot start');
-view.cards.get('phone-1').state='stopping';view.updatePicker();
-assert.equal(startButton.disabled,true,'stopping session retains its slot');
+assert.equal(view.cards.size, 20);
+assert.equal(view.launchQueue.length, 0);
+assert.equal(launches.length, 20);
+assert.equal(new Set(launches).size, 20, 'each control session is uniquely reserved');
+assert.equal(startButton.disabled, true, 'full pool cannot append');
+assert.equal(view.projectionButton(devices[20]).disabled, true, '21st port also blocks');
+const retainedCards = new Map(view.cards);
+assert.equal(view.startFor('phone-21'), false, 'full pool blocks the individual entry');
+assert.equal(view.start(), false, 'existing-only selection cannot recreate full-pool sessions');
+assert.equal(launches.length, 20);
+selected.clear();
+selected.add('phone-21');
+view.updatePicker();
+assert.equal(startButton.disabled, true, 'a newly selected 21st device cannot start');
+assert.equal(view.start(), false, 'the batch entry also rejects one addition to a full pool');
+assert.equal(view.cards.size, 20);
+assert.equal(launches.length, 20);
+view.cards.get('phone-1').state = 'stopping';
+view.updatePicker();
+assert.equal(startButton.disabled, true, 'stopping session retains its slot');
+assert.equal(view.startFor('phone-21'), false, 'a pending stop does not free capacity early');
+assert.equal(launches.length, 20);
 // Simulate only server-confirmed cleanup deleting a card, not merely clicking stop.
-view.cards.delete('phone-1');view.updatePicker();
-assert.equal(startButton.disabled,false,'one confirmed cleanup releases one capacity slot');
-assert.match(startButton.textContent,/待新增 1 台 \/ 剩余 1 路/);
+view.cards.delete('phone-1');
+view.updatePicker();
+assert.equal(startButton.disabled, false, 'one confirmed cleanup releases one capacity slot');
+assert.match(startButton.textContent, /待新增 1 台 \/ 剩余 1 路/);
 startButton.fire('click');
-assert.equal(view.cards.size,20);
-assert.equal(launches.at(-1),'phone-21');
-assert.equal(launches.length,21,'exactly one new session added; no bulk recreation');
-assert(!view.cards.has('phone-1'),'stopped session not implicitly restarted');
+assert.equal(view.cards.size, 20);
+assert.equal(launches.at(-1), 'phone-21');
+assert.equal(launches.length, 21, 'exactly one new session added; no bulk recreation');
+assert(!view.cards.has('phone-1'), 'stopped session not implicitly restarted');
+for (const [id, card] of retainedCards) {
+  if (id !== 'phone-1')
+    assert.equal(
+      view.cards.get(id),
+      card,
+      'one released slot leaves every surviving session intact',
+    );
+}
 console.log('Production multiview: 1..20 supported, 21st blocked, cleanup frees one slot: OK');

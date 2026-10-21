@@ -25,7 +25,7 @@ export class DeviceConfigurationController {
     this.onDeviceSaved = onDeviceSaved;
     this.onDeviceError = onDeviceError;
     this.onTempError = onTempError;
-    // Preserve a request started before the deferred module was installed.
+    // Initialize only an absent owner; supplied state remains authoritative.
     if (state.activeOperation === undefined) state.activeOperation = null;
   }
 

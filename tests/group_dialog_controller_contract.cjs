@@ -1,8 +1,6 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 
@@ -664,22 +662,9 @@ function routeSummary(record) {
     assert.equal(f.state.scanningGroupNames.size, 0);
   }
 
-  // The extracted renderer is identical to the retained pre-bootstrap view.
+  // Assert the production renderer's public DOM semantics for every scan status.
   {
-    const html = fs.readFileSync('web/index.html', 'utf8');
-    const start = html.indexOf('function renderDiscoveryResult(last)');
-    const end = html.indexOf('async function scanGroup(', start);
-    assert(start >= 0 && end > start, 'legacy presentation comparison requires its real page code');
     const elem = (tag, className, text) => new Element(tag, className, text);
-    const context = vm.createContext({ elem, frontendModules: null, groupDiscoveryView: null });
-    vm.runInContext(html.slice(start, end), context);
-    const legacyRender = vm.runInContext('renderDiscoveryResult', context);
-    const project = (element) => ({
-      tag: element.tagName,
-      className: element.className,
-      textContent: element.textContent,
-      children: element.children.map(project),
-    });
     const statusNames = [
       'updated',
       'unchanged',
@@ -710,16 +695,30 @@ function routeSummary(record) {
         })),
       },
     ];
-    for (const sample of samples) {
-      assert.deepEqual(
-        project(renderDiscoveryResult(sample, { elem })),
-        project(legacyRender(sample)),
-      );
-    }
+    const panels = samples.map(sample => renderDiscoveryResult(sample, {elem}));
+    assert.equal(panels[0].textContent, 'Discovery failed');
+    assert.equal(panels[0].className, 'group-discovery-status error');
+    assert.match(panels[1].children[1].textContent, /历史扫描尚无 IP:端口明细/);
+    assert.equal(panels[2].children[1].textContent, '未发现有效 ADB 端点。');
+    const populated = panels[3];
+    assert.match(populated.children[0].textContent, /本次发现：8 个 IP · 更新端口 1 台 · 未匹配 1 · 忙碌跳过 1 · 冲突 3/);
+    assert.equal(populated.children[1].className, 'discovery-legend');
+    const rows = populated.children[2].children;
+    assert.equal(rows.length, statusNames.length);
+    const labels = ['已匹配 · 端口已更新', '已匹配 · 端口不变', '未匹配本组设备',
+      '设备忙碌 · 未更新', 'IP 对应多台设备 · 未更新', '同 IP 多端口 · 未更新', '连接地址冲突 · 未更新', '未更新'];
+    rows.forEach((row, index) => {
+      assert.equal(row.className, 'discovery-endpoint ' + (index < 2 ? 'matched' : index === 2 ? 'unmatched' : 'skipped'));
+      assert.equal(row.children[0].textContent, '192.168.1.' + index + ':5555');
+      assert.equal(row.children.at(-1).textContent, labels[index]);
+      assert.equal(row.children.at(-1).className, 'discovery-label');
+      if (index % 2) assert.equal(row.children[1].textContent, 'Phone ' + index);
+      assert.equal(row.children.length, index % 2 ? 3 : 2);
+    });
   }
 
   console.log(
-    'Group dialog controller: form events, partial saves, confirmation, scan owners, stale async and equivalent discovery DOM: OK',
+    'Group dialog controller: form events, partial saves, confirmation, scan owners, stale async and complete discovery DOM: OK',
   );
 })().catch((error) => {
   console.error(error);

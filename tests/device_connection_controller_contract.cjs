@@ -1,8 +1,7 @@
 /* Real controller and page adapter; no browser, ADB, timers or network required. */
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
+const {createPageFixture} = require('./helpers/page-fixture.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const makeDevices = (count = 5) => Array.from({ length: count }, (_, index) => ({
@@ -215,94 +214,48 @@ function fixture(createController, initial = makeDevices()) {
     assert.equal(f.state.selectedDeviceIds.size, 0);
   }
 
-  // Execute real page bootstrap/load/bulk/token handlers with the production factory.
+  // Execute the complete production page; repeated mounting preserves its owners.
   {
-    const html = fs.readFileSync('web/index.html', 'utf8');
-    const main = fs.readFileSync('web/app/main.js', 'utf8');
-    assert(main.includes("from '../features/devices/device-connection-controller.js'"));
-    assert(main.includes('createDeviceConnectionController: deviceConnection.createDeviceConnectionController'));
-    const section = (first, last) => {
-      const start = html.indexOf(first), end = html.indexOf(last, start);
-      assert(start >= 0 && end > start, 'page boundary missing: ' + first);
-      return html.slice(start, end);
-    };
     const f = fixture(createDeviceConnectionController, makeDevices(2));
-    const events = new Map(), handlers = new Map();
-    let factoryCalls = 0, created, closes = 0;
-    const sandbox = {
-      AbortController,
-      document: {
-        getElementById(id) { return {
-          value: id === 'token' ? 'current-token' : '',
-          addEventListener(event, handler) { handlers.set(id + ':' + event, handler); },
-        }; },
-        addEventListener(event, handler) { events.set(event, handler); },
-      },
-      api: f.request, render() {}, message() {}, dismissToast() {},
-      runDeviceBatch() { assert.fail('injected path ran the legacy batch worker'); },
-      liveView: { isBusyFor: id => f.busy.has(id), closeAll() { closes++; } },
-    };
-    const setup = section('const $=id=>', 'const inventoryDrawer=') + `
-const toastItems=new Map();
-let frontendModules=null,deviceConnectionController=null;
-` + section("document.addEventListener('easyadb:frontend-modules-ready'", '// Browser requests') +
-      section('async function load(quiet=false)', 'function reset()') +
-      section('async function connectProgressively(', "$('bulkSelectAll').addEventListener") +
-      section("$('bulkConnect').addEventListener", "$('bulkDelete').addEventListener") + `
-multiView=liveView;
-globalThis.readState=()=>({devices,groups,loaded,loading,connectGeneration,connectProgressRevision,
- managementSelected,connectingDevices,connectSnapshots,connectionBatchBusy,connectController});
-`;
-    const context = vm.createContext(sandbox);
-    vm.runInContext(setup, context);
-    vm.runInContext(`
-managementSelected.add('2');connectingDevices.add('1');connectProgressRevision=7;
-connectSnapshots.set('1',{revision:7,device:{id:'1'}});
-connectController=new AbortController();connectionBatchBusy=true;
-`, context);
-    const before = sandbox.readState();
-    const detail = { createDeviceConnectionController(options) {
-      factoryCalls++;
-      created = createDeviceConnectionController(options);
-      return created;
-    } };
-    const bootstrap = events.get('easyadb:frontend-modules-ready');
-    bootstrap({ detail });
-    bootstrap({ detail });
-    assert.equal(factoryCalls, 1);
-    assert.equal(f.requests.length, 0, 'bootstrap does not implicitly load/connect');
-    assert.equal(created.state.pendingDeviceIds, before.connectingDevices);
-    assert.equal(created.state.resultSnapshots, before.connectSnapshots);
-    assert.equal(created.state.selectedDeviceIds, before.managementSelected);
-    assert.equal(created.state.abortController, before.connectController);
+    const page = await createPageFixture({request: f.request});
+    const state = page.state, created = page.controllers.connection;
+    state.selectedDeviceIds.add('2'); state.pendingDeviceIds.add('1'); state.resultRevision = 7;
+    state.resultSnapshots.set('1', {revision: 7, device: {id: '1'}});
+    state.abortController = new AbortController(); state.isBatchBusy = true;
+    assert.equal(page.bootstrap(), page.page);
+    assert.equal(page.bootstrap(), page.page);
+    assert.equal(page.controllers.connection, created);
+    assert.deepEqual(page.ports, {multi: 1, group: 1, lab: 1});
+    assert.equal(f.requests.length, 0, 'mounting does not implicitly load/connect');
+    assert.equal(created.state.pendingDeviceIds, state.pendingDeviceIds);
+    assert.equal(created.state.resultSnapshots, state.resultSnapshots);
+    assert.equal(created.state.selectedDeviceIds, state.selectedDeviceIds);
+    assert.equal(created.state.abortController, state.abortController);
     assert.equal(created.state.resultRevision, 7);
-    vm.runInContext('connectProgressRevision=8;', context);
-    assert.equal(created.state.resultRevision, 8, 'adapter reads live state, not a snapshot');
-    vm.runInContext(`
-connectingDevices.clear();connectSnapshots.clear();connectController=null;connectionBatchBusy=false;
-`, context);
-    f.busy.add('2');
-    const initialRun = handlers.get('load:click')();
+    state.resultRevision = 8;
+    assert.equal(created.state.resultRevision, 8, 'controller reads live page state');
+    state.pendingDeviceIds.clear(); state.resultSnapshots.clear(); state.abortController = null; state.isBatchBusy = false;
+    page.busy.add('2');
+    const initialRun = page.get('load').fire('click');
     await until(() => f.connections.length === 1);
-    assert.equal(sandbox.readState().loading, false, 'page lock ends before ADB I/O');
+    assert.equal(state.isLoading, false, 'page lock ends before ADB I/O');
     assert.equal(f.connections[0].id, '1', 'live devices are skipped');
-    f.finish(f.connections[0]);
-    await initialRun;
-    assert.deepEqual(Array.from(sandbox.readState().managementSelected), ['2']);
-    f.busy.clear();
-    vm.runInContext("managementSelected.add('1');", context);
-    const bulkRun = handlers.get('bulkConnect:click')();
+    f.finish(f.connections[0]); await initialRun;
+    assert.deepEqual([...state.selectedDeviceIds], ['2']);
+    page.busy.clear(); state.selectedDeviceIds.add('1');
+    const bulkRun = page.get('bulkConnect').fire('click');
     await until(() => f.connections.length === 3);
-    assert.equal(sandbox.readState().managementSelected.size, 0);
+    assert.equal(state.selectedDeviceIds.size, 0);
     for (const entry of f.connections.slice(1)) f.finish(entry);
     await bulkRun;
-    assert.deepEqual(Array.from(sandbox.readState().managementSelected).sort(), ['1', '2']);
-    assert.equal(sandbox.readState().connectionBatchBusy, false);
-    handlers.get('token:input')();
-    assert.equal(sandbox.readState().connectGeneration, 1);
-    assert.equal(sandbox.readState().devices.length, 0);
-    assert.equal(sandbox.readState().managementSelected.size, 0);
-    assert.equal(closes, 1, 'existing live cleanup callback remains intact');
+    assert.deepEqual([...state.selectedDeviceIds].sort(), ['1', '2']);
+    assert.equal(state.isBatchBusy, false);
+    await page.get('token').fire('input');
+    assert.equal(state.generation, 1);
+    assert.equal(state.devices.length, 0);
+    assert.equal(state.selectedDeviceIds.size, 0);
+    assert.equal(page.live.closeCount, 1, 'existing live cleanup callback remains intact');
+    page.dispose();
   }
   console.log('Device connection controller: concurrency, generation isolation, shared state and page integration: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

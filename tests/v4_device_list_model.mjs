@@ -45,10 +45,19 @@ assert.deepEqual(
   'display sorting cannot reorder batch input',
 );
 
-const page = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
-const main = readFileSync(new URL('../web/app/main.js', import.meta.url), 'utf8');
-assert(page.includes('frontendModules.deviceList.buildDeviceGroups(devices,groups)'));
-assert(page.includes('function buildLegacyDeviceGroups()'));
-assert(main.includes("import * as deviceList from '../features/devices/device-list-model.js'"));
-assert(main.includes('  deviceList,'));
-console.log('V4-05 injected device grouping model: OK');
+const view = readFileSync(
+  new URL('../web/features/devices/device-management-view.js', import.meta.url),
+  'utf8',
+);
+const pageController = readFileSync(
+  new URL('../web/app/page-controller.js', import.meta.url),
+  'utf8',
+);
+assert.match(
+  view,
+  /import \{ buildDeviceGroups, hasConnectedAdb \} from '\.\/device-list-model\.js'/,
+);
+assert.match(view, /buildDeviceGroups\(state\.devices, state\.groups\)/);
+assert.match(pageController, /renderDeviceManagement\(/);
+assert.doesNotMatch(pageController, /buildLegacyDeviceGroups|frontendModules/);
+console.log('V4-05 single device grouping model: OK');

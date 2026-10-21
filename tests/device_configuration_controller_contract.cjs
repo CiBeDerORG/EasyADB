@@ -1,8 +1,7 @@
 /* D3 configuration behavior and page integration; no network or real devices. */
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
+const {createPageFixture, findAll} = require('./helpers/page-fixture.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
@@ -400,76 +399,18 @@ async function checkMetadataInterleaving(factory) {
   }
 }
 
-class Element {
-  constructor(tag, className = '', textContent = '') {
-    Object.assign(this, {tagName: tag, className, textContent, children: [], events: new Map(),
-      attrs: {}, style: {}, value: '', checked: false, disabled: false, hidden: false, open: false, closeCount: 0});
-  }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = [...nodes]; }
-  setAttribute(name, value) { this.attrs[name] = value; }
-  addEventListener(name, handler) { this.events.set(name, handler); }
-  fire(name, event = {}) {
-    assert(this.events.has(name), 'missing page event: ' + name);
-    return this.events.get(name)({preventDefault() {}, target: this, ...event});
-  }
-  reset() {}
-  focus() { this.focused = true; }
-  showModal() { this.open = true; }
-  close() {
-    this.open = false; this.closeCount++;
-    if (this.events.has('close')) this.fire('close');
-  }
-}
-function findAll(root, predicate) {
-  return [...(predicate(root) ? [root] : []), ...root.children.flatMap(child => findAll(child, predicate))];
-}
-async function pageFixture(factory, shouldBootstrap = true) {
-  const {createDeviceConnectionController} = await import('../web/features/devices/device-connection-controller.js');
-  const {createDeviceManagementController} = await import('../web/features/devices/device-management-controller.js');
-  const model = await import('../web/features/devices/device-list-model.js');
-  const view = await import('../web/features/devices/device-list-view.js');
-  const html = fs.readFileSync('web/index.html', 'utf8');
-  const main = fs.readFileSync('web/app/main.js', 'utf8');
-  assert(main.includes("from '../features/devices/device-configuration-controller.js'"));
-  const section = (first, last) => {
-    const start = html.indexOf(first), end = html.indexOf(last, start);
-    assert(start >= 0 && end > start, 'missing page boundary: ' + first);
-    return html.slice(start, end);
-  };
-  const elements = new Map(), events = new Map(), requests = [], messages = [], busy = new Set();
+async function pageFixture() {
   const server = new Map(makeDevices().map(device => [device.id, device]));
   const behavior = {confirm: true, deferRequests: false, deferGets: false, onRequest: null};
-  const controllers = {}, factoryCounts = {configuration: 0, connection: 0, management: 0};
-  const elem = (tag, className = '', textContent = '') => new Element(tag, className, textContent);
-  const action = (label, callback, className = 'secondary') => {
-    const button = elem('button', className, label); button.addEventListener('click', callback); return button;
-  };
-  const live = {isBusyFor: id => busy.has(id), updatePicker() {}, closeAll() {},
-    projectionButton: device => elem('button', 'projector', device.name), openSettings() {}};
   const response = (entry, updateServer = true) => {
     const device = configurationResult(entry);
     if (updateServer) server.set(device.id, device);
     return {json: async () => device};
   };
-  const sandbox = {
-    AbortController, elem, action, LIVE: live,
-    document: {
-      getElementById(id) {
-        if (!elements.has(id)) {
-          const element = elem('div'); element.value = id === 'token' ? 'current-token' : '';
-          elements.set(id, element);
-        }
-        return elements.get(id);
-      },
-      createElement: tag => elem(tag),
-      addEventListener(name, callback) { events.set(name, callback); },
-    },
-    api: async (path, options = {}) => {
-      const deviceId = decodeURIComponent(path.split('/')[3] || '');
-      const entry = {path, deviceId, method: options.method || 'GET', body: options.body && JSON.parse(options.body),
-        signal: options.signal, device: {...server.get(deviceId)}, pending: deferred()};
-      requests.push(entry);
+  const f = await createPageFixture({devices: makeDevices(), confirm: () => behavior.confirm,
+    request: async (path, options, entry) => {
+      entry.deviceId = decodeURIComponent(path.split('/')[3] || '');
+      entry.device = {...server.get(entry.deviceId)};
       if (behavior.onRequest) await behavior.onRequest(entry);
       if (entry.method === 'GET') {
         if (behavior.deferGets) return entry.pending.promise;
@@ -478,84 +419,45 @@ async function pageFixture(factory, shouldBootstrap = true) {
       if (behavior.deferRequests) return entry.pending.promise;
       return response(entry);
     },
-    confirm: () => behavior.confirm, message: (text, kind) => messages.push({text, kind}), dismissToast() {},
-    hasConnectedAdb: model.hasConnectedAdb,
-    connectedFirst: (left, right) => Number(model.hasConnectedAdb(right)) - Number(model.hasConnectedAdb(left)),
-    openGroup() {}, scanGroup() {}, openFirstPair() {},
-  };
-  const setup = section('const $=id=>', 'const inventoryDrawer=') + '\nconst toastItems=new Map();\n' +
-    section('let frontendModules=', 'function toastSelected(') +
-    section("document.addEventListener('easyadb:frontend-modules-ready'", '// Browser requests') +
-    section('function buildLegacyDeviceGroups()', 'function select(id)') +
-    section('function render(){', 'function openGroup(') +
-    section('function beginConfigurationOperation(){', '// Each connect uses') +
-    section("$('token').addEventListener('input'", "$('bulkSelectAll').addEventListener") +
-    section("$('closeDialog').addEventListener", "$('refreshAll').addEventListener") + `
-multiView=LIVE;
-globalThis.readState=()=>({devices,groups,selected,editing,editingTemp,loaded,loading,connectGeneration,
- managementSelected,connectingDevices,connectionBatchBusy,configurationOperation});
-globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
-globalThis.openDevice=id=>openModal(id);
-globalThis.openTemp=id=>openTempEditor(devices.find(device=>device.id===id));
-globalThis.runRoute=(id,route)=>switchRoute(id,route);
-globalThis.removeTemp=id=>removeTempAddress(id);
-globalThis.setConnectionBatch=value=>{connectionBatchBusy=value;};
-`;
-  const context = vm.createContext(sandbox);
-  vm.runInContext(setup, context, {filename: 'device-configuration-page.js'});
-  sandbox.installRows(makeDevices());
-  const detail = {
-    deviceList: model, deviceListView: view,
-    createDeviceConnectionController(options) {
-      factoryCounts.connection++; controllers.connection = createDeviceConnectionController(options); return controllers.connection;
-    },
-    createDeviceManagementController(options) {
-      factoryCounts.management++; controllers.management = createDeviceManagementController(options); return controllers.management;
-    },
-    createDeviceConfigurationController(options) {
-      factoryCounts.configuration++; controllers.configuration = factory(options); return controllers.configuration;
-    },
-  };
-  const bootstrap = () => events.get('easyadb:frontend-modules-ready')({detail});
-  if (shouldBootstrap) { bootstrap(); bootstrap(); }
-  return {elements, requests, messages, busy, server, behavior, controllers, factoryCounts, sandbox, bootstrap, response,
-    finish(entry) { entry.pending.resolve(response(entry)); }};
+  });
+  assert.equal(f.bootstrap(), f.page);
+  return {...f, server, behavior, response, finish(entry) { entry.pending.resolve(response(entry)); }};
 }
 
 async function checkPageActions(factory) {
-  const f = await pageFixture(factory), state = () => f.sandbox.readState();
-  assert.deepEqual(f.factoryCounts, {configuration: 1, connection: 1, management: 1});
+  const f = await pageFixture(factory), state = () => f.state;
+  assert.deepEqual(f.ports, {multi: 1, group: 1, lab: 1});
   assert.equal(f.requests.length, 0, 'real page bootstrap remains passive');
   assert.equal(f.controllers.configuration.state.devices, state().devices);
   assert.equal(f.controllers.connection.state.devices, state().devices);
-  const selection = state().managementSelected; selection.add('2');
+  const selection = state().selectedDeviceIds; selection.add('2');
   assert.equal(f.controllers.management.state.selectedDeviceIds, selection);
-  state().connectingDevices.add('2'); f.sandbox.setConnectionBatch(true);
-  f.sandbox.openDevice(null);
+  state().pendingDeviceIds.add('2'); f.state.isBatchBusy = true;
+  f.controllers.deviceDialogs.openDevice(null);
   assert.equal(f.elements.get('deviceDialog').open, true);
   for (const [id, value] of Object.entries({name: ' Raw Name ', group: ' Raw Group ', ip: ' 10.9.9.9 ', port: '6001'})) {
-    f.sandbox.document.getElementById(id).value = value;
+    f.get(id).value = value;
   }
   assert.equal(await f.elements.get('form').fire('submit'), true);
   assert.deepEqual(f.requests.map(entry => [entry.path, entry.method]), [
     ['/api/devices', 'POST'], ['/api/devices', 'GET'], ['/api/groups', 'GET'],
   ]);
   assert.deepEqual(f.requests[0].body, {name: ' Raw Name ', group_name: ' Raw Group ', ip: '10.9.9.9', port: 6001});
-  assert.equal(state().selected, 'new');
+  assert.equal(state().selectedDeviceId, 'new');
   assert.equal(f.elements.get('deviceDialog').open, false);
   assert.deepEqual([...selection], ['2']);
   const editButton = findAll(f.elements.get('devices'), node => node.title === '编辑 Phone 1')[0];
   assert(editButton); editButton.fire('click');
-  assert.equal(state().editing, '1');
+  assert.equal(state().editingDeviceId, '1');
   assert.equal(f.elements.get('name').value, 'Phone 1');
   f.elements.get('name').value = 'Edited Phone 1';
   assert.equal(await f.elements.get('form').fire('submit'), true);
   assert.equal(f.requests[3].path, '/api/devices/1');
   assert.equal(f.requests[3].method, 'PUT');
-  assert.equal(state().selected, '1');
-  assert.equal(state().connectionBatchBusy, true, 'D3 does not take ownership of the D1 queue');
-  state().connectingDevices.clear(); f.sandbox.setConnectionBatch(false);
-  f.sandbox.openTemp('1');
+  assert.equal(state().selectedDeviceId, '1');
+  assert.equal(state().isBatchBusy, true, 'D3 does not take ownership of the D1 queue');
+  state().pendingDeviceIds.clear(); f.state.isBatchBusy = false;
+  f.controllers.deviceDialogs.openTemp('1');
   f.elements.get('tempIp').value = ' 10.9.8.7 ';
   f.elements.get('tempSharedPort').value = '6666';
   const beforeTemp = f.requests.length;
@@ -566,10 +468,10 @@ async function checkPageActions(factory) {
   assert(f.requests.slice(0, beforeTemp + 1).every(entry => !entry.path.endsWith('/connect')));
   f.behavior.confirm = false;
   const beforeRemove = f.requests.length;
-  assert.equal(await f.sandbox.removeTemp('1'), false);
+  assert.equal(await f.controllers.configuration.removeTempAddress('1'), false);
   assert.equal(f.requests.length, beforeRemove);
   f.behavior.confirm = true;
-  assert.equal(await f.sandbox.removeTemp('1'), true);
+  assert.equal(await f.controllers.configuration.removeTempAddress('1'), true);
   assert.deepEqual(f.requests[beforeRemove].body, {ip: null, port: null});
   const routeButton = findAll(f.elements.get('devices'), node =>
     node.className === 'address-target' && node.textContent === '内网 IP：192.168.0.1')[0];
@@ -581,8 +483,9 @@ async function checkPageActions(factory) {
     ['/api/devices', 'GET'], ['/api/groups', 'GET'],
   ]);
   assert.deepEqual([...selection], ['2']);
-  assert.equal(state().loading, false);
+  assert.equal(state().isLoading, false);
   assert.equal(state().configurationOperation, null);
+  f.dispose();
 }
 
 async function checkPageInvalidation(factory) {
@@ -592,39 +495,40 @@ async function checkPageInvalidation(factory) {
       f.behavior.deferRequests = true;
       let oldRun;
       if (scenario === 'save') {
-        f.sandbox.openDevice('1');
+        f.controllers.deviceDialogs.openDevice('1');
         oldRun = f.elements.get('form').fire('submit');
       } else if (scenario === 'temp') {
-        f.sandbox.openTemp('1');
+        f.controllers.deviceDialogs.openTemp('1');
         oldRun = f.elements.get('tempForm').fire('submit');
-      } else oldRun = f.sandbox.runRoute('1', 'lan');
-      const oldRequest = f.requests[0], oldOperation = f.sandbox.readState().configurationOperation;
-      assert(oldOperation, 'legacy mutation establishes shared operation ownership');
+      } else oldRun = f.controllers.configuration.switchRoute('1', 'lan');
+      const oldRequest = f.requests[0], oldOperation = f.state.configurationOperation;
+      assert(oldOperation, 'the real page mutation establishes shared operation ownership');
       f.bootstrap();
       assert.equal(f.controllers.configuration.state.activeOperation, oldOperation);
       f.elements.get('token').value = 'replacement-token';
       f.elements.get('token').fire('input');
       assert.equal(oldRequest.signal.aborted, true);
-      assert.equal(f.sandbox.readState().loading, false);
-      f.sandbox.installRows(makeDevices());
-      f.sandbox.openDevice('2');
-      f.sandbox.openTemp('2');
-      const newRows = f.sandbox.readState().devices;
+      assert.equal(f.state.isLoading, false);
+      f.installRows(makeDevices());
+      f.controllers.deviceDialogs.openDevice('2');
+      f.controllers.deviceDialogs.openTemp('2');
+      const newRows = f.state.devices;
       const newRun = f.elements.get('form').fire('submit');
-      const newOperation = f.sandbox.readState().configurationOperation;
+      const newOperation = f.state.configurationOperation;
       const counts = [f.messages.length, f.elements.get('deviceDialog').closeCount, f.elements.get('tempDialog').closeCount];
       if (shouldReject) oldRequest.pending.reject(Error('old configuration failed'));
       else oldRequest.pending.resolve(f.response(oldRequest, false));
       await oldRun;
-      assert.equal(f.sandbox.readState().devices, newRows);
-      assert.equal(f.sandbox.readState().configurationOperation, newOperation);
-      assert.equal(f.sandbox.readState().loading, true);
+      assert.equal(f.state.devices, newRows);
+      assert.equal(f.state.configurationOperation, newOperation);
+      assert.equal(f.state.isLoading, true);
       assert.deepEqual([f.messages.length, f.elements.get('deviceDialog').closeCount, f.elements.get('tempDialog').closeCount], counts,
-        'old legacy result cannot close replacement dialogs or overwrite messages');
+        'old result cannot close replacement dialogs or overwrite messages');
       assert.equal(f.requests.length, 2, 'stale route request cannot issue a connection using new credentials');
       f.finish(f.requests[1]);
       assert.equal(await newRun, true);
-      assert.equal(f.sandbox.readState().loading, false);
+      assert.equal(f.state.isLoading, false);
+      f.dispose();
     }
   }
 }
@@ -632,13 +536,13 @@ async function checkPageInvalidation(factory) {
 async function checkPageMetadataInterleaving(factory) {
   const f = await pageFixture(factory), initial = makeDevices();
   f.behavior.deferRequests = true; f.behavior.deferGets = true;
-  const run = f.sandbox.runRoute('1', 'lan');
+  const run = f.controllers.configuration.switchRoute('1', 'lan');
   const routeRequest = f.requests[0], target = configurationResult(routeRequest);
   const firstLoad = f.controllers.connection.loadDevices(true);
   const firstLists = f.requests.filter(entry => entry.method === 'GET');
   for (const entry of firstLists) entry.pending.resolve({json: async () => entry.path === '/api/groups' ? [] : [target, initial[1]]});
   assert.equal(await firstLoad, true);
-  assert.equal(f.sandbox.readState().devices[0].selected_route, 'lan');
+  assert.equal(f.state.devices[0].selected_route, 'lan');
   f.finish(routeRequest);
   await until(() => f.requests.some(entry => entry.path.endsWith('/connect')));
   const connectRequest = f.requests.find(entry => entry.path.endsWith('/connect'));
@@ -646,14 +550,15 @@ async function checkPageMetadataInterleaving(factory) {
   const secondLists = f.requests.filter(entry => entry.method === 'GET').slice(2);
   for (const entry of secondLists) entry.pending.resolve({json: async () => entry.path === '/api/groups' ? [] : initial});
   assert.equal(await secondLoad, true);
-  assert.equal(f.sandbox.readState().devices[0].selected_route, 'mesh');
+  assert.equal(f.state.devices[0].selected_route, 'mesh');
   f.behavior.deferGets = false;
   f.finish(connectRequest);
   assert.equal(await run, true, 'real D1 list reads can interleave without cancelling the explicit route operation');
-  assert.equal(f.sandbox.readState().devices[0].selected_route, 'lan');
-  assert.equal(f.sandbox.readState().devices[0].status, 'connected');
+  assert.equal(f.state.devices[0].selected_route, 'lan');
+  assert.equal(f.state.devices[0].status, 'connected');
   assert.equal(f.requests.filter(entry => entry.path.endsWith('/connect')).length, 1);
-  assert.equal(f.sandbox.readState().loading, false);
+  assert.equal(f.state.isLoading, false);
+  f.dispose();
 }
 
 (async () => {

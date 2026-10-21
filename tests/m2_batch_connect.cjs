@@ -1,53 +1,60 @@
-/* Exercise the real parallel batch worker from EasyADB's inline UI script.
- * Assert simultaneous launch, bounded concurrency, isolated failures and
- * per-index result aggregation, not just source-code grep matching.
- */
+/* Production page and D1 controller: four concurrent connections, no copied worker. */
 'use strict';
-const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const vm=require('node:vm');
-const html=fs.readFileSync('web/index.html','utf8');
-const start=html.indexOf('async function runDeviceBatch(');
-const end=html.indexOf('\nfunction select(id)',start);
-assert(start>=0&&end>start,'parallel helper is present in the actual page');
-const worker=vm.runInNewContext(html.slice(start,end)+'\nrunDeviceBatch',{Promise,Array,Math});
-const requests=[],pending=new Map(),progress=[];
-const items=['A','B','C','D','E','F'];
-let active=0,maxActive=0;
-const task=id=>{
- requests.push(id);active++;maxActive=Math.max(maxActive,active);
- return new Promise((resolve,reject)=>pending.set(id,{
-  done(value,error){
-   active--;if(error)reject(new Error(error));else resolve(value);
-  }
- }));
-};
-(async()=>{
- const run=worker(items,task,(done,total,item)=>progress.push([done,total,item]),4);
- assert.deepEqual(requests,['A','B','C','D'],'four requests issued immediately');
- assert.equal(active,4,'no serial ADB connect loop');
- pending.get('C').done(null,'offline');await new Promise(resolve=>setImmediate(resolve));
- assert(requests.includes('E'),'E starts as soon as failed C settles; A remains pending');
- pending.get('B').done('ok-B');await new Promise(resolve=>setImmediate(resolve));
- assert(requests.includes('F'),'F starts without waiting for slow A');
- for(const id of ['A','D','E','F'])pending.get(id).done('ok-'+id);
- const result=await run;
- assert.equal(result.length,6);
- assert.equal(result[2].status,'rejected');
- assert.match(result[2].reason.message,/offline/);
- for(const i of [0,1,3,4,5])assert.equal(result[i].status,'fulfilled');
- assert.equal(maxActive,4);
- assert.equal(progress.length,6);
- assert.equal(progress.at(-1)[0],6);
- assert.equal(active,0);
- const connectBody=html.slice(html.indexOf("$('bulkConnect').addEventListener"),
-  html.indexOf("$('bulkDelete').addEventListener"));
- assert.match(connectBody,/await connectProgressively\(candidates,skipped,true,'批量连接',connectGeneration\)/);
- const handler=html.slice(html.indexOf('async function connectProgressively('),
-  html.indexOf('async function loadAndConnect('));
- assert.match(handler,/await runDeviceBatch\(candidates,async d=>/);
- assert.match(handler,/\/'\+encodeURIComponent\(d.id\)\+'\/connect'/);
- assert.match(handler,/connectingDevices\.delete\(d\.id\)/);
- assert.doesNotMatch(handler,/loading=true/,'no global loading lock during asynchronous ADB connections');
- console.log('Parallel batch connect: 4 simultaneous, next-on-settle, failure isolated: OK');
-})().catch(e=>{console.error(e);process.exitCode=1;});
+const assert = require('node:assert/strict');
+const {createPageFixture, deferred, until} = require('./helpers/page-fixture.cjs');
+
+(async () => {
+  const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const rows = ids.map((id, index) => ({id, name: id, ip: '10.0.0.' + (index + 1), port: 5555,
+    selected_route: 'mesh', selected_serial: '10.0.0.' + (index + 1) + ':5555',
+    active_serial: null, status: 'idle'}));
+  const server = new Map(rows.map(row => [row.id, row]));
+  const pending = new Map(), requested = [];
+  let active = 0, maxActive = 0;
+  const f = await createPageFixture({devices: rows, request: async (path, options) => {
+    if (options.method !== 'POST') return {json: async () => path === '/api/devices' ? [...server.values()] : []};
+    assert(path.endsWith('/connect'));
+    const id = decodeURIComponent(path.split('/')[3]), entry = deferred();
+    requested.push(id); active++; maxActive = Math.max(maxActive, active);
+    pending.set(id, entry);
+    try {return await entry.promise;} finally {active--;}
+  }});
+  try {
+    for (const id of ids) f.state.selectedDeviceIds.add(id);
+    f.page.render();
+    const run = f.get('bulkConnect').click();
+    assert.deepEqual(requested, ['A', 'B', 'C', 'D']);
+    assert.equal(active, 4);
+    assert.equal(f.state.isLoading, false, 'ADB work does not impose a global loading lock');
+    const finish = (id, failed = false) => {
+      const row = server.get(id);
+      server.set(id, {...row, status: failed ? 'error' : 'connected',
+        active_serial: failed ? null : row.selected_serial, connect_failed: failed});
+      if (failed) pending.get(id).reject(Error('offline'));
+      else pending.get(id).resolve({json: async () => server.get(id)});
+    };
+    finish('C', true);
+    await until(() => requested.includes('E'));
+    assert(f.state.pendingDeviceIds.has('A'));
+    assert(!f.state.pendingDeviceIds.has('C'));
+    assert.equal(f.state.devices.find(row => row.id === 'C').last_error, 'offline');
+    finish('B');
+    await until(() => requested.includes('F'));
+    assert(f.state.pendingDeviceIds.has('A'), 'F starts while slow A is still pending');
+    assert(f.state.selectedDeviceIds.has('B'));
+    for (const id of ['A', 'D', 'E', 'F']) finish(id);
+    await run;
+    assert.deepEqual(f.state.devices.map(row => row.id), ids, 'responses stay associated with their device');
+    assert.equal(f.state.devices.find(row => row.id === 'C').status, 'error');
+    assert.deepEqual([...f.state.selectedDeviceIds].sort(), ['A', 'B', 'D', 'E', 'F']);
+    assert.equal(f.messages.filter(message => message.text.includes('已完成设备可立即操作')).length, 6);
+    assert(f.messages.some(message => message.text.includes('已完成 6 / 6')));
+    assert.equal(maxActive, 4);
+    assert.equal(active, 0);
+    assert.equal(f.state.pendingDeviceIds.size, 0);
+    assert.equal(f.state.isBatchBusy, false);
+    assert.equal(f.requests.filter(entry => entry.method === 'GET').length, 2,
+      'one final metadata refresh after all per-device results');
+  } finally {f.dispose();}
+  console.log('Actual page batch connect: four concurrent, next on settle, isolated failure and correct identities: OK');
+})().catch(error => {console.error(error); process.exitCode = 1;});

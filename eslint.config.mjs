@@ -1,9 +1,9 @@
-// V4-01: the legacy browser IIFE scripts are explicitly grandfathered.
+// Six unique legacy implementations remain explicitly scoped exceptions.
+// The migrated MultiView keeps its public URL but follows the same quality rules.
 const legacyScripts = [
   'web/display-lab.js',
   'web/m2-group.js',
   'web/m2-metrics.js',
-  'web/m2-multi.js',
   'web/m2-touch.js',
   'web/m2-traffic.js',
   'web/m2-webrtc.js',

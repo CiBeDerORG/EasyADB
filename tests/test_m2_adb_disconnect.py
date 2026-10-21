@@ -229,12 +229,14 @@ def test_manual_stop_never_triggers_an_extra_adb_connection_check(monkeypatch, t
 
 
 def test_browser_refreshes_saved_status_only_for_confirmed_adb_loss():
+    import re
     from pathlib import Path
     root = Path(__file__).resolve().parents[1] / "web"
-    page = (root / "index.html").read_text()
+    page = (root / "app/page-controller.js").read_text()
     multi = (root / "m2-multi.js").read_text()
-    assert "onDeviceDisconnected:()=>load(true)" in page
-    assert "if(m.code==='adb_disconnected')" in multi
-    assert "this.onDeviceDisconnected?.(card.id)" in multi
-    assert "/connect" not in multi  # no auto-connect API call in the per-card controller
+    compact = lambda value: re.sub(r"\s+", "", value)
+    assert "onDeviceDisconnected:()=>loadDevices(true)" in compact(page)
+    assert "if(m.code==='adb_disconnected')" in compact(multi)
+    assert "this.onDeviceDisconnected?.(card.id)" in compact(multi)
+    assert "/connect" not in multi  # no auto-connect call in the per-card controller
 

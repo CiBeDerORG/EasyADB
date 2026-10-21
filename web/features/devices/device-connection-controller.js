@@ -2,9 +2,8 @@ import { hasConnectedAdb } from './device-list-model.js';
 
 const CONNECT_CONCURRENCY = 4;
 
-// The page adapter exposes its existing state through accessors. Do not copy it:
-// a bootstrap during an in-flight legacy request must keep the same generation,
-// pending IDs, selection and result revisions. No DOM, live sessions or polling.
+// Share the page's generation, pending IDs, selection and result revisions.
+// This controller owns ADB loading/connection, without DOM, live sessions or polling.
 export class DeviceConnectionController {
   constructor({ state, request, getToken, isDeviceBusy, onChange, notify }) {
     this.state = state;

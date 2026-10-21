@@ -176,27 +176,29 @@ def test_live_ws_requires_opt_in_and_acknowledges_only_valid_input(monkeypatch, 
 
 
 def test_keyboard_ui_is_explicit_and_never_global_key_capture():
-    root = Path(__file__).resolve().parents[1]
-    html = (root / "web" / "index.html").read_text()
-    css = (root / "web" / "assets" / "legacy-page.css").read_text()
-    multi = (root / "web" / "m2-multi.js").read_text()
-    assert "make('form','multi-text-panel')" in multi
-    assert "const input=make('input'),submit=make('button','','发送')" in multi
-    assert "const textButton=icon('fab-text'" in multi
-    assert "const main=make('button','fab-main'" in multi
-    assert "card.menuOpen=true" in multi and "root.setTimeout" in multi
-    assert "for(const b of nav.slice(0,3))b.hidden=!card.enabled" not in multi
-    assert "else fab.append(btn);" in multi
-    assert "ws.send(JSON.stringify({type:'control_enable',session_id:card.session}))" in multi
-    assert "const toggle=icon('fab-remote'" not in multi
+    import re
+    root = Path(__file__).resolve().parents[1] / "web"
+    css = (root / "assets/legacy-page.css").read_text()
+    multi = (root / "m2-multi.js").read_text()
+    assembly = (root / "app/page-controller.js").read_text()
+    dialogs = (root / "features/devices/device-dialog-controller.js").read_text()
+    compact = lambda value: re.sub(r",(?=[)\]}])", "", re.sub(r"\s+", "", value))
+    code = compact(multi)
+    for fragment in ("make('form','multi-text-panel')",
+                     "const input=make('input'),submit=make('button','','发送')",
+                     "const textButton=icon('fab-text'", "const main=make('button','fab-main'",
+                     "card.menuOpen=true", "root.setTimeout", "else fab.append(btn);",
+                     "ws.send(JSON.stringify({type:'control_enable',session_id:card.session}))",
+                     "logPanel.hidden=false", "logPanel.hidden=true", "['recents','最近任务']",
+                     "m.type==='input_accepted'", "this.sendInput(card,'input_text',{text:value})",
+                     "this.sendInput(card,'nav_key',{key})"):
+        assert compact(fragment) in code, fragment
+    assert "for(constbofnav.slice(0,3))b.hidden=!card.enabled" not in code
+    assert "consttoggle=icon('fab-remote'" not in code
     assert ".multi-fab .fab-nav-back{top:48px;right:0}" in css
     assert ".multi-fab .fab-nav-home{top:94px;right:0}" in css
     assert ".multi-fab .fab-nav-recents{top:140px;right:0}" in css
-    assert "logPanel.hidden=false" in multi and "logPanel.hidden=true" in multi
-    assert "['recents','最近任务']" in multi
-    assert "m.type==='input_accepted'" in multi
-    assert "this.sendInput(card,'input_text',{text:value})" in multi
-    assert "this.sendInput(card,'nav_key',{key})" in multi
-    assert "document.addEventListener('keydown'" not in html + multi
-    assert "window.addEventListener('keydown'" not in html + multi
+    actual = compact(multi + assembly + dialogs)
+    for owner in ("document", "window", "documentRef", "windowRef", "root", "root.document"):
+        assert owner + ".addEventListener('keydown'" not in actual
 

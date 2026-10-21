@@ -169,13 +169,14 @@ def test_slow_video_websocket_write_does_not_pin_the_worker(monkeypatch, tmp_pat
 
 
 def test_page_replies_to_existing_diagnostics_without_independent_timer():
+    import re
     from pathlib import Path
     root = Path(__file__).resolve().parents[1] / "web"
-    page = (root / "index.html").read_text()
+    page = (root / "app/page-controller.js").read_text()
     multi = (root / "m2-multi.js").read_text()
-    assert "type:'heartbeat',session_id:card.session" in multi
-    assert "window.addEventListener('pagehide'" in page
-    assert "window.addEventListener('offline'" in page
-    assert "multiView.closeAll()" in page
-    assert "setInterval(" not in page + multi
+    compact = lambda value: re.sub(r"\s+", "", value)
+    assert "type:'heartbeat',session_id:card.session" in compact(multi)
+    assert "['beforeunload','pagehide','offline']" in compact(page)
+    assert "windowRef.addEventListener(eventName,()=>multiView.closeAll())" in compact(page)
+    assert "setInterval(" not in compact(page + multi)
 

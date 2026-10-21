@@ -1,102 +1,71 @@
-/* Real progressive controller: one device becoming ready cannot wait for slow peers. */
+/* Actual first-load and bulk handlers unlock completed phones before slow peers. */
 'use strict';
-const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const html=fs.readFileSync('web/index.html','utf8');
-const worker=html.slice(html.indexOf('async function runDeviceBatch('),html.indexOf('function select(id)',html.indexOf('async function runDeviceBatch(')));
-const connect=html.slice(html.indexOf('async function connectProgressively('),html.indexOf('async function loadAndConnect('));
-assert.match(connect,/await runDeviceBatch\(candidates,async d=>/);
-assert.match(connect,/connectingDevices\.delete\(d\.id\)/);
-assert.match(connect,/applyConnectionResult\(d,result\)/);
-assert.doesNotMatch(connect,/loading=true/);
-const serial=id=>'10.10.12.'+id+':5555';
-const devices=Array.from({length:5},(_,i)=>{
- const id=String(i+1);return {id,name:'Phone '+id,selected_serial:serial(id),
-  active_serial:null,status:'idle',connect_failed:false};
+const assert = require('node:assert/strict');
+const {createPageFixture, deferred, until, findAll} = require('./helpers/page-fixture.cjs');
+const serial = id => '10.10.12.' + id + ':5555';
+const makeDevices = () => Array.from({length: 5}, (_, index) => {
+  const id = String(index + 1);
+  return {id, name: 'Phone ' + id, ip: '10.10.12.' + id, port: 5555, selected_route: 'mesh',
+    selected_serial: serial(id), active_serial: null, status: 'idle', connect_failed: false};
 });
-const pending=new Map(),requested=[],rendered=[],messages=[];
-const sandbox={Promise,Array,Set,Map,Math,AbortController,URL,encodeURIComponent,
- api(path,opts){
-  const id=decodeURIComponent(path.split('/')[3]);
-  requested.push(id);
-  return new Promise((resolve,reject)=>{
-   const entry={resolve:state=>resolve({json:async()=>({...devices.find(d=>d.id===id),
-    status:state,active_serial:state==='connected'?serial(id):null,
-    connect_failed:state!=='connected'})}),reject};
-   pending.set(id,entry);
-   opts.signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true});
-  });
- },
- render(){rendered.push({
-  ready:sandbox.__state().devices.filter(d=>d.status==='connected').map(d=>d.id),
-  pending:[...sandbox.__state().connectingDevices],
-  selection:[...sandbox.__state().managementSelected],
-  loading:sandbox.__state().loading
- });},
- message:x=>messages.push(x),
- load:async()=>true
-};
-const setup=`
-let devices=INITIAL_DEVICES.map(d=>({...d})),loading=false;
-const managementSelected=new Set(),connectingDevices=new Set(),connectSnapshots=new Map();
-let connectionBatchBusy=true,connectGeneration=0,connectProgressRevision=0,connectController=null;
-const multiView={isBusyFor:()=>false};
-function applyConnectionResult(d,r){
- const existing=devices.find(x=>x.id===d.id);
- const fresh=r.status==='fulfilled'?r.value:{...existing,status:'error',connect_failed:true};
- ++connectProgressRevision;
- connectSnapshots.set(d.id,{revision:connectProgressRevision,device:fresh});
- devices=devices.map(x=>x.id===d.id?fresh:x);
- return hasConnectedAdb(fresh);
-}
-function deviceLocked(id){return loading||connectingDevices.has(id);}
-`+worker+'\n'+connect+`
-globalThis.__state=()=>({devices,loading,connectingDevices,managementSelected,connectionBatchBusy});
-globalThis.__run=(select=false)=>connectProgressively(devices.slice(),0,select,'测试连接',connectGeneration);
-globalThis.__reset=()=>{
- devices=INITIAL_DEVICES.map(d=>({...d}));managementSelected.clear();
- connectingDevices.clear();connectSnapshots.clear();
- connectionBatchBusy=true;
-};
-`;
-sandbox.INITIAL_DEVICES=devices;
-vm.runInNewContext(setup,sandbox,{filename:'progressive-connect.js'});
-const tick=()=>new Promise(r=>setImmediate(r));
-async function settle(id,status){pending.get(id).resolve(status);await tick();await tick();}
-(async()=>{
- let task=sandbox.__run();
- assert.deepEqual(requested,['1','2','3','4'],'4 ADB requests launch at once');
- assert.deepEqual([...sandbox.__state().connectingDevices],['1','2','3','4','5']);
- assert.equal(sandbox.__state().loading,false,'no global loading lock while connecting');
- await settle('2','connected');
- assert(requested.includes('5'),'a fifth device launches when B finishes while A is pending');
- assert(!sandbox.__state().connectingDevices.has('2'));
- assert(sandbox.__state().connectingDevices.has('1'));
- assert.equal(sandbox.__state().devices.find(d=>d.id==='2').status,'connected');
- assert.equal(rendered.at(-1).loading,false);
- assert.deepEqual(rendered.at(-1).ready,['2']);
- assert.equal(rendered.at(-1).pending.includes('1'),true);
- await settle('3','disconnected');
- assert.equal(sandbox.__state().devices.find(d=>d.id==='3').connect_failed,true);
- await Promise.all(['1','4','5'].map(id=>settle(id,'connected')));
- await task;
- assert.equal(sandbox.__state().connectionBatchBusy,false);
- assert.equal(sandbox.__state().connectingDevices.size,0);
- assert.equal(sandbox.__state().devices.filter(d=>d.status==='connected').length,4);
- assert.equal(sandbox.__state().managementSelected.size,0,'first-load does not alter manual selection');
- assert(messages.some(x=>x.includes('已完成设备可立即操作')));
- // Bulk connection only checks successes progressively; failure stays unchecked.
- requested.length=0;pending.clear();rendered.length=0;sandbox.__reset();
- sandbox.__state().managementSelected.add('1');
- sandbox.__state().managementSelected.add('2');
- task=sandbox.__run(true);
- assert.equal(sandbox.__state().managementSelected.size,0,'old selection cleared at batch start');
- await settle('4','connected');
- assert.deepEqual([...sandbox.__state().managementSelected],['4']);
- assert.equal(sandbox.__state().devices.find(d=>d.id==='4').status,'connected');
- await settle('2','disconnected');
- assert.deepEqual([...sandbox.__state().managementSelected],['4']);
- await Promise.all(['1','3','5'].map(id=>settle(id,'connected')));
- await task;
- assert.deepEqual([...sandbox.__state().managementSelected].sort(),['1','3','4','5']);
- console.log('Progressive initial/bulk connect releases each completed phone immediately: OK');
-})().catch(error=>{console.error(error);process.exitCode=1;});
+
+(async () => {
+  for (const bulk of [false, true]) {
+    const rows = makeDevices(), server = new Map(rows.map(row => [row.id, row]));
+    const pending = new Map(), requested = [];
+    const f = await createPageFixture({devices: rows, loaded: bulk, request: async (path, options) => {
+      if (options.method !== 'POST') return {json: async () => path === '/api/devices' ? [...server.values()] : []};
+      assert(path.endsWith('/connect'));
+      const id = decodeURIComponent(path.split('/')[3]), entry = deferred();
+      requested.push(id); pending.set(id, entry);
+      return entry.promise;
+    }});
+    try {
+      if (bulk) for (const row of rows) f.state.selectedDeviceIds.add(row.id);
+      else f.state.selectedDeviceIds.add('1');
+      f.page.render();
+      const selection = f.state.selectedDeviceIds;
+      const run = f.get(bulk ? 'bulkConnect' : 'load').click();
+      await until(() => requested.length === 4);
+      assert.deepEqual(requested, ['1', '2', '3', '4']);
+      assert.deepEqual([...f.state.pendingDeviceIds], ['1', '2', '3', '4', '5']);
+      assert.equal(f.state.isLoading, false);
+      assert.deepEqual([...selection], bulk ? [] : ['1']);
+      const settle = async (id, success) => {
+        const previous = server.get(id);
+        const fresh = {...previous, status: success ? 'connected' : 'disconnected',
+          active_serial: success ? serial(id) : null, connect_failed: !success};
+        server.set(id, fresh);
+        pending.get(id).resolve({json: async () => fresh});
+        await until(() => !f.state.pendingDeviceIds.has(id));
+      };
+      const fast = bulk ? '4' : '2', failed = bulk ? '2' : '3';
+      await settle(fast, true);
+      await until(() => requested.includes('5'));
+      assert(f.state.pendingDeviceIds.has('1'));
+      assert.equal(f.state.devices.find(row => row.id === fast).status, 'connected');
+      assert.equal(f.state.isLoading, false);
+      const checkboxes = findAll(f.get('devices'), node => node.type === 'checkbox');
+      assert.equal(checkboxes.find(node => node.value === fast).disabled, false,
+        'the real list releases a completed phone while slow peers remain locked');
+      assert.equal(checkboxes.find(node => node.value === '1').disabled, true);
+      const settings = findAll(f.get('devices'), node => node.className === 'projection-settings-edit');
+      assert.equal(settings.find(node => node.title.includes('Phone ' + fast)).disabled, false);
+      assert.deepEqual([...selection], bulk ? [fast] : ['1']);
+      await settle(failed, false);
+      assert.equal(f.state.devices.find(row => row.id === failed).connect_failed, true);
+      assert.deepEqual([...selection], bulk ? [fast] : ['1']);
+      for (const id of ['1', '2', '3', '4', '5'].filter(id => ![fast, failed].includes(id))) await settle(id, true);
+      await run;
+      assert.equal(f.state.isBatchBusy, false);
+      assert.equal(f.state.pendingDeviceIds.size, 0);
+      assert.equal(f.state.devices.filter(row => row.status === 'connected').length, 4);
+      assert.equal(f.state.selectedDeviceIds, selection);
+      assert.deepEqual([...selection].sort(), bulk ? ['1', '3', '4', '5'] : ['1'],
+        'first load preserves manual selection; bulk selects only successful responses');
+      assert(f.messages.some(message => message.text.includes('已完成设备可立即操作')));
+      assert.equal(requested.length, 5, 'each phone is attempted exactly once');
+    } finally {f.dispose();}
+  }
+  console.log('Progressive real page initial/bulk connect: early unlock, DOM state and successful selection: OK');
+})().catch(error => {console.error(error); process.exitCode = 1;});

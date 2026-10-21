@@ -7,16 +7,19 @@ from fastapi.testclient import TestClient
 
 MODULES = (
     "app/main.js",
+    "app/page-controller.js",
     "core/api-client.js",
     "shared/dom.js",
     "shared/ui/dialog.js",
     "shared/ui/toast.js",
+    "shared/ui/inventory-drawer.js",
     "features/live/live-session-controller.js",
     "features/live/live-card-view.js",
     "features/live/live-batch-scheduler.js",
     "features/live/live-quality-settings.js",
     "features/devices/device-list-model.js",
     "features/devices/device-list-view.js",
+    "features/devices/device-management-view.js",
     "features/devices/device-connection-controller.js",
     "features/devices/device-management-controller.js",
     "features/devices/device-configuration-controller.js",
@@ -46,9 +49,11 @@ def test_v4_module_urls_only_serve_explicit_assets(monkeypatch):
             Path(__file__).resolve().parents[1] / "web/assets/legacy-page.css"
         ).read_text(encoding="utf-8")
         page = client.get("/").text
-        assert '<link rel="stylesheet" href="/assets/legacy-page.css">' in page
+        assert '<link rel="stylesheet" href="/assets/legacy-page.css" />' in page
         assert "<style>" not in page
         for path in (
+            "/app/page-controller-private.js", "/shared/ui/inventory-drawer-private.js",
+            "/features/devices/device-management-view-private.js",
             "/assets/private.css", "/app/secret.js", "/core/private.js", "/shared/ui/private.js",
             "/app/../core/private.js", "/shared/ui/../../.env", "/features/devices/private.js",
             "/features/devices/device-management-private.js",

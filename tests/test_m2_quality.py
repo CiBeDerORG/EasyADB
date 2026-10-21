@@ -219,36 +219,42 @@ def test_custom_quality_uses_current_selected_device_and_reports_actual_size(mon
 
 
 def test_quality_page_is_opt_in_and_disallows_hot_reconfiguration():
+    import re
     root = Path(__file__).resolve().parents[1] / "web"
     page = (root / "index.html").read_text()
-    css = (root / "assets" / "legacy-page.css").read_text()
+    css = (root / "assets/legacy-page.css").read_text()
+    assembly = (root / "app/page-controller.js").read_text()
+    quality = (root / "features/live/live-quality-settings.js").read_text()
     multi = (root / "m2-multi.js").read_text()
+    compact = lambda value: re.sub(r",(?=[)\]}])", "", re.sub(r"\s+", "", value))
+    q, m, app = map(compact, (quality, multi, assembly))
     assert 'id="multiPicker"' in page and 'id="multiGrid"' in page
     assert 'id="legacySolo"' not in page and 'id="liveProfile"' not in page
     assert 'id="multiProfile"' not in page
-    assert "profile:'custom',max_size:960,experimental_resolution:null" in multi
-    assert "video_bit_rate:3000000,max_fps:24" in multi
-    assert "actions.hidden=true" in multi and "details.hidden=true" in multi
+    assert "profile:'custom',max_size:960,experimental_resolution:null" in q
+    assert "video_bit_rate:3000000,max_fps:24" in q
+    assert "actions.hidden=true" in m and "details.hidden=true" in m
     assert ".multi-choice>.multi-probe-log[hidden]" in css
-    assert "choice(CHOICES,value.profile)" not in multi
-    assert "item.append(custom)" in multi
+    assert "choice(CHOICES,value.profile)" not in m + q
+    assert "item.append(custom)" in m
+    assert "this.qualitySettings.makeQualityChoice(key,selected)" in m
     for field in ("max_size", "video_bit_rate", "max_fps", "dpi"):
-        assert field in multi
-    assert "['3000000','3 Mbps']" in multi
+        assert field in multi and field in quality
+    assert compact("['3000000','3 Mbps']") in q
     for rate in (18, 20):
-        assert f"['{rate}000000','{rate} Mbps']" in multi
+        assert compact(f"['{rate}000000','{rate} Mbps']") in q
     for fps in (45, 55, 60):
-        assert f"['{fps}','{fps} FPS']" in multi
-    assert "qualityPayload(this.getChoice(d.id))" in multi
-    # A running phone locks ONLY its own quality/route, not every device.
-    assert "const busy=this.opening||this.getManagementBusy?.()" in multi
-    assert "this.isBusyFor(d.id)||this.checking.has(d.id)" in multi
-    assert "const picked=this.getBatchSelection?this.getBatchSelection():this.selected" in multi
-    assert "const additions=ds.filter(d=>picked.has(d.id)&&this.isAdbReady(d)&&!this.isBusyFor(d.id))" in multi
-    assert "const selectedDevices=devices.filter(d=>picked.has(d.id))" in multi
-    assert "const available=selectedDevices.filter(d=>this.isAdbReady(d)&&!this.isBusyFor(d.id))" in multi
-    assert "this.launchQueue=batch" in multi
-    assert "runPreflight:async id" in page
-    assert "runVideoProbe:async(id,profile)" in page
-    assert "实际编码" in multi or "编码 '+m.width" in multi
+        assert compact(f"['{fps}','{fps} FPS']") in q
+    assert "qualityTools.qualityPayload(this.getChoice(d.id))" in m
+    # A running phone locks only its own quality and route.
+    assert "constbusy=this.opening||this.getManagementBusy?.()" in m
+    assert "this.isBusyFor(d.id)||this.checking.has(d.id)" in m
+    assert "constpicked=this.getBatchSelection()" in m
+    assert "constadditions=ds.filter((d)=>picked.has(d.id)&&this.isAdbReady(d)&&!this.isBusyFor(d.id))" in m
+    assert "constselectedDevices=devices.filter((d)=>picked.has(d.id))" in m
+    assert "constavailable=selectedDevices.filter((d)=>this.isAdbReady(d)&&!this.isBusyFor(d.id))" in m
+    assert "this.batchScheduler.begin(batch)" in m
+    assert "runPreflight:async(id)" in app
+    assert "runVideoProbe:async(id,profile)" in app
+    assert "实际编码" in multi or "编码 '+m.width" in compact(multi)
 

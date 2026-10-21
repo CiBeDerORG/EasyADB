@@ -294,15 +294,21 @@ def test_failed_connection_exposes_pairing_only_after_explicit_failure(monkeypat
 
 
 def test_first_time_pair_button_only_follows_manual_connection_failure():
+    import re
     from pathlib import Path
-    web = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
-    assert "if(chosen&&d.connect_failed)" in web
-    assert "openFirstPair(d.id)" in web
-    assert "firstPairDialog" in web
-    assert "pairingSerial" in web
-    assert "'/pair'" in web
-    assert "selected_serial:pairingSerial" in web
-    assert "setInterval(" not in web
+    root = Path(__file__).resolve().parents[1] / "web"
+    page = (root / "index.html").read_text()
+    assembly = (root / "app/page-controller.js").read_text()
+    view = (root / "features/devices/device-list-view.js").read_text()
+    dialogs = (root / "features/devices/device-dialog-controller.js").read_text()
+    compact = lambda value: re.sub(r"\s+", "", value)
+    assert "if(chosen&&device.connect_failed)" in compact(view)
+    assert "openFirstPair(device.id)" in compact(view)
+    assert 'id="firstPairDialog"' in page
+    assert "pairingSerial" in dialogs
+    assert "'/pair'" in dialogs
+    assert "selected_serial:serial" in compact(dialogs)
+    assert "setInterval(" not in compact(assembly + view + dialogs)
 
 
 def test_temporary_route_uses_shared_port_and_can_edit_it_without_fallback(monkeypatch, tmp_path):

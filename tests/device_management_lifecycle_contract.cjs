@@ -1,8 +1,7 @@
 /* Run the production D2 controller and page adapter without network or real devices. */
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
+const {createPageFixture, findAll} = require('./helpers/page-fixture.cjs');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const makeDevices = (count = 3) => Array.from({length: count}, (_, index) => ({
@@ -277,65 +276,11 @@ async function checkStaleFinalRefresh(createController) {
   }
 }
 
-class Element {
-  constructor(tag, className = '', text = '') {
-    Object.assign(this, {tagName: tag, className, textContent: text,
-      children: [], events: new Map(), attrs: {}, style: {}, checked: false, disabled: false});
-  }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = [...nodes]; }
-  setAttribute(name, value) { this.attrs[name] = value; }
-  addEventListener(name, handler) { this.events.set(name, handler); }
-  fire(name) { assert(this.events.has(name), 'missing event ' + name); return this.events.get(name)(); }
-}
-function findAll(root, predicate) {
-  return [...(predicate(root) ? [root] : []), ...root.children.flatMap(child => findAll(child, predicate))];
-}
-
-async function checkPageIntegration(createManagementController, legacyOutcome = null) {
-  const {createDeviceConnectionController} = await import('../web/features/devices/device-connection-controller.js');
-  const model = await import('../web/features/devices/device-list-model.js');
-  const view = await import('../web/features/devices/device-list-view.js');
-  const html = fs.readFileSync('web/index.html', 'utf8');
-  const main = fs.readFileSync('web/app/main.js', 'utf8');
-  assert(main.includes("from '../features/devices/device-management-controller.js'"));
-  assert(main.includes('createDeviceManagementController: deviceManagement.createDeviceManagementController'),
-    'the production entry point must supply the real management factory to the page');
-  const section = (first, last) => {
-    const start = html.indexOf(first), end = html.indexOf(last, start);
-    assert(start >= 0 && end > start, 'page boundary missing: ' + first);
-    return html.slice(start, end);
-  };
-  const elements = new Map(), events = new Map(), requests = [], messages = [];
-  const busy = new Set(), server = new Map(makeDevices().map(device => [device.id, device]));
+async function checkPageIntegration(outcome = null) {
+  const server = new Map(makeDevices().map(device => [device.id, device]));
   const behavior = {confirm: true, defer: false, deferLists: false};
-  let management, connection, managementFactories = 0, connectionFactories = 0, liveOptions, closes = 0;
-  const elem = (tag, className = '', text = '') => new Element(tag, className, text);
-  const action = (label, callback, className = 'secondary') => {
-    const button = elem('button', className, label);
-    button.addEventListener('click', callback);
-    return button;
-  };
-  const live = {
-    isBusyFor: id => busy.has(id), updatePicker() {},
-    projectionButton: device => elem('button', 'projector', device.name), openSettings() {},
-    closeAll() { closes++; },
-  };
-  const sandbox = {
-    AbortController, elem, action,
-    document: {
-      getElementById(id) {
-        if (!elements.has(id)) {
-          const element = elem('div'); element.value = id === 'token' ? 'test-token' : '';
-          elements.set(id, element);
-        }
-        return elements.get(id);
-      },
-      addEventListener(event, callback) { events.set(event, callback); },
-    },
-    api: async (path, options = {}) => {
-      const entry = {path, method: options.method || 'GET', signal: options.signal, pending: deferred()};
-      requests.push(entry);
+  const f = await createPageFixture({devices: makeDevices(), confirm: () => behavior.confirm,
+    request: async (path, options, entry) => {
       if (entry.method === 'GET') {
         if (behavior.deferLists) return entry.pending.promise;
         return {json: async () => path === '/api/groups' ? [] : [...server.values()]};
@@ -345,132 +290,104 @@ async function checkPageIntegration(createManagementController, legacyOutcome = 
       if (entry.method === 'DELETE') server.delete(id);
       return {json: async () => ({...server.get(id), status: 'connected'})};
     },
-    confirm: () => behavior.confirm, message: (text, kind) => messages.push({text, kind}),
-    dismissToast() {}, hasConnectedAdb: model.hasConnectedAdb,
-    connectedFirst: (left, right) => Number(model.hasConnectedAdb(right)) - Number(model.hasConnectedAdb(left)),
-    switchRoute() {}, edit() {}, removeTempAddress() {}, openFirstPair() {}, openTempEditor() {},
-    openGroup() {}, scanGroup() {}, collapseInventory() {}, expandInventory() {},
-    EasyADBMulti: {create(options) { liveOptions = options; return live; }},
-  };
-  const setup = section('const $=id=>', 'const inventoryDrawer=') + '\nconst toastItems=new Map();\n' +
-    section('let frontendModules=', 'function toastSelected(') +
-    section("document.addEventListener('easyadb:frontend-modules-ready'", '// Browser requests') +
-    section('function buildLegacyDeviceGroups()', 'function select(id)') +
-    section('function render(){', 'function reset()') +
-    section("$('token').addEventListener", "$('bulkConnect').addEventListener") +
-    section("$('bulkDelete').addEventListener", "$('newDevice').addEventListener") +
-    section("$('refreshAll').addEventListener", "window.addEventListener('beforeunload'") +
-    section('multiView=EasyADBMulti.create({', 'multiView.groupControl=') + `
-globalThis.readState=()=>({devices,groups,selected,loaded,loading,connectGeneration,
- managementSelected,connectingDevices,connectSnapshots,connectionBatchBusy,connectController,managementBatch});
-globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
-`;
-  const context = vm.createContext(sandbox);
-  vm.runInContext(setup, context, {filename: 'device-management-page.js'});
-  sandbox.installRows(makeDevices());
-  const selection = sandbox.readState().managementSelected;
-  const detail = {
-    deviceList: model, deviceListView: view,
-    createDeviceManagementController(options) {
-      managementFactories++; management = createManagementController(options); return management;
-    },
-    createDeviceConnectionController(options) {
-      connectionFactories++; connection = createDeviceConnectionController(options); return connection;
-    },
-  };
-  if (legacyOutcome?.startsWith('refresh-')) {
-    events.get('easyadb:frontend-modules-ready')({detail});
+  });
+  const {state, elements, requests, messages, busy, liveOptions} = f;
+  const management = f.controllers.management, connection = f.controllers.connection;
+  const selection = state.selectedDeviceIds;
+  if (outcome?.startsWith('refresh-')) {
+    assert.equal(f.bootstrap(), f.page);
     selection.add('1'); selection.add('2');
     behavior.deferLists = true;
     const oldRun = elements.get('refreshAll').fire('click');
     await until(() => requests.filter(entry => entry.method === 'GET').length === 2);
     const oldLists = requests.filter(entry => entry.method === 'GET');
     elements.get('token').fire('input');
-    assert.equal(sandbox.readState().loading, false);
+    assert.equal(state.isLoading, false);
     behavior.deferLists = false; behavior.defer = true;
     const replacement = makeDevices(2).map(device => ({...device, name: 'New ' + device.name}));
-    sandbox.installRows(replacement);
+    f.installRows(replacement);
     selection.add('1'); selection.add('2');
     const newRun = elements.get('refreshAll').fire('click');
-    const newBatch = sandbox.readState().managementBatch;
+    const newBatch = state.activeBatch;
     const messageCount = messages.length, requestCount = requests.length;
     for (const entry of oldLists) {
-      if (legacyOutcome === 'refresh-failure' && entry.path === '/api/devices') {
+      if (outcome === 'refresh-failure' && entry.path === '/api/devices') {
         entry.pending.reject(Error('old credential GET failed'));
       } else {
         entry.pending.resolve({json: async () => entry.path === '/api/groups' ? [] : makeDevices()});
       }
     }
     await oldRun;
-    assert.equal(sandbox.readState().devices, replacement,
+    assert.equal(state.devices, replacement,
       'real D1 metadata reader cannot restore an old list during D2 final refresh');
     assert.deepEqual([...selection], ['1', '2']);
-    assert.equal(sandbox.readState().managementBatch, newBatch);
-    assert.equal(sandbox.readState().loading, true);
+    assert.equal(state.activeBatch, newBatch);
+    assert.equal(state.isLoading, true);
     assert.equal(messages.length, messageCount);
     assert.equal(requests.length, requestCount);
     requests.at(-1).pending.resolve({json: async () => replacement[0]});
     await until(() => requests.length === requestCount + 1);
     requests.at(-1).pending.resolve({json: async () => replacement[1]});
     await newRun;
-    assert.equal(sandbox.readState().loading, false);
-    assert.equal(sandbox.readState().managementBatch, null);
+    assert.equal(state.isLoading, false);
+    assert.equal(state.activeBatch, null);
+    f.dispose();
     return;
   }
-  if (legacyOutcome) {
-    // A user may start a legacy handler before the deferred module has loaded.
-    // Its ownership must survive bootstrap and remain cancellable from the new controller.
+  if (outcome) {
+    // Repeated page construction during I/O preserves the one current owner.
+    // Token changes still cancel it without affecting a replacement operation.
     selection.add('1'); selection.add('2');
     behavior.defer = true;
     const oldRun = elements.get('bulkDelete').fire('click');
-    const oldRequest = requests[0], legacyBatch = sandbox.readState().managementBatch;
-    assert(legacyBatch, 'pre-bootstrap batch has explicit shared ownership');
-    events.get('easyadb:frontend-modules-ready')({detail});
-    assert.equal(management.state.activeBatch, legacyBatch);
+    const oldRequest = requests[0], batch = state.activeBatch;
+    assert(batch, 'the mounted page has explicit batch ownership');
+    assert.equal(f.bootstrap(), f.page);
+    assert.equal(management.state.activeBatch, batch);
     assert.equal(management.state.selectedDeviceIds, selection);
-    assert.equal(requests.length, 1, 'bootstrap preserves the in-flight legacy operation');
+    assert.equal(requests.length, 1, 'bootstrap preserves the in-flight operation');
     elements.get('token').fire('input');
     assert.equal(oldRequest.signal.aborted, true);
-    assert.equal(sandbox.readState().loading, false);
-    sandbox.installRows(makeDevices(2).map(device => ({...device, name: 'New ' + device.name})));
+    assert.equal(state.isLoading, false);
+    f.installRows(makeDevices(2).map(device => ({...device, name: 'New ' + device.name})));
     selection.add('1'); selection.add('2');
-    const newRows = sandbox.readState().devices;
+    const newRows = state.devices;
     const newRun = elements.get('refreshAll').fire('click');
-    const newBatch = sandbox.readState().managementBatch;
+    const newBatch = state.activeBatch;
     const messageCount = messages.length;
-    if (legacyOutcome === 'failure') oldRequest.pending.reject(Error('old legacy deletion failed'));
+    if (outcome === 'failure') oldRequest.pending.reject(Error('old deletion failed'));
     else oldRequest.pending.resolve({});
     await oldRun;
-    assert.equal(sandbox.readState().devices, newRows);
+    assert.equal(state.devices, newRows);
     assert.deepEqual([...selection], ['1', '2']);
-    assert.equal(sandbox.readState().managementBatch, newBatch);
-    assert.equal(sandbox.readState().loading, true);
-    assert.equal(requests.length, 2, 'old legacy batch cannot continue after credential reset');
+    assert.equal(state.activeBatch, newBatch);
+    assert.equal(state.isLoading, true);
+    assert.equal(requests.length, 2, 'old batch cannot continue after credential reset');
     assert.equal(messages.length, messageCount);
     requests[1].pending.resolve({json: async () => newRows[0]});
     await until(() => requests.length === 3);
     requests[2].pending.resolve({json: async () => newRows[1]});
     await newRun;
-    assert.equal(sandbox.readState().loading, false);
-    assert.equal(sandbox.readState().managementBatch, null);
+    assert.equal(state.isLoading, false);
+    assert.equal(state.activeBatch, null);
     assert.equal(requests.filter(entry => entry.method === 'GET').length, 2,
       'only the new operation performs its single devices/groups reload');
+    f.dispose();
     return;
   }
   selection.add('2');
-  sandbox.readState().connectingDevices.add('2');
-  events.get('easyadb:frontend-modules-ready')({detail});
-  events.get('easyadb:frontend-modules-ready')({detail});
-  assert.equal(managementFactories, 1);
-  assert.equal(connectionFactories, 1);
+  state.pendingDeviceIds.add('2');
+  assert.equal(f.bootstrap(), f.page);
+  assert.equal(f.bootstrap(), f.page);
+  assert.deepEqual(f.ports, {multi: 1, group: 1, lab: 1});
   assert.equal(requests.length, 0, 'bootstrap must not load, connect or start management');
   assert.equal(management.state.selectedDeviceIds, selection);
   assert.equal(connection.state.selectedDeviceIds, selection);
   assert.equal(liveOptions.getBatchSelection(), selection, 'management and projection share one Set');
-  assert.equal(management.state.devices, sandbox.readState().devices);
+  assert.equal(management.state.devices, state.devices);
 
   const select = (id, checked) => {
-    const checkbox = findAll(elements.get('devices'), node => node.tagName === 'input' && node.value === id)[0];
+    const checkbox = findAll(elements.get('devices'), node => node.tagName === 'INPUT' && node.value === id)[0];
     assert(checkbox); checkbox.checked = checked; checkbox.fire('change'); return checkbox;
   };
   select('1', true);
@@ -500,8 +417,8 @@ globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
     ['/api/devices/1', 'DELETE'], ['/api/devices', 'GET'], ['/api/groups', 'GET'],
   ]);
   assert.deepEqual([...selection].sort(), ['2', '3']);
-  assert.equal(sandbox.readState().loading, false);
-  sandbox.readState().connectingDevices.clear(); busy.clear();
+  assert.equal(state.isLoading, false);
+  state.pendingDeviceIds.clear(); busy.clear();
   await elements.get('refreshAll').fire('click');
   assert.deepEqual(requests.slice(3).map(entry => [entry.path, entry.method]), [
     ['/api/devices/2/refresh', 'POST'], ['/api/devices/3/refresh', 'POST'],
@@ -514,23 +431,23 @@ globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
   const oldRun = elements.get('bulkDelete').fire('click');
   const oldRequest = requests.at(-1);
   assert.equal(oldRequest.path, '/api/devices/2');
-  assert.equal(sandbox.readState().connectionBatchBusy, false);
+  assert.equal(state.isBatchBusy, false);
   elements.get('token').value = 'new-token';
   elements.get('token').fire('input');
   assert.equal(oldRequest.signal.aborted, true);
-  assert.equal(sandbox.readState().loading, false);
-  assert.equal(sandbox.readState().loaded, false);
+  assert.equal(state.isLoading, false);
+  assert.equal(state.isLoaded, false);
   assert.equal(selection.size, 0);
-  assert.equal(closes, 1, 'existing live cleanup remains delegated');
-  sandbox.installRows(makeDevices(2));
+  assert.equal(f.live.closeCount, 1, 'existing live cleanup remains delegated');
+  f.installRows(makeDevices(2));
   selection.add('1'); selection.add('2');
   const replacementRun = elements.get('refreshAll').fire('click');
-  const replacementBatch = sandbox.readState().managementBatch;
+  const replacementBatch = state.activeBatch;
   const messageCount = messages.length, requestCount = requests.length;
   oldRequest.pending.resolve({});
   await oldRun;
-  assert.equal(sandbox.readState().managementBatch, replacementBatch);
-  assert.equal(sandbox.readState().loading, true);
+  assert.equal(state.activeBatch, replacementBatch);
+  assert.equal(state.isLoading, true);
   assert.deepEqual([...selection], ['1', '2']);
   assert.equal(messages.length, messageCount);
   assert.equal(requests.length, requestCount);
@@ -539,8 +456,9 @@ globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
   await until(() => requests.length === requestCount + 1);
   requests.at(-1).pending.resolve({json: async () => makeDevices(2)[1]});
   await replacementRun;
-  assert.equal(sandbox.readState().loading, false);
-  assert.equal(sandbox.readState().managementBatch, null);
+  assert.equal(state.isLoading, false);
+  assert.equal(state.activeBatch, null);
+  f.dispose();
 }
 
 (async () => {
@@ -553,9 +471,9 @@ globalThis.installRows=rows=>{devices=rows;loaded=true;render();};
     await checkStaleResults(createDeviceManagementController, method);
   }
   await checkStaleFinalRefresh(createDeviceManagementController);
-  await checkPageIntegration(createDeviceManagementController);
+  await checkPageIntegration();
   for (const outcome of ['success', 'failure', 'refresh-success', 'refresh-failure']) {
-    await checkPageIntegration(createDeviceManagementController, outcome);
+    await checkPageIntegration(outcome);
   }
   console.log('Device management lifecycle: shared selection, busy rechecks, failures, cancellation and real page integration: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

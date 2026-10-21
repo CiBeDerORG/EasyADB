@@ -23,7 +23,7 @@ def test_v2_has_no_ffmpeg_mse_server_or_browser_pipeline():
     assert "m2-player.js" not in page
     assert not (ROOT / "web" / "m2-player.js").exists()
     assert " ffmpeg" not in docker
-    assert "EasyADBWebRTC.create(video" in multi
+    assert "EasyADBWebRTC.create(video" in "".join(multi.split())
 
 
 def test_mse_is_invalid_config_and_old_script_is_not_served(monkeypatch, tmp_path):
@@ -62,7 +62,8 @@ def test_v2_retired_mse_diagnostics_and_ws_binary_video_cannot_return():
     for legacy in ("bufferAhead", "queueBytes", "avgBufferSeconds",
                    "maxQueueBytes", "待追加", "缓冲余量"):
         assert legacy not in metrics
-    assert "queueBytes:pd.queueBytes" not in multi
-    assert "ws.binaryType='arraybuffer'" not in multi
+    compact_multi = "".join(multi.split())
+    assert "queueBytes:pd.queueBytes" not in compact_multi
+    assert "ws.binaryType='arraybuffer'" not in compact_multi
     assert "EASYADB_VIDEO_ENGINE=mse" not in documentation
     assert "20" in documentation

@@ -5,7 +5,7 @@
   "description": "Build-time frontend standards; no runtime bundler or framework.",
   "scripts": {
     "lint": "eslint eslint.config.mjs tests/v4_frontend_standards.cjs tests/v4_frontend_modules.mjs tests/v4_device_list_model.mjs tests/v4_live_session_controller.mjs \"web/**/*.js\" --no-error-on-unmatched-pattern",
-    "format:check": "prettier --check \"web/**/*.js\" eslint.config.mjs tests/v4_frontend_standards.cjs tests/v4_frontend_modules.mjs tests/v4_device_list_model.mjs tests/v4_live_session_controller.mjs .prettierrc.json package.json",
+    "format:check": "prettier --check web/index.html \"web/**/*.js\" eslint.config.mjs tests/v4_frontend_standards.cjs tests/v4_frontend_modules.mjs tests/v4_device_list_model.mjs tests/v4_live_session_controller.mjs .prettierrc.json package.json",
     "test:architecture": "node tests/v4_frontend_standards.cjs && node tests/v4_frontend_modules.mjs && node tests/v4_device_list_model.mjs && node tests/v4_live_session_controller.mjs"
   },
   "devDependencies": {

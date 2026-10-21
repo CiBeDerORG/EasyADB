@@ -4,6 +4,7 @@ import { createApiClient } from '../web/core/api-client.js';
 import { createDomHelpers } from '../web/shared/dom.js';
 import { createDialogController } from '../web/shared/ui/dialog.js';
 import { createToastController } from '../web/shared/ui/toast.js';
+import pageFixtures from './helpers/page-fixture.cjs';
 
 class FakeElement {
   constructor(tag = 'div') {
@@ -169,8 +170,29 @@ assert(!listeners.has('selectionchange'));
 const page = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
 const main = readFileSync(new URL('../web/app/main.js', import.meta.url), 'utf8');
 assert.match(page, /<script type="module" src="\/app\/main\.js"><\/script>/);
-assert.match(page, /document\.addEventListener\('easyadb:frontend-modules-ready'/);
-assert.match(page, /frontendModules=event\.detail/);
-assert.match(main, /new CustomEvent\('easyadb:frontend-modules-ready'/);
+assert.doesNotMatch(page, /<script>/);
+assert.match(main, /createPageController\(\)/);
 assert.doesNotMatch(main, /window\.EasyADB\w*\s*=/);
-console.log('V4-02 ES Modules and classic adapter behavior: OK');
+const fixture = await pageFixtures.createPageFixture();
+try {
+  assert.equal(fixture.bootstrap(), fixture.page, 'one document has one page instance');
+  assert.deepEqual(fixture.ports, { multi: 1, group: 1, lab: 1 });
+  assert.equal(fixture.requests.length, 0, 'assembly must not load, connect or scan');
+  assert.equal(fixture.controllers.connection.state, fixture.state);
+  assert.equal(fixture.controllers.management.state, fixture.state);
+  assert.equal(fixture.controllers.deviceDialogs.state, fixture.state);
+  assert.equal(fixture.liveOptions.getBatchSelection(), fixture.state.selectedDeviceIds);
+  assert.equal(fixture.controllers.configuration.state.devices, fixture.state.devices);
+  assert.equal(fixture.controllers.groupDialogs.state.groups, fixture.state.groups);
+  for (const name of [
+    'createLiveSessionController',
+    'createLiveQualitySettings',
+    'createLiveBatchScheduler',
+    'createLiveCardView',
+  ]) {
+    assert.equal(typeof fixture.liveOptions.featureModules[name], 'function');
+  }
+} finally {
+  fixture.dispose();
+}
+console.log('V4 ES Modules, single page assembly and shared state: OK');

@@ -123,11 +123,12 @@ assert.deepEqual(nextSocket.sent, []);
 assert(destroyed.includes('next'));
 
 const multi = readFileSync(new URL('../web/m2-multi.js', import.meta.url), 'utf8');
-const main = readFileSync(new URL('../web/app/main.js', import.meta.url), 'utf8');
-assert.match(multi, /createSessionController=event\.detail\?\.createLiveSessionController/);
-assert.match(multi, /card\.sessionController=controller/);
-assert.match(multi, /controller\.attachDiagnostics\(card\.meter,card\.metrics\)/);
+const page = readFileSync(new URL('../web/app/page-controller.js', import.meta.url), 'utf8');
+assert.match(multi, /this\.createSessionController\s*=\s*createLiveSessionController/);
+assert.doesNotMatch(multi, /easyadb:frontend-modules-ready|ensureFeatureModules/);
+assert.match(multi, /card\.sessionController\s*=\s*controller/);
+assert.match(multi, /controller\.attachDiagnostics\(card\.meter,\s*card\.metrics\)/);
 assert.match(multi, /card\.sessionController\.dispose\(/);
-assert.match(multi, /this\.cards\.get\(card\.id\)!==card/);
-assert.match(main, /createLiveSessionController,/);
+assert.match(multi, /this\.cards\.get\(card\.id\)\s*!==\s*card/);
+assert.match(page, /createLiveSessionController,/);
 console.log('V4-03 per-device ownership and stale session regression: OK');

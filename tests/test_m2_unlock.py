@@ -106,6 +106,7 @@ def test_all_stream_paths_share_server_owned_secret():
     from pathlib import Path
     app=Path("server/api/live_handler.py").read_text()
     client=Path("web/m2-multi.js").read_text()
+    compact_client="".join(client.split())
     assert "store.get_unlock_secret(device_id)" in app
     assert "await asyncio.to_thread(automatic_unlock, stream, password)" in app
     assert '"wake", "unlock", "heartbeat", "webrtc_offer"' in app
@@ -117,9 +118,10 @@ def test_all_stream_paths_share_server_owned_secret():
     assert "manual_secret = store.get_unlock_secret(device_id)" in app
     assert "asyncio.create_task(run_unlock_attempt(manual_secret, \"manual\"))" in app
     assert "requestUnlock(card)" in client
-    assert "JSON.stringify({type:'unlock',session_id:card.session})" in client
-    assert "password" not in client[client.index('requestUnlock(card){'):client.index('sendInput(card,type,body){')].replace('plaintext, credential ID or user input','')
-    assert "payload.screen_off=card.screenOff" in client
+    assert "JSON.stringify({type:'unlock',session_id:card.session})" in compact_client
+    unlock_body = compact_client[compact_client.index('requestUnlock(card){'):compact_client.index('sendInput(card,type,body){')]
+    assert "password" not in unlock_body
+    assert "payload.screen_off=card.screenOff" in compact_client
     assert "get_unlock_secret" not in client
     assert "unlock_secret" not in client
     assert "readUnlockSettings" in client and "saveUnlockSettings" in client

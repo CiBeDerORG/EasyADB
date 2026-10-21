@@ -94,7 +94,7 @@ def test_page_uses_webrtc_only_and_reserves_webcodecs():
     player = (root / "web" / "m2-webrtc.js").read_text()
     assert '<script src="/m2-webrtc.js"></script>' in html
     assert '<script src="/m2-player.js"></script>' not in html
-    assert "root.EasyADBWebRTC.create(video" in multi
+    assert "root.EasyADBWebRTC.create(video" in "".join(multi.split())
     assert "EasyADBPlayers" not in multi
     assert "new RTCPeerConnection(" in player
     assert "new WebSocket(" in multi

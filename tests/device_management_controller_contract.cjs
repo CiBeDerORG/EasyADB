@@ -1,8 +1,7 @@
 /* Exercise the production D2 controller and the real classic-page adapter. */
 'use strict';
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
+const {createPageFixture} = require('./helpers/page-fixture.cjs');
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function deferred() {
@@ -52,11 +51,7 @@ function fixture(factory, ids = ['1', '2', '3']) {
   });
   return f;
 }
-function section(html, start, end) {
-  const first = html.indexOf(start), last = html.indexOf(end, first);
-  assert(first >= 0 && last > first, 'missing adapter boundary: ' + start);
-  return html.slice(first, last);
-}
+
 
 (async () => {
   const { createDeviceManagementController } = await import(
@@ -166,96 +161,44 @@ function section(html, start, end) {
     assert(f.notices.at(-1)[0].includes('刷新失败'));
   }
 
-  // The actual page receives the production factory through app/main.js and
-  // delegates checkbox, select-all, delete, check and credential invalidation.
+  // Actual page events call the single production controller and metadata reader.
   {
-    const html = fs.readFileSync('web/index.html', 'utf8');
-    const main = fs.readFileSync('web/app/main.js', 'utf8');
-    assert(main.includes("from '../features/devices/device-management-controller.js'"));
-    assert(main.includes('createDeviceManagementController: deviceManagement.createDeviceManagementController'));
-    assert(html.includes('deviceManagementController.selectDevice(id,checked)'));
-    assert(html.includes('deviceManagementController.getSelectionSummary()'));
-    const handlers = new Map(), events = new Map(), notices = [], requests = [];
-    const elements = new Map(), redraws = [];
-    for (const id of ['token', 'bulkSelectAll', 'bulkDelete', 'refreshAll']) {
-      elements.set(id, { checked: false, value: 'token', addEventListener(type, callback) {
-        handlers.set(id + ':' + type, callback);
-      } });
-    }
-    const sandbox = {
-      INITIAL: devices(['1', '2']), AbortController, Map, Set,
-      document: {
-        getElementById(id) { return elements.get(id); },
-        addEventListener(type, callback) { events.set(type, callback); },
-      },
-      confirm() { return true; },
-      REDRAWS: redraws, NOTICES: notices, REQUESTS: requests,
-      REQUEST: async (path, options) => {
-        requests.push([path, options.method]);
-        const id = decodeURIComponent(path.split('/')[3]);
-        return { json: async () => ({ ...devices([id])[0], status: 'checked' }) };
-      },
-    };
-    const setup = `
-const $=id=>document.getElementById(id);
-let devices=INITIAL.map(device=>({...device})),groups=[],selected='1',loaded=true,loading=false;
-const managementSelected=new Set(['1']),connectingDevices=new Set(),connectSnapshots=new Map();
-let connectGeneration=0,connectionBatchBusy=false,connectController=null,managementBatch=null;
-let multiView={isBusyFor:()=>false,closeAll(){}};
-let frontendModules=null,deviceConnectionController=null,deviceManagementController=null;
-const toastItems=new Map();
-function deviceConnecting(id){return connectingDevices.has(id);}
-function deviceBusy(id){return deviceConnecting(id)||multiView.isBusyFor(id);}
-function render(){REDRAWS.push([...managementSelected]);}
-function message(...args){NOTICES.push(args);}
-function dismissToast(){}
-async function api(path,options){return REQUEST(path,options);}
-async function load(){return true;}
-` +
-      section(html, "document.addEventListener('easyadb:frontend-modules-ready'", '// Browser requests') +
-      section(html, "$('token').addEventListener('input'", "$('bulkSelectAll').addEventListener") +
-      section(html, "$('bulkSelectAll').addEventListener", "$('bulkConnect').addEventListener") +
-      section(html, "$('bulkDelete').addEventListener", "$('newDevice').addEventListener") +
-      section(html, "$('refreshAll').addEventListener", "window.addEventListener('beforeunload'") +
-      `
-globalThis.snapshot=()=>({devices,selected,selection:managementSelected,loading,loaded,controller:deviceManagementController});
-`;
-    vm.runInNewContext(setup, sandbox, { filename: 'device-management-page.js' });
-    let installed = 0;
-    events.get('easyadb:frontend-modules-ready')({ detail: {
-      createDeviceManagementController(options) {
-        installed++;
-        return createDeviceManagementController(options);
-      },
-    } });
-    assert.equal(installed, 1);
-    assert.equal(requests.length, 0, 'bootstrap is passive');
-    const selection = sandbox.snapshot().selection;
-    assert.equal(sandbox.snapshot().controller.state.selectedDeviceIds, selection);
-    elements.get('bulkSelectAll').checked = true;
-    handlers.get('bulkSelectAll:change')();
+    const server = new Map(devices(['1', '2']).map(device => [device.id, device]));
+    const f = await createPageFixture({devices: [...server.values()], request: async (path, options) => {
+      if (!options.method) return {json: async () => path === '/api/groups' ? [] : [...server.values()]};
+      const id = decodeURIComponent(path.split('/')[3]);
+      if (options.method === 'DELETE') server.delete(id);
+      else server.set(id, {...server.get(id), status: 'checked'});
+      return {json: async () => server.get(id)};
+    }});
+    const {state, controllers, requests} = f;
+    state.selectedDeviceId = '1'; state.selectedDeviceIds.add('1');
+    assert.equal(f.bootstrap(), f.page);
+    assert.equal(requests.length, 0, 'mounting is passive');
+    const selection = state.selectedDeviceIds;
+    assert.equal(controllers.management.state.selectedDeviceIds, selection);
+    f.get('bulkSelectAll').checked = true; await f.get('bulkSelectAll').fire('change');
     assert.deepEqual([...selection], ['1', '2'], 'bulk selection uses shared state');
-    await handlers.get('refreshAll:click')();
-    assert.deepEqual(requests, [
-      ['/api/devices/1/refresh', 'POST'],
-      ['/api/devices/2/refresh', 'POST'],
+    await f.get('refreshAll').fire('click');
+    assert.deepEqual(requests.map(entry => [entry.path, entry.method]), [
+      ['/api/devices/1/refresh', 'POST'], ['/api/devices/2/refresh', 'POST'],
+      ['/api/devices', 'GET'], ['/api/groups', 'GET'],
     ]);
-    assert.deepEqual(Array.from(sandbox.snapshot().devices, device => device.id), ['1', '2'],
-      'refresh responses preserve both device identities');
-    assert(sandbox.snapshot().devices.every(device => device.status === 'checked'));
-    assert.equal(sandbox.snapshot().loading, false);
-    await handlers.get('bulkDelete:click')();
-    assert.deepEqual(requests.slice(2), [
-      ['/api/devices/1', 'DELETE'],
-      ['/api/devices/2', 'DELETE'],
+    assert.deepEqual(state.devices.map(device => device.id), ['1', '2'], 'responses preserve both device identities');
+    assert(state.devices.every(device => device.status === 'checked'));
+    assert.equal(state.isLoading, false);
+    await f.get('bulkDelete').fire('click');
+    assert.deepEqual(requests.slice(4).map(entry => [entry.path, entry.method]), [
+      ['/api/devices/1', 'DELETE'], ['/api/devices/2', 'DELETE'], ['/api/devices', 'GET'], ['/api/groups', 'GET'],
     ]);
     assert.equal(selection.size, 0);
-    assert.equal(sandbox.snapshot().selected, null, 'deleting the active device clears its selection');
-    handlers.get('token:input')();
-    assert.equal(sandbox.snapshot().loaded, false);
-    assert.equal(sandbox.snapshot().devices.length, 0);
+    assert.equal(state.selectedDeviceId, null, 'deleting the active device clears its selection');
+    await f.get('token').fire('input');
+    assert.equal(state.isLoaded, false);
+    assert.equal(state.devices.length, 0);
     assert.equal(selection.size, 0);
-    assert(redraws.length > 3);
+    assert(f.live.redrawCount > 3);
+    f.dispose();
   }
   await tick();
   console.log('D2 controller selection/delete/check, token isolation and real page events: OK');
