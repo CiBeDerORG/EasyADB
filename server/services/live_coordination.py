@@ -1,6 +1,7 @@
 """Explicit, event-triggered live coordination; no background ADB polling."""
 import asyncio
 import logging
+import threading
 
 from ..devices import selected_address
 from .operations import device_lock
@@ -14,14 +15,25 @@ async def confirm_adb_loss(source, device_id: str, serial: str) -> bool:
         return False
     if still_online:
         return False
-    with device_lock(source.manager, device_id):
-        current = source.store.get(device_id)
-        if (current and selected_address(current) == serial
-                and source.manager.serial_for(current) == serial):
-            source.manager._set_state(
-                device_id, "disconnected",
-                "当前 ADB 地址已断开；请手动检查连接并重新连接",
-            )
+    cancelled = threading.Event()
+    def mark_current_disconnected():
+        # The same device RLock may be held by a bounded but slow ADB/REST
+        # operation. Wait off-loop and revalidate after acquiring it.
+        with device_lock(source.manager, device_id):
+            if cancelled.is_set():
+                return
+            current = source.store.get(device_id)
+            if (not cancelled.is_set() and current and selected_address(current) == serial
+                    and source.manager.serial_for(current) == serial):
+                source.manager._set_state(
+                    device_id, "disconnected",
+                    "当前 ADB 地址已断开；请手动检查连接并重新连接",
+                )
+    try:
+        await asyncio.to_thread(mark_current_disconnected)
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
     return True
 
 

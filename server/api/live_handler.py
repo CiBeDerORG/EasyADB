@@ -8,15 +8,15 @@ import json
 import logging
 import queue
 import secrets
+import threading
 import time
 from urllib.parse import urlsplit
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..display_lab import LabError
 from ..m2_touch import InvalidTouch
 from ..m2_video_probe import VideoProbeError
-from ..services.operations import device_lock
+from ..services.live_admission import prepare_live_session
 from ..services.session_cleanup import cleanup_live_session
 
 
@@ -131,76 +131,53 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         if experiment is not None and screen_off:
             await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
             return
-        device = store.get(device_id)
-        serial = selected_address(device) if device else None
-        if not serial or serial != initial.get("selected_serial") or manager.serial_for(device) != serial:
-            await websocket.send_json({"type": "error", "message": "请先手动连接当前选择的设备"})
+        admission_cancelled = threading.Event()
+        admission = asyncio.create_task(asyncio.to_thread(
+            prepare_live_session, device_id,
+            selected_serial=initial.get("selected_serial"), profile=profile,
+            quality_settings=quality_settings, experiment=experiment,
+            screen_off=screen_off, store=store, manager=manager,
+            display_lab=display_lab, session_manager=session_manager,
+            live_video=LiveVideo, selected_address=selected_address,
+            is_connected=is_connected, cancelled=admission_cancelled,
+        ))
+        cancellation = None
+        while True:
+            try:
+                prepared = await asyncio.shield(admission)
+                break
+            except asyncio.CancelledError as exc:
+                # to_thread cannot cancel a thread waiting for the device lock
+                # or ADB. Keep its result owned until any late reserve is known.
+                admission_cancelled.set()
+                cancellation = exc
+                if admission.cancelled():
+                    raise
+            except Exception:
+                if cancellation is not None:
+                    raise cancellation
+                raise
+        stream = prepared.stream
+        if cancellation is not None:
+            raise cancellation  # finally cleans THIS unstarted reservation
+        if prepared.error:
+            await websocket.send_json({"type": "error", "message": prepared.error})
             return
-        adb_checked_at = time.monotonic()
-        if not await asyncio.to_thread(is_connected, serial):
-            await websocket.send_json({"type": "error", "message": "当前选择的 ADB 地址已离线"})
-            return
-        adb_check_ms = round((time.monotonic() - adb_checked_at) * 1000)
-        # The saved credential is resolved server-side only, never sent to browser,
-        # and is bound to this explicitly authenticated, selected device/session.
-        try:
-            unlock_secret = store.get_unlock_secret(device_id) if not experiment else None
-        except ValueError:
-            await websocket.send_json({"type": "error", "message": "开屏密码配置无效，请重新设置"})
-            return
-        if unlock_secret:
-            screen_off = False  # Automatic wake/unlock overrides deferred physical screen-off.
-        # Atomic with route mutation: another browser cannot switch the
-        # selected serial between validation and reserving this live session.
-        error = None
-        with device_lock(manager, device_id):
-            current = store.get(device_id)
-            if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
-                error = "当前选择的 IP 已改变，请重新开启投屏"
-            else:
-                if experiment and experiment["mode"] in ("new", "new_settings", "new_resolution") and display_lab.has_pending(device_id):
-                    error = "请先恢复系统副屏模拟设置，再创建 scrcpy 虚拟屏幕"
-                elif experiment and experiment["mode"] == "display":
-                    try:
-                        found = display_lab.scan(serial)["display_ids"]
-                        if experiment["display_id"] not in found:
-                            error = "指定 Display ID 不存在，请重新扫描显示器"
-                    except LabError as exc:
-                        error = str(exc)
-                # Preserve legacy constructor paths when screen-off is not selected
-                # (existing M2 tests and clients still use the original shape).
-                candidate = None
-                if not error:
-                    options = {}
-                    if profile == "custom":
-                        options["quality"] = quality_settings
-                    if experiment:
-                        options["display_source"] = experiment
-                    if screen_off:
-                        options["screen_off"] = True
-                    candidate = LiveVideo(serial, profile=profile, **options)
-                if candidate is None:
-                    pass
-                elif not session_manager.reserve(device_id, candidate):
-                    error = "这台设备已有实时投屏会话，请先停止原会话"
-                else:
-                    stream = candidate
-                    if VIDEO_ENGINE == "webrtc":
-                        # Do not start capture until the offer is authenticated
-                        # and an SDP answer has been sent to this same WS.
-                        from ..m2_webrtc import ScrcpyH264Track
-                        stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
-                    else:
-                        try:
-                            stream.start()
-                        except (RuntimeError, OSError):
-                            session_manager.complete(device_id, candidate, clean=True)
-                            stream = None
-                            error = "视频会话未能启动，请稍后重试"
+        serial = prepared.serial
+        unlock_secret = prepared.unlock_secret
+        adb_check_ms = prepared.adb_check_ms
+        if VIDEO_ENGINE == "webrtc":
+            # Media objects belong to the event loop; admission creates none.
+            from ..m2_webrtc import ScrcpyH264Track
+            stream.webrtc_track = ScrcpyH264Track(asyncio.get_running_loop())
+        else:
+            worker_launch_attempted = True
+            try:
+                stream.start()
+            except (RuntimeError, OSError):
+                await websocket.send_json({"type": "error", "message": "视频会话未能启动，请稍后重试"})
+                return
 
-        if error:
-            await websocket.send_json({"type": "error", "message": error})
-            return
         # Bound parallel SDP/ICE and scrcpy startup without a global device lock.
         if not resource_budget.acquire_start(device_id, stream.session_id):
             await websocket.send_json({
@@ -276,7 +253,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         continue  # NEVER interpret arbitrary device/ADB commands
                     if message.get("session_id") != stream.session_id:
                         break  # old or cross-session control attempt: terminate THIS WS
-                    current = store.get(device_id)
+                    current = await asyncio.to_thread(store.get, device_id)
                     if (not current or selected_address(current) != serial
                             or manager.serial_for(current) != serial or requested_stop.is_set()):
                         break  # no implicit connect, IP fallback or stale-target injection
@@ -398,7 +375,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                             })
                             continue
                         try:
-                            manual_secret = store.get_unlock_secret(device_id)
+                            manual_secret = await asyncio.to_thread(store.get_unlock_secret, device_id)
                         except ValueError:
                             manual_secret = None
                         if not manual_secret:
@@ -528,7 +505,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             if now >= next_diagnostic and not stream.finished.is_set():
                 await asyncio.wait_for(websocket.send_json({
                     "type": "diagnostic", "session_id": stream.session_id,
-                    **stream.diagnostics(),
+                    **await asyncio.to_thread(stream.diagnostics),
                     "session_phase": (session_manager.snapshot(device_id, stream) or {}).get("phase"),
                     "start_budget": resource_budget.snapshot(),
                     "webrtc_sent_frames": (stream.webrtc_track.sent_frames
@@ -547,7 +524,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         "message": "当前 ADB 连接已中断，投屏已停止，请手动重新连接"
                     }), LIVE_WS_SEND_TIMEOUT)
                 break
-            current = store.get(device_id)
+            current = await asyncio.to_thread(store.get, device_id)
             if not current or selected_address(current) != serial or manager.serial_for(current) != serial:
                 await asyncio.wait_for(websocket.send_json({
                     "type": "error", "message": "设备连接地址已变更，投屏已停止"

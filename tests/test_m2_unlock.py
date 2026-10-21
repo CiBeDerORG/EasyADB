@@ -105,17 +105,18 @@ def test_auto_unlock_guarded_order_and_stop(monkeypatch):
 def test_all_stream_paths_share_server_owned_secret():
     from pathlib import Path
     app=Path("server/api/live_handler.py").read_text()
+    admission=Path("server/services/live_admission.py").read_text()
     client=Path("web/m2-multi.js").read_text()
     compact_client="".join(client.split())
-    assert "store.get_unlock_secret(device_id)" in app
+    assert "store.get_unlock_secret(device_id)" in admission
     assert "await asyncio.to_thread(automatic_unlock, stream, password)" in app
     assert '"wake", "unlock", "heartbeat", "webrtc_offer"' in app
-    assert 'store.get_unlock_secret(device_id)' in app
+    assert 'unlock_secret = prepared.unlock_secret' in app
     assert 'set(message) != {"type", "session_id"}' in app
     assert '"status": "unconfigured"' in app
     assert '"status": "busy"' in app
     assert '"source": "manual"' in app
-    assert "manual_secret = store.get_unlock_secret(device_id)" in app
+    assert "manual_secret = await asyncio.to_thread(store.get_unlock_secret, device_id)" in app
     assert "asyncio.create_task(run_unlock_attempt(manual_secret, \"manual\"))" in app
     assert "requestUnlock(card)" in client
     assert "JSON.stringify({type:'unlock',session_id:card.session})" in compact_client
