@@ -1,7 +1,17 @@
 # EasyADB V4 改造进度
 
+## 最新状态（2026-10-21）
+
+- 分支：`refactor/v4-frontend-standards`。本轮 9 项已确认 BUG 与连续取消边界均已修复并推送；下文「本轮批量 BUG 修复已完成」记录每项证据。
+- 统一验收：[CI #39571468668](https://github.com/CiBeDerORG/EasyADB/actions/runs/39571468668) **success**，代码 SHA `f8634ba284ae380ca6369cbaeedb13079c8d3834`；**373 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
+- 当前执行规则：**每项完成立即独立 commit + push；整批 BUG 全修完再统一 CI。** 验收结果文档使用 `[skip ci]`，核对仅文档差异；最终文档 HEAD 没有另跑 CI。此规则覆盖下方历史记录中的旧执行约定。
+- 真实环境验收未执行，未知之处保持未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
+
+## 历史记录
+
+> 以下按发生顺序保留当时的状态、失败及处理过程；其中“未开始”“未修复”“停点”和旧执行约定仅描述当时，不代表当前待办。
 - 工作分支：refactor/v4-frontend-standards。
-- 只在完成对应工作和本提交 CI 后更新。V3 暂缓，V2-F10 真实 FNOS/Android/OpenWrt/EasyTier 验收仍待执行。
+- 历史约定（已由本页顶部规则取代）：只在完成对应工作和本提交 CI 后更新。V3 暂缓，V2-F10 真实 FNOS/Android/OpenWrt/EasyTier 验收仍待执行。
 - **V4-01 已完成（自动化验收）**：独立分支起点 V2 HEAD `6221766`；代码改造与修复提交依次为 `1a56a7a`、`dc6b2be`、`5ff4702`、`433d031`、最终 [3548925](https://github.com/CiBeDerORG/EasyADB/commit/3548925e1fe0343ff86cd255a7a643e335fdc061)。最终 [CI #39456125975](https://github.com/CiBeDerORG/EasyADB/actions/runs/39456125975) **success**：受支持 ESLint/Prettier 版本及 npm lock、V4 命名/格式/目录门禁、现有 Node UI 契约、完整 Python、Shell 与 OpenWrt 烟测均通过。旧版前端 IIFE 和内联 CSS 仅显式豁免，不改变运行时与 API。
 - **V4-02 已完成（自动化验收）**：新增显式 API Client、DOM、Toast、Dialog ES Modules、一次性旧内联适配和精确静态资源白名单。初始提交 `bbc4055`，ESLint 环境修正 `e8ed87f`，最终格式修正 [485ecc3](https://github.com/CiBeDerORG/EasyADB/commit/485ecc34c90929c4e290cb2fd34fde46074d55dc)；[CI #39458266192](https://github.com/CiBeDerORG/EasyADB/actions/runs/39458266192) **success**。原 Python 276 项、Node/静态资源回归、Shell 和 OpenWrt 烟测均通过。真实浏览器/实机验证不以 CI 代替。
 - **V4-03 已完成（自动化验收）**：生产页面通过一次性模块注入使用 `LiveSessionController`，卡片兼容字段转发给每路唯一所有者。控制器统一持有 WS、Player、Touch、诊断统计、Session ID、停止超时和帧回调；`MultiView` 保留 DOM、批量启动/停止、画质及历史摘要，旧 Session 回调不能释放新卡片，超时不等于服务端清理。现有旧式 `m2_multi_contract.cjs` 测试夹具也注入真实控制器，专用 `v4_live_session_controller.mjs` 覆盖资源绑定、不可变 Session、计时器与诊断隔离。代码提交 `6c7522f` → `1a386ff` → `b5f529f` → `f1246aa` → `8aee887` → 最终 [a205512](https://github.com/CiBeDerORG/EasyADB/commit/a2055120185c823bcc6065ddabc372221ee70d9a)，[CI #39461806736](https://github.com/CiBeDerORG/EasyADB/actions/runs/39461806736) **success**；包含现有完整 Python/Node/Shell/OpenWrt 回归。没有变更后端业务及用户数据。
@@ -80,4 +90,35 @@
 - **前端兼容补验**：真实 page factory/API Client/HTML 的 8 个 Mock 409 场景（新增/修改/删除设备、切线路、临时地址保存/移除、分组修改/删除）均显示服务端原因、释放本轮操作锁，无错误成功提示或额外连接/发现写请求。线路、临时地址与批量删除保留原最终刷新；设备和分组表单保留输入与编辑身份。此为本地额外补验，未新增前端或 CI 用例，本轮没有修改前端文件。
 - **代码与 CI**：代码 [b8d9f22](https://github.com/CiBeDerORG/EasyADB/commit/b8d9f229ed64fc40c86939974b677b28a5042550)，远端 tree `b1519a9ba34760a87396af634663dad2db9746ff` 与本地验收版本一致；[CI #39567508233](https://github.com/CiBeDerORG/EasyADB/actions/runs/39567508233) **success**，job `119113245124`。实际日志 **322 passed, 1 warning in 33.77s**；原 21 个 Node/UI 入口、4 个架构/模块入口、V4 lint/format、JS/Shell 语法与 OpenWrt smoke 全部适用步骤通过。V2 专用 release gate 按 V4 分支条件 **skipped**，全量 pytest 保留 V2 回归；没有删除旧门禁或以旧提交 CI 冒充本次结果。
 - **审计更正与未处理项**：此前“普通连接失败仍提示成功”的怀疑，经真实 ASGI HTTP 路径（假 ADB）验证为不成立：`probe_device_record(force_connect=True)` 将失败转为 502，前端 API Client 走失败路径，该项已撤回。清单第 2～10 项仍待处理；`.env` 单引号兼容、依赖方向门禁仅保留为低优先级建议。未执行真实浏览器、FNOS/NAS、Docker、Android、OpenWrt/EasyTier 部署或设备验收，不把 Mock/CI 通过计为实机可用。
-- **当前停点**：审计第 1 项已提交并完成自动化验收，之后单独更新任务/进度文档；文档提交仍需核对自身 HEAD 的 CI。唯一下一项为 **审计第 2 项：投屏 WebSocket 事件循环中的同步阻塞**，收到用户下一次明确继续后才开始。本轮到此停止，不并行修复其他问题。V4-06 尚未开始，V2-F10 仍待实机验收，V3 暂缓。
+- **上轮停点（历史记录）**：审计第 1 项已提交并完成自动化验收，之后单独更新任务/进度文档；文档提交仍需核对自身 HEAD 的 CI。唯一下一项为 **审计第 2 项：投屏 WebSocket 事件循环中的同步阻塞**，收到用户下一次明确继续后才开始。本轮到此停止，不并行修复其他问题。V4-06 尚未开始，V2-F10 仍待实机验收，V3 暂缓。
+
+## 本轮批量 BUG 修复已完成（2026-10-21）
+
+### 范围与提交方式
+
+- 从干净的 V4 交接提交 `353a432f3eed1510827b02bc8b76133d761e97e7` 接续，先读三份 V4 文档并核对最新远端、工作区。此前的 DIRTY 记录修改保护继续保留，没有重复计入本轮新增成果。
+- 用户本轮改为：每项修完、定向回归并复核后立即独立提交、push；整批已确认 BUG 连续完成，全部代码完成后统一 CI。已完成 9 项 BUG，另有 1 个针对连续取消边界的补强提交；10 个代码提交均带 `[skip ci]`，没有逐项启动 CI。
+- 最后一项代码为 `be4bac5a456f12e42b3d9f47938275e84cf0e1cc`。随后创建仅触发验收的 `f8634ba284ae380ca6369cbaeedb13079c8d3834`，二者代码树均为 `7abb10064597d990eaa7c4607b210144bf788891`。各次发布均核对本地与远端 tree 一致，并按预期父提交推进分支，未强推、覆盖其他提交或部署真实设备。
+
+### 修复、证据与边界
+
+| 问题与已推送提交 | 实现与针对性验收 |
+| --- | --- |
+| 旧元数据响应覆盖新状态：[88d67bf](https://github.com/CiBeDerORG/EasyADB/commit/88d67bf6290e7aee104108500357d0058d6f00a9) | Controller 在同一密钥代次内保留唯一最新 GET owner。旧成功或失败沿用更新请求的结果，不能复活已删除记录或覆盖新发现数据；原连接结果合并和 4 台并发保持。对应连接、配置、管理、生命周期、弹窗与批量连接等 9 个既有 Node 入口通过。 |
+| 编码分组名：[28fc670](https://github.com/CiBeDerORG/EasyADB/commit/28fc6704d3be12e9744560c83ee96f5496c55032) | 自定义分组 APIRoute 使用 ASGI raw_path 保持编码段边界，匹配后只解码一次；没有改为会吞掉发现子路径的贪婪路由。11 项新增回归覆盖斜杠、字面 %2F、中文和特殊符号、发现授权/扫描/删除、重命名数据迁移、删除后的设备归组、root_path 和无 raw_path 的普通路径兼容；相关 50 项 Python 通过。编码斜杠支持以生产 ASGI 提供 raw_path 为前提。 |
+| 手动/定时部署并发：[6c45324](https://github.com/CiBeDerORG/EasyADB/commit/6c45324287869bd52793cf904f5711422d799f98) | 新共用部署锁覆盖两个入口与自更新后重新执行，通过实际文件描述符身份确认锁继承；锁忙不消耗定时间隔。成功标记使用构建开始时的 tree，构建期间 HEAD tree 改变则不前移标记。5 项新增回归覆盖双向互斥、两种构建模式、参数/锁继承、失败及外部 Git 更新；75 项部署相关回归和 3 项 V2 门禁测试通过。真实部署未执行；flock/文件描述符检查面向 Linux/FNOS。 |
+| WebSocket 事件循环阻塞：[4b53b9c](https://github.com/CiBeDerORG/EasyADB/commit/4b53b9ced48d8b36fd7f017c8f429bc7346f4482) | 准入服务将同步存储读取、设备锁、连接/实验显示扫描移到一个工作线程；锁内复核地址后预留，同一线程获取释放 RLock。媒体对象仍在事件循环创建；运行期数据库、解锁和诊断读取移出事件循环。新增 10 项，相关 145 项通过。旧解锁测试更新为检查实际新服务与调用链，没有放宽行为断言。 |
+| 定时任务前缀误删：[96b57b1](https://github.com/CiBeDerORG/EasyADB/commit/96b57b113152377b9df5221ed8b4f4e196c6ad16) | cron 过滤使用完整项目标记的字面后缀匹配，避免把路径当正则或前缀。新增 3 项，覆盖普通、空格/正则字符、反斜杠路径下的 start/restart/status/stop/run/run-locked；31 项定时测试通过。外部 cron 被模拟。 |
+| 副屏旧请求污染弹窗：[a764ffe](https://github.com/CiBeDerORG/EasyADB/commit/a764ffe19f4b4ea9ea2fcc9f4e65d1fd7b317bb3) | 每次打开保存独立设备、地址、密钥代次和 AbortController；请求、JSON、刷新、异常与 finally 都验证当前 owner。旧 close 事件或请求不能释放新 busy 状态、关闭新弹窗或写入新 preview ID。真实页面原脚本覆盖 24 组迟到成功/失败组合及密钥/地址变化、重试、预览归属。关闭弹窗不停止 MultiView 持有的投屏；取消浏览器请求不承诺撤销已经执行的后端实验。 |
+| 排队设备批量停止：[1ff989b](https://github.com/CiBeDerORG/EasyADB/commit/1ff989ba6894c00c28666f92e36e6a15fdb42fea) | 只调整按钮候选和计数，将选中的 launchQueue 设备纳入；原 stopSelected、服务端清理计数和 20 路上限保持。既有 m2_multi 入口执行真实页面、共享选择及四个 live 工厂，覆盖全队列/部分队列取消、运行与排队混合、清理乱序及未选设备保持；相关 5 个 Node 入口通过。 |
+| 副屏后台全局锁：[bea7ea1](https://github.com/CiBeDerORG/EasyADB/commit/bea7ea166d0ecd570f0e51b7470df056b9fefa85) | 8 个 Overlay/Cast 入口使用同设备 RLock；共享锁只用于记录副本、原子落盘和日志。多设备记录不会互相覆盖，落盘失败只回滚当前设备，仍先保存恢复信息再改手机。新增 12 项、相关 26 项通过：A 的 ADB 暂停时 B 的实验与状态可完成，同设备真实锁争用保持串行，Overlay/Cast 交错落盘/失败/重启，以及真实 ASGI 中 A 等待时 B 编辑和 C 新增仍完成。 |
+| 连续取消清理补强：[464a493](https://github.com/CiBeDerORG/EasyADB/commit/464a493966f64549e5517f62b5792ca0783d9ae4) | 交叉复审发现 cleanup 可被第二次取消中断，准入独立 Task 也可被 shutdown 直接取消。准入改用保留 copy_context 的 executor Future，反复取消仍取回自己的结果；清理作为受 shield 保护的任务，取回报告后先同步更新 SessionManager 再发送消息。直接取消清理子任务则保留精确 owner 并标 DIRTY。新增 2 项后，该文件 12 项，相关 147 项通过；独立复审无阻断。 |
+| worker 迟到清理回收：[be4bac5](https://github.com/CiBeDerORG/EasyADB/commit/be4bac5a456f12e42b3d9f47938275e84cf0e1cc) | LiveVideo 的真实 finally 在发布清理证明后发出线程安全完成通知，连接既有 SessionManager.late_cleanup。仅 stop/join 未抛错且 worker 尚未完成时订阅，处理完成与订阅竞态；不增加轮询或常驻等待线程，不依赖已关闭的 WS 事件循环。8 项新增回归及相关 96 项通过：20 槽全部迟到归还、forward/远端文件/peer 失败保留 DIRTY、旧通知不能释放替代会话、订阅竞态和 stop/join 抛错。 |
+
+### 统一 CI 与最终交接
+
+- [CI #39571468668](https://github.com/CiBeDerORG/EasyADB/actions/runs/39571468668) **success**，验收 SHA `f8634ba284ae380ca6369cbaeedb13079c8d3834`，job [119126428578](https://github.com/CiBeDerORG/EasyADB/actions/runs/39571468668/job/119126428578)。已读取实际 job 日志：**373 passed, 1 warning in 42.62s**，比本轮起点的 322 项增加 51 项；唯一 pytest 警告为既有 Starlette TestClient/httpx 弃用提示。
+- 全部适用步骤通过：Python 编译、全量 pytest、npm ci、ESLint、Prettier、4 个架构/模块入口、21 个 Node/UI 入口、生产 JS/Shell 语法、部署契约及 OpenWrt smoke。两份新增前端 helper 从既有 m2_multi / m3_page 入口实际执行；新增 Python 文件由 pytest 收集。V2 专用 release 步骤按分支条件 **skipped**，全量 pytest 保留 V2 回归，没有把 skipped 写为独立执行通过。
+- 本轮中间代码提交没有产生 CI run；整批只触发上述一次完整 CI，首次即 success。GitHub Actions 的最终 head_sha 与触发提交一致。任务清单和本进度在确认结果后更新，三份文档随 `[skip ci]` 提交发布；该文档 HEAD 未另跑 CI，验收结论属于上述代码 SHA，发布时核对两者差异仅为三份 V4 文档。
+- **当前结果：本轮 9/9 项已确认 BUG 均完成；含此前的记录修改保护，当前已确认审计清单全部处理。** 这不表示未知问题不存在。真实浏览器、NAS/FNOS、Docker、Android、OpenWrt/EasyTier 环境未执行，真实设备兼容性与部署效果仍未知；`.env` 单引号兼容和依赖方向门禁仍只是低优先级建议。普通连接失败提示的旧怀疑继续撤回。
+- 已按要求完成整批代码、逐项推送、统一验收和文档交接；本轮到此停止。
