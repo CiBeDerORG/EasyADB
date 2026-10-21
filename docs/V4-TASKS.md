@@ -10,17 +10,17 @@
 | --- | --- |
 | 仓库 | `CiBeDerORG/EasyADB` |
 | 工作分支 | `refactor/v4-frontend-standards`；不要使用默认 `main` 作为本轮开发基线 |
-| 已完成 | **V4-01～V4-05**；V4-05 的 A、B、批量操作锁修复、C、D1、D2、D3、E、**F** 均已自动化验收；本轮另完成用户指定的 **M3 部署入口迁移至 V4** |
-| 当前停点 | **V4 与 M3 部署补充均已提交并通过自动化验收；V4-06 尚未开始** |
-| 下一项 | **V4-06：收尾全量回归与验收记录**；须由用户下一次明确指示后才开始 |
-| 后续顺序 | V4-06；不得把 F 的回归通过计为 V4-06 已执行 |
-| 最近已验收 V4 代码 | [18ce0f0](https://github.com/CiBeDerORG/EasyADB/commit/18ce0f06f1ad3bfa19924aacb9296cd4af5816df)，[CI #39562752144](https://github.com/CiBeDerORG/EasyADB/actions/runs/39562752144) success |
+| 已完成 | **V4-01～V4-05**、M3 部署入口迁移至 V4；本轮完成 **审计修复第 1 项：未确认清理会话的设备/分组修改保护** |
+| 当前停点 | **审计第 1 项代码已提交并通过自动化验收；其余审计问题待处理，V4-06 尚未开始** |
+| 下一项 | **审计修复第 2 项：投屏 WebSocket 事件循环中的同步阻塞**；须由用户下一次明确指示后才开始 |
+| 后续顺序 | 按下方审计清单逐项处理，每项完成后停止；V4-06 仍需单独执行，不能以本轮 CI 通过代替 |
+| 最近已验收 V4 代码 | [b8d9f22](https://github.com/CiBeDerORG/EasyADB/commit/b8d9f229ed64fc40c86939974b677b28a5042550)，[CI #39567508233](https://github.com/CiBeDerORG/EasyADB/actions/runs/39567508233) success |
 | M3 迁移入口提交 | [396bbcd](https://github.com/CiBeDerORG/EasyADB/commit/396bbcd8173d00ce926708ca1a42b7d5915ef63d)，[CI #39563091403](https://github.com/CiBeDerORG/EasyADB/actions/runs/39563091403) success |
-| 上一项交接文档提交 | [4ef876f](https://github.com/CiBeDerORG/EasyADB/commit/4ef876f27cbd52a87d24fd04ebb34b9635745c4f)，[CI #39558378877](https://github.com/CiBeDerORG/EasyADB/actions/runs/39558378877) success；本轮从该 V4 基线核对部署遗漏 |
-| 已知待处理 | 仅选中待启动的排队设备时，页头批量停止按钮仍显示 0 台并禁用；本地 Mock 已复现，本轮未修复，不计为功能已全部验收 |
+| 上一项交接文档提交 | [708088a](https://github.com/CiBeDerORG/EasyADB/commit/708088a0653c8445ca023bf3ff6de01743c6082a)，[CI #39563544305](https://github.com/CiBeDerORG/EasyADB/actions/runs/39563544305) success；本轮从该干净 V4 基线接续审计修复 |
+| 已知待处理 | 下方审计第 2～10 项均未修复，包括仅选中排队设备时批量停止按钮禁用；不得据 CI 全绿宣称功能无遗漏 |
 | 尚未执行 | 真实浏览器、FNOS/NAS、Android、OpenWrt/EasyTier 部署与设备验收；V4-06 未开始，V3 暂缓 |
 
-以上 SHA 是交接快照，不是要求回退到固定版本。下一位 Agent 必须先读取远端最新分支 HEAD、工作区改动以及本文件和进度文件；若已有更新，基于新状态接续，不覆盖他人提交、不重复完成项。本轮按用户最新指定的 `origin/feat/m3-openwrt-discovery` 修改部署入口，并补齐 V4 更新支持；未修改 M2 分支、未合并 M3 业务代码到 V4。完成交接后停止，不启动 V4-06 或修复其他功能。
+以上 SHA 是交接快照，不是要求回退到固定版本。下一位 Agent 必须先读取远端最新分支 HEAD、工作区改动以及本文件和进度文件；若已有更新，基于新状态接续，不覆盖他人提交、不重复完成项。此前 M3 部署入口迁移已完成；本轮按用户在全局审计后的修复要求，仅处理审计第 1 项。完成交接后停止，不启动第 2 项或 V4-06。
 
 ## 执行规则
 
@@ -55,7 +55,35 @@
 - **本地定向证据**：V4 46 项更新/定时测试和 24 项既有部署模式测试通过；M3 39 项部署/迁移/定时测试通过，另有 12 份 Shell 语法检查。M3 测试从 `5ff047f` 原脚本启动，使用真实本地 Git 分叉历史和假 Docker/cron，检查两次更新、单分支克隆、原始参数、数据保留、旧引擎拒绝、失败重试和连续调度；V4 脚本快照与已发布 `18ce0f0` 逐字一致。
 - **配置与未验证边界**：V4 只实现 WebRTC，显式旧 `mse`/`webcodecs` 配置需由用户改为 `webrtc`；拒绝时可能已切换 Git，但尚未执行 Docker。host 网络及 ICE 动态 UDP 的真实环境适配未验收。自动兼容指旧 M3 保存配置；另存 M2/display-lab 的定时配置在手动迁移后须重新保存 V4 目标，详见 README。未执行真实 NAS/FNOS、浏览器、Android、OpenWrt/EasyTier 部署与设备验收。
 
-此前分支核查还发现 `web/m2-multi.js` 的 `selectedRunning` 只统计已建立卡片，未计入 `launchQueue`：仅选择排队设备时，批量停止入口禁用，尽管单台取消和 `stopSelected()` 的队列取消逻辑存在。该行为已经本地 Mock 复现，**尚未修复**；本轮只处理部署项，后续由用户明确指定处理。
+此前分支核查还发现 `web/m2-multi.js` 的 `selectedRunning` 只统计已建立卡片，未计入 `launchQueue`：仅选择排队设备时，批量停止入口禁用，尽管单台取消和 `stopSelected()` 的队列取消逻辑存在。该行为已经本地 Mock 复现，**尚未修复**；部署补充阶段未处理，现列入下方审计第 7 项。
+
+## 全局审计修复清单（2026-10-21）
+
+审计基线为 `708088a`，问题依据代码路径与本地可控复现确认；未执行真实设备或部署验收。以下编号沿用本轮审计顺序，不新增 V4 阶段编号，也不把修复一个问题计为全局验收完成。接续时需重新核对当前代码与复现条件，不能直接假定旧结论始终成立。
+
+| 审计项 | 优先级 | 状态 | 已确认问题与处理边界 |
+| --- | --- | --- | --- |
+| 1 | P1 | [x] | 原先可在会话未确认清理时删除设备，再以同地址重建绕过 DIRTY 保护；设备、线路及分组写入口现已统一前置检查，并在同一设备锁内完成写入。代码 `b8d9f22`，CI #39567508233 success。 |
+| 2 | P1 | [ ] | 投屏 WebSocket 的异步处理路径执行同步扫描/等待设备锁，会阻塞事件循环；下一项只处理这一问题。 |
+| 3 | P2 | [ ] | peer 先结束、worker 后完成清理时，注册表条目与 DIRTY 状态可能迟迟不回收；不能把本项允许已验证清理的记录修改当作该问题已修复。 |
+| 4 | P2 | [ ] | DisplayLab 在全局锁内等待 ADB，其他设备的 `has_pending()` 被阻塞；持有成员关系锁的写操作可进一步阻塞无关新增。 |
+| 5 | P2 | [ ] | 同一访问密钥代次内，较旧的元数据 GET 迟到可覆盖删除或发现更新后的设备状态。 |
+| 6 | P2 | [ ] | DisplayLab 旧设备请求迟到后可能污染后来打开的新设备弹窗及 preview ID。 |
+| 7 | P2 | [ ] | 只选中待启动队列设备时，批量停止按钮计数为 0 并禁用；现有取消队列逻辑未被入口正确开放。 |
+| 8 | P2 | [ ] | 分组名含 `/` 可创建成功，但后续按名称路径访问时返回 404，造成分组无法正常管理。 |
+| 9 | P2 | [ ] | 手动与定时部署并发时，成功标记可能记录另一轮 HEAD，导致后续错误跳过尚未成功部署的版本。 |
+| 10 | P2 | [ ] | 定时任务按名称前缀过滤，停止 `EasyADB` 可误删 `EasyADB-staging` 的 cron 项。 |
+
+### 第 1 项已完成：未确认清理会话的记录修改保护
+
+- `require_clean_sessions()` 复用现有 `LiveRegistry.is_cleaned()`，在设备更新/删除、线路切换、临时地址修改/移除、分组更新/删除之前检查清理证明。设备锁从检查一直持有到写入结束，与投屏准入使用同一把锁；分组先锁定全部成员并检查全部成员，再进入存储更新，不部分修改。
+- `starting`、`running`、`cleaning`、DIRTY 且清理未确认时返回 **409**，数据库、地址占用、连接缓存和会话所有权均保留，不先执行 `stop()` 或释放会话。设备更新包含仅改名；这是本次修复明确收紧的后端行为。已有临时地址保护改用公共检查，原错误提示保持原样。
+- 无会话或清理已验证时，保留原成功路径；普通 ADB 已连接不等于投屏会话忙碌，无关设备、新设备和新分组仍可管理。清理完成但条目尚留在注册表时允许修改，不单凭旧 DIRTY 标签永久拒绝；迟到清理自动回收仍归第 3 项。
+- 新增 `tests/test_device_mutation_sessions.py` 的 **18 项**回归：生命周期、三项清理证明、删除后同地址重建、整组原子拒绝、无关操作、已清理残留条目，以及修改与投屏准入的两种锁竞争顺序。并发用例执行真实设备锁与 SessionManager 的预留边界，不声称是完整 WebSocket/实机测试。原线路切换测试改为先断言 409、确认清理后再验证成功。
+- 本地新回归 **18 passed**，相关既有回归 **53 passed**；前端真实页面/API 模块的 8 个 Mock 409 场景显示原因并释放操作锁，无错误成功提示或额外连接/发现写请求。后者为本地兼容补验，未增加前端文件或 CI 用例。
+- 代码 [b8d9f22](https://github.com/CiBeDerORG/EasyADB/commit/b8d9f229ed64fc40c86939974b677b28a5042550)，[CI #39567508233](https://github.com/CiBeDerORG/EasyADB/actions/runs/39567508233) **success**：**322 passed, 1 warning**，21 个 Node/UI 入口、4 个架构/模块入口、V4 lint/format、JS/Shell 与 OpenWrt 检查全部适用步骤通过。V2 专用 release 步骤因分支条件 skipped，全量 pytest 保留 V2 回归。没有修改 SessionManager、LiveRegistry、DB 结构、REST/WS 路由或 wire 字段，没有执行真实环境验收。
+
+审计中曾怀疑“普通连接失败仍弹成功提示”，经真实 ASGI HTTP 路径（假 ADB）验证不成立：`probe_device_record(force_connect=True)` 返回 502，前端 API Client 进入失败路径。**该项已撤回，不列为缺陷或待修复任务。** `.env` 单引号兼容与架构依赖方向门禁仅为低优先级建议，未纳入本项实施；当前未知的实机行为继续标记为未验证。
 
 ## 二、V4-05 细分任务清单
 
@@ -190,11 +218,13 @@ D2、D3 是对已经讨论的 D 阶段范围进行编号，方便后续接续，
 | `tests/m2_multi_contract.cjs`、`tests/m2_twenty_contract.cjs` | 执行原样生产 MultiView + 真实 live 模块；保留会话/停止/重连隔离，并验证真实 20 路、超额拒绝与服务端确认前占槽。 |
 | `tests/device_connect_order_contract.cjs`、`tests/progressive_connect_contract.cjs` | 连接优先排序、选择与逐台开放契约。 |
 | `server/api/static.py`、`tests/test_v4_frontend_assets.py` | 每新增前端资源须同步精确白名单、MIME/缓存与非法路径测试，不能开放任意静态目录。 |
+| `server/services/operations.py`、`device_service.py`、`device_control.py`、`group_service.py` | 记录写入前检查现有会话清理证明；检查和写入共用设备锁，分组先检查全部成员。不得在拒绝前写数据库、清缓存或停止/释放原会话。 |
+| `tests/test_device_mutation_sessions.py` | 18 项真实 HTTP/SQLite/锁/SessionManager 回归，仅隔离 ADB 与 worker 资源完成；包含 DIRTY 删除重建与两种准入竞争顺序，由全量 pytest 自动执行。 |
 | `.github/workflows/test.yml`、`package.json` | 验收命令与现有全部门禁的执行入口；新增测试必须接入，不能只新建文件不执行。 |
 
 ## 八、验收与交接要求
 
-F 代码 `44aad3b` 对应 CI #39557844420 success：276 项 Python、21 个 Node/UI 入口、4 个架构/模块入口、V4 ESLint/Prettier、27 份生产 JS 语法、Shell 语法、部署脚本契约和 OpenWrt 烟测通过；本地完整回归及最后两处测试断言的定向补验均通过，最终代码 CI 全量通过。V2 专用 release gate 因分支条件 skipped，全量 pytest 保留 V2 回归，不能写为此分支独立步骤通过。下一位 Agent 须以当次实际 CI 结果为准。
+最新已验收代码 `b8d9f22` 对应 CI #39567508233 success：322 项 Python、21 个 Node/UI 入口、4 个架构/模块入口、V4 ESLint/Prettier、JS/Shell 语法、部署脚本契约和 OpenWrt 烟测通过。V2 专用 release gate 因分支条件 skipped，全量 pytest 保留 V2 回归，不能写为此分支独立步骤通过。F 与部署补充的历史数量见各自记录；下一位 Agent 须以当次实际 CI 结果为准。
 
 执行当前 `.github/workflows/test.yml` 的全部适用步骤，包括依赖安装、Python 编译和全量 pytest、所有 Node/UI 回归、`npm run lint`、`npm run format:check`、`npm run test:architecture`、Shell 语法及 OpenWrt 烟测。CI 中有分支条件的步骤须按实际记录 passed/skipped，不把 skipped 写成单独执行通过。禁止临时格式化后只检查修改后的工作区来掩盖未提交的格式问题。
 
@@ -204,6 +234,6 @@ F 代码 `44aad3b` 对应 CI #39557844420 success：276 项 Python、21 个 Node
 
 ## 当前停点
 
-**已完成 V4-01～V4-05，包括 V4-05-A/B/C/D1/D2/D3/E/F 和批量操作锁修复；本轮 M3 部署入口迁移到 V4 的补充也已提交并通过自动化验收。V4-06 尚未开始，排队设备批量停止入口问题尚未修复，实机验收尚未执行。**
+**已完成 V4-01～V4-05、M3 部署补充，以及本轮审计第 1 项。审计第 2～10 项尚未修复，V4-06 尚未开始，实机验收尚未执行。**
 
-本轮仅完成部署补充、提交、验收并更新文档，到此停止。原计划下一项仍是 **V4-06：收尾全量回归与验收记录**，须收到用户再次明确指示后才开始；本轮部署回归不等于 V4-06 已开始或完成。文档提交还须核对其自身 HEAD 的 CI，不能借用上述代码提交的成功。
+本轮仅完成未确认清理会话的记录修改保护、提交、验收并更新文档，到此停止。唯一下一项是 **审计第 2 项：投屏 WebSocket 事件循环中的同步阻塞**，须收到用户再次明确指示后才开始；不得同时处理迟到清理回收、前端竞态、批量停止或部署问题。文档提交还须核对其自身 HEAD 的 CI，不能借用上述代码提交的成功。
