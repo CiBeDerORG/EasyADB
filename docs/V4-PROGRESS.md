@@ -15,3 +15,8 @@
 
 - **V4-05 阶段 A 验收**：最终修复提交 `20c3e6f`，CI #39519904579 success（现有完整 Python/Node/Shell/OpenWrt + V4 门禁）；历史 CSS 测试已对照实际样式资源，生产 CSS 内容未修改。
 - **V4-05 阶段 B（待 CI）**：新增 `features/devices/device-list-model.js`，设备展示分组与连接优先排序不再写入生产页面主体。模块注入后刷新列表，旧经典脚本预装配/Node VM 显式兼容；新增纯模型行为测试与精确 JS 静态路由。连接、CRUD、五个 dialog 与 WebRTC/V2 SessionManager 不变。
+
+- **V4-05 阶段 B 已完成（自动化验收，2026-10-21）**：模型提交 `529ba87`、格式修正 `0c0f471` 均已推送；后者的 CI #39520431989 在北京时间 08:18:42 已结束为 failure，并非 Runner 一直排队或运行。276 项 Python 和 V4 规范门禁通过，失败点是 `tests/device_connect_order_contract.cjs` 仍用源码正则要求排序直接写在 `render()` 内；阶段 B 已将其迁到注入模型/兼容函数，旧断言未同步。没有证据据此判断聊天客户端停止响应的内部原因。
+- 修复提交 [f8f8446](https://github.com/CiBeDerORG/EasyADB/commit/f8f84467802cb2c481d5a4aac63edcccd2f19346) 将这两处位置断言替换为真实 `render()` 分组路径的行为验证，分别执行模块注入前后路径；验证已连接分组优先、组内稳定排序、旧线路状态排除、空组/未分组和发现配置保留、原始批量输入不变，并确认注入后确实调用生产模块。原批量连接成功选择断言保留，不通过删测/跳过门禁消除失败。
+- 修复提交 [CI #39523931430](https://github.com/CiBeDerORG/EasyADB/actions/runs/39523931430) **success**：276 项 Python、V4 lint/format/架构检查、原 Node UI 契约、Shell 语法和 OpenWrt 烟测均通过。本地 17 项 Node 契约/模块入口及 Shell/OpenWrt 烟测通过；Python 结果来自 GitHub CI。
+- **当前停点：V4-05 阶段 A/B 已验收，整项仍进行中**。设备管理的 DOM 渲染、CRUD/连接事件和预装配兼容代码仍在 `index.html`，旧 IIFE 回退也仍保留；后续继续分小步迁移，不把模型抽离当作页面 JS 全部迁移。V4-06 未开始；不合并 `refactor/session-v2`，不执行真实部署或设备验收。
