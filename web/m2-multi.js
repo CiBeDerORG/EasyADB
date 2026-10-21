@@ -1093,12 +1093,25 @@
             this.end(card, false);
             return;
           }
+          if (m.type === 'replaced') {
+            if (!card.sessionController.acceptsMessage(ws, m)) return;
+            const message = m.message || '该设备的实时画面已由其他页面接管';
+            const wasPendingStop = Boolean(this.stopBatch?.pending.has(card.id));
+            card.reconnectRequested = false;
+            mark(message);
+            this.end(card, false, { sendStop: false, lastStatus: '已由其他页面接管' });
+            if (!wasPendingStop) this.status(card.name + '：' + message);
+            return;
+          }
           if (m.session_id && card.session && m.session_id !== card.session) {
             mark('会话标识不匹配，已停止此路', true);
             this.end(card, false);
             return;
           }
-          if (m.type === 'starting') {
+          if (m.type === 'waiting' && m.reason === 'takeover') {
+            if (!card.session && card.state !== 'stopping')
+              mark(m.message || '正在等待旧画面完成清理…');
+          } else if (m.type === 'starting') {
             if (!card.sessionController.assignSession(m.session_id)) {
               mark('本轮会话标识无效或已被替换', true);
               this.end(card, false);
@@ -1690,7 +1703,7 @@
       for (const card of [...this.cards.values()]) this.end(card, false);
       this.updatePicker();
     }
-    end(card, clean) {
+    end(card, clean, { sendStop = true, lastStatus = null } = {}) {
       // A delayed callback from an old device session must never delete its replacement.
       if (card.closed || this.cards.get(card.id) !== card) return;
       card.closed = true;
@@ -1704,7 +1717,12 @@
         }
         fullscreenExit.catch(() => {});
       }
-      card.sessionController.dispose({ clean, openSocketState: WebSocket.OPEN, video: card.video });
+      card.sessionController.dispose({
+        clean,
+        sendStop,
+        openSocketState: WebSocket.OPEN,
+        video: card.video,
+      });
       if (card.menuTimer !== null) {
         root.clearTimeout(card.menuTimer);
         card.menuTimer = null;
@@ -1765,7 +1783,7 @@
       }
       this.lastLiveStatus.set(
         card.id,
-        clean ? '已停止' : card.lastFailure ? '异常结束' : '已结束 · 清理未确认',
+        lastStatus ?? (clean ? '已停止' : card.lastFailure ? '异常结束' : '已结束 · 清理未确认'),
       );
       if (!card.keepSelected && this.cards.size > 1) this.dropBatchSelection(card.id);
       this.cards.delete(card.id);

@@ -96,7 +96,7 @@ export class LiveSessionController {
     this.stopTimer = null;
   }
 
-  dispose({ clean, openSocketState, video }) {
+  dispose({ clean, sendStop = true, openSocketState, video }) {
     if (this.disposed) return false;
     this.disposed = true;
     this.closed = true;
@@ -122,7 +122,9 @@ export class LiveSessionController {
       socket.onerror = null;
       socket.onclose = null;
       try {
-        if (socket.readyState === openSocketState && !clean) socket.send('stop');
+        // A server-revoked owner only releases its local resources. This is
+        // distinct from proof that the server finished cleaning that session.
+        if (socket.readyState === openSocketState && !clean && sendStop) socket.send('stop');
         socket.close();
       } catch {
         // Local close failure does NOT confirm the server released this session.

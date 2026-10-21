@@ -122,6 +122,26 @@ assert(next.dispose({ clean: true, openSocketState: 1 }));
 assert.deepEqual(nextSocket.sent, []);
 assert(destroyed.includes('next'));
 
+current = 'replaced';
+const replaced = create('replaced');
+const replacedSocket = socket('replaced');
+assert(replaced.bindSocket(replacedSocket));
+assert(replaced.assignSession('old-page-session'));
+let replacedPlayerDestroyed = 0;
+let replacedTouchDestroyed = 0;
+assert(replaced.bindPlayer({ destroy: () => replacedPlayerDestroyed++ }));
+assert(replaced.bindTouch({ destroy: () => replacedTouchDestroyed++ }));
+replaced.armStopTimeout(() => assert.fail('revoked owner cannot time out later'), 40000);
+assert(replaced.dispose({ clean: false, sendStop: false, openSocketState: 1 }));
+assert.deepEqual(replacedSocket.sent, [], 'revocation closes locally without sending stop');
+assert(destroyed.includes('replaced'));
+assert.equal(replacedPlayerDestroyed, 1);
+assert.equal(replacedTouchDestroyed, 1);
+assert.equal(replaced.stopTimer, null);
+assert.equal(replaced.closed, true);
+assert.equal(replaced.dispose({ clean: false, openSocketState: 1 }), false);
+assert.deepEqual(replacedSocket.sent, [], 'a second disposal cannot request a remote stop');
+
 const multi = readFileSync(new URL('../web/m2-multi.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../web/app/page-controller.js', import.meta.url), 'utf8');
 assert.match(multi, /this\.createSessionController\s*=\s*createLiveSessionController/);

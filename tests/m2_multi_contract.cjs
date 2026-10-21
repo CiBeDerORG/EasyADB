@@ -1643,6 +1643,7 @@ async function waitForCheck(id) {
   assert.equal(multi.getChoice('id-1').screen_off, false);
   assert.equal(multi.getChoice('id-2').experimental_resolution, null, 'per-device isolation');
   await require('./helpers/queued-stop-contract.cjs')();
+  await require('./helpers/live-handoff-contract.cjs')();
   console.log('M2 modal draft/save/cancel, quality and playback settings: OK');
   console.log('M2 fullscreen video controls, close-to-management and startup collapse: OK');
   console.log(

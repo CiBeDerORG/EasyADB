@@ -366,7 +366,9 @@ def test_shutdown_cancel_then_repeated_cleanup_cancel_retains_the_exact_owner(ru
             # Simulate shutdown cancelling all request Tasks. The executor
             # result must not be a second Task that can lose its return value.
             pending = asyncio.all_tasks() - {asyncio.current_task()}
-            assert pending == {task}
+            watchers = {other for other in pending if other.get_name() == "live-pending-start"}
+            assert len(watchers) == 1
+            assert pending == {task} | watchers
             for other in pending:
                 other.cancel()
             await asyncio.sleep(0)

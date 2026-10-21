@@ -202,7 +202,16 @@ def test_unverified_cleanup_fails_closed_and_never_reports_ended(monkeypatch, tm
                     break
             assert "ended" not in seen
         assert app.live_registry.sessions[device["id"]].cleanup_complete is False
+        dirty = app.live_registry.sessions[device["id"]]
+        handler = importlib.import_module("server.api.live_handler")
+        monkeypatch.setattr(handler, "LIVE_TAKEOVER_TIMEOUT", 0.05)
         with client.websocket_connect(path, headers={"origin": "http://testserver"}) as other:
             other.send_json(auth)
             msg = other.receive_json()
-            assert msg["type"] == "error" and "已有实时投屏" in msg["message"]
+            assert msg["type"] == "waiting" and msg["reason"] == "takeover"
+            msg = other.receive_json()
+            assert msg["type"] == "error" and msg["code"] == "takeover_timeout"
+            with pytest.raises(WebSocketDisconnect):
+                other.receive_json()
+        assert app.live_registry.sessions[device["id"]] is dirty
+        assert dirty.cleanup_complete is False

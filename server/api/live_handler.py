@@ -22,6 +22,9 @@ from ..services.live_admission import prepare_live_session
 from ..services.session_cleanup import cleanup_live_session
 
 
+LIVE_TAKEOVER_TIMEOUT = 35
+
+
 async def _owned_result(pending, on_cancel=None):
     """Drain an owned operation before propagating cancellation of its waiter."""
     cancellation = None
@@ -86,6 +89,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
     manual_stop = False
     worker_launch_attempted = False
     budget_claimed = False
+    request = None
+    replacement_notice = None
+    pending_client_left = False
     try:
         try:
             initial = await asyncio.wait_for(websocket.receive_json(), timeout=8)
@@ -151,7 +157,66 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         if experiment is not None and screen_off:
             await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
             return
+        loop = asyncio.get_running_loop()
+        owner_task = asyncio.current_task()
         admission_cancelled = threading.Event()
+        admission_changed = asyncio.Event()
+
+        async def send_replaced():
+            message = {"type": "replaced", "message": "该设备的实时画面已由其他页面接管"}
+            if request.stream is not None:
+                message["session_id"] = request.stream.session_id
+            try:
+                await asyncio.wait_for(websocket.send_json(message), LIVE_WS_SEND_TIMEOUT)
+            except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
+                pass
+
+        def revoke_on_loop():
+            nonlocal replacement_notice
+            if owner_task.done() or request.cancelled.is_set():
+                return
+            requested_stop.set()
+            admission_cancelled.set()
+            # The coordinator has already revoked this exact owner's commands.
+            # Stop its track on its own event loop, without waiting for ADB join.
+            track = getattr(request.stream, "webrtc_track", None)
+            if track is not None:
+                track.stop()
+            if receiver is not None:
+                receiver.cancel()
+            if replacement_notice is None:
+                replacement_notice = asyncio.create_task(send_replaced())
+            owner_task.cancel()
+
+        def schedule(callback):
+            try:
+                loop.call_soon_threadsafe(callback)
+            except RuntimeError:
+                pass  # this request's event loop has already shut down
+
+        request = session_manager.begin_request(
+            device_id, on_replaced=lambda: schedule(revoke_on_loop),
+            on_changed=lambda: schedule(admission_changed.set),
+        )
+
+        async def watch_pending_start():
+            nonlocal pending_client_left
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    if raw == "stop" or len(raw) > 32768:
+                        break
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                pass
+            pending_client_left = True
+            request.cancelled.set()
+            admission_cancelled.set()
+            requested_stop.set()
+            owner_task.cancel()
+
+        # A page that closes/stops during device validation or old-owner
+        # cleanup must not leave a request that starts after the page is gone.
+        watchdog = asyncio.create_task(watch_pending_start(), name="live-pending-start")
         prepare = functools.partial(
             prepare_live_session, device_id,
             selected_serial=initial.get("selected_serial"), profile=profile,
@@ -159,18 +224,50 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             screen_off=screen_off, store=store, manager=manager,
             display_lab=display_lab, session_manager=session_manager,
             live_video=LiveVideo, selected_address=selected_address,
-            is_connected=is_connected, cancelled=admission_cancelled,
+            is_connected=is_connected, cancelled=admission_cancelled, request=request,
         )
-        # Use an executor Future, not a separate to_thread Task: cancelling all
-        # request Tasks during shutdown must not discard a late reservation.
-        admission = asyncio.get_running_loop().run_in_executor(
-            None, contextvars.copy_context().run, prepare)
-        prepared, cancellation = await _owned_result(admission, admission_cancelled.set)
-        stream = prepared.stream
-        if cancellation is not None:
-            raise cancellation  # finally cleans THIS unstarted reservation
-        if prepared.error:
-            await websocket.send_json({"type": "error", "message": prepared.error})
+        takeover_deadline = None
+        while True:
+            admission_changed.clear()
+            # Use an executor Future, not a separate to_thread Task: cancelling
+            # all request Tasks must not discard a late resource reservation.
+            admission = loop.run_in_executor(None, contextvars.copy_context().run, prepare)
+            prepared, cancellation = await _owned_result(admission, admission_cancelled.set)
+            stream = prepared.stream
+            if cancellation is not None:
+                raise cancellation  # finally cleans THIS unstarted reservation
+            if prepared.superseded:
+                request.replaced.set()
+                replacement_notice = asyncio.create_task(send_replaced())
+                return
+            if prepared.error:
+                await websocket.send_json({"type": "error", "message": prepared.error})
+                return
+            if not prepared.waiting:
+                break
+            if takeover_deadline is None:
+                takeover_deadline = loop.time() + LIVE_TAKEOVER_TIMEOUT
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "waiting", "reason": "takeover",
+                    "message": "正在等待旧画面完成清理…",
+                }), LIVE_WS_SEND_TIMEOUT)
+            try:
+                await asyncio.wait_for(admission_changed.wait(),
+                                       max(0, takeover_deadline - loop.time()))
+            except asyncio.TimeoutError:
+                await asyncio.wait_for(websocket.send_json({
+                    "type": "error", "code": "takeover_timeout",
+                    "message": "旧会话资源尚未完全清理，请稍后重试",
+                }), LIVE_WS_SEND_TIMEOUT)
+                return
+        if stream is None or requested_stop.is_set():
+            return
+        # Only one task may read the WebSocket. Retire the pending-start
+        # watcher before starting normal SDP/control command handling.
+        watchdog.cancel()
+        await asyncio.gather(watchdog, return_exceptions=True)
+        watchdog = None
+        if not session_manager.is_latest_request(device_id, request):
             return
         serial = prepared.serial
         unlock_secret = prepared.unlock_secret
@@ -264,7 +361,8 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                         break  # old or cross-session control attempt: terminate THIS WS
                     current = await asyncio.to_thread(store.get, device_id)
                     if (not current or selected_address(current) != serial
-                            or manager.serial_for(current) != serial or requested_stop.is_set()):
+                            or manager.serial_for(current) != serial or requested_stop.is_set()
+                            or not session_manager.is_latest_request(device_id, request)):
                         break  # no implicit connect, IP fallback or stale-target injection
                     kind = message["type"]
                     if kind == "webrtc_offer":
@@ -296,12 +394,20 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                                     await asyncio.to_thread(stream.stop)
                             await asyncio.wait_for(pc.setRemoteDescription(
                                 RTCSessionDescription(sdp=message["sdp"], type="offer")), timeout=12)
+                            if requested_stop.is_set() or not session_manager.is_latest_request(device_id, request):
+                                break
                             answer = await asyncio.wait_for(pc.createAnswer(), timeout=12)
+                            if requested_stop.is_set() or not session_manager.is_latest_request(device_id, request):
+                                break
                             await asyncio.wait_for(pc.setLocalDescription(answer), timeout=15)
+                            if requested_stop.is_set() or not session_manager.is_latest_request(device_id, request):
+                                break
                             await asyncio.wait_for(websocket.send_json({
                                 "type": "webrtc_answer", "session_id": stream.session_id,
                                 "sdp": pc.localDescription.sdp
                             }), LIVE_WS_SEND_TIMEOUT)
+                            if requested_stop.is_set() or not session_manager.is_latest_request(device_id, request):
+                                break
                             worker_launch_attempted = True
                             try:
                                 stream.start()
@@ -590,6 +696,9 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
                 break
             elif kind == "end":
                 break
+    except asyncio.CancelledError:
+        if not pending_client_left and not (request is not None and request.replaced.is_set()):
+            raise
     except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
         pass
     finally:
@@ -610,44 +719,58 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         ))
         # A repeated request cancellation cannot abandon stop/join or discard
         # their proof before SessionManager records the final resource state.
+        cleanup_cancellation = None
         try:
-            report, cleanup_cancellation = await _owned_result(cleanup)
-        except asyncio.CancelledError:
-            # A shutdown may directly cancel the cleanup Task itself. With no
-            # report, retain this owner as DIRTY rather than infer success.
+            try:
+                report, cleanup_cancellation = await _owned_result(cleanup)
+            except asyncio.CancelledError:
+                # A shutdown may directly cancel the cleanup Task itself. With
+                # no report, retain this owner as DIRTY, never infer success.
+                if stream:
+                    session_manager.complete(device_id, stream, clean=False,
+                        reason="资源清理任务被取消，清理尚未确认")
+                raise
             if stream:
-                session_manager.complete(device_id, stream, clean=False,
-                    reason="资源清理任务被取消，清理尚未确认")
-            raise
-        if stream:
-            if report.cleaned:
-                # Ended(cleanup_complete=true) only after all session-owned
-                # video/control/ADB resources were verifiably released.
-                session_manager.complete(device_id, stream, clean=True)
-                if manual_stop:
-                    try:
-                        await asyncio.wait_for(websocket.send_json({
-                            "type": "ended", "session_id": stream.session_id,
-                            "reason": "manual", "cleanup_complete": True
-                        }), LIVE_WS_SEND_TIMEOUT)
-                    except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
-                        pass
-            else:
-                session_manager.complete(device_id, stream, clean=False,
-                    reason=report.reason)
-                # Fail closed: registry continues to reserve a worker whose
-                # cleanup has not finished. reserve() retires it once finished.
-                try:
-                    await asyncio.wait_for(websocket.send_json({
-                        "type": "error",
-                        "message": "视频会话尚未完全清理，设备会话保持占用；不会同时启动第二路视频"
-                    }), LIVE_WS_SEND_TIMEOUT)
-                except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
-                    pass
-        try:
-            await asyncio.wait_for(websocket.close(), LIVE_WS_SEND_TIMEOUT)
-        except (RuntimeError, OSError, asyncio.TimeoutError):
-            pass
-        if cleanup_cancellation is not None:
+                replaced = request is not None and request.replaced.is_set()
+                if report.cleaned:
+                    # Only verified cleanup may release this exact stream.
+                    session_manager.complete(device_id, stream, clean=True)
+                    if manual_stop and not replaced:
+                        try:
+                            await asyncio.wait_for(websocket.send_json({
+                                "type": "ended", "session_id": stream.session_id,
+                                "reason": "manual", "cleanup_complete": True
+                            }), LIVE_WS_SEND_TIMEOUT)
+                        except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
+                            pass
+                else:
+                    session_manager.complete(device_id, stream, clean=False,
+                        reason=report.reason)
+                    # A takeover notice never claims that cleanup succeeded.
+                    # The new page remains waiting on the old DIRTY owner.
+                    if not replaced:
+                        try:
+                            await asyncio.wait_for(websocket.send_json({
+                                "type": "error",
+                                "message": "视频会话尚未完全清理，设备会话保持占用；不会同时启动第二路视频"
+                            }), LIVE_WS_SEND_TIMEOUT)
+                        except (WebSocketDisconnect, RuntimeError, OSError, asyncio.TimeoutError):
+                            pass
+        finally:
+            try:
+                if replacement_notice is not None:
+                    _, notice_cancellation = await _owned_result(replacement_notice)
+                    cleanup_cancellation = cleanup_cancellation or notice_cancellation
+            finally:
+                if request is not None:
+                    session_manager.finish_request(device_id, request)
+            # Retire callbacks before awaiting close; a captured late revoke
+            # must not cancel or message an already finalized request.
+            try:
+                await asyncio.wait_for(websocket.close(), LIVE_WS_SEND_TIMEOUT)
+            except (RuntimeError, OSError, asyncio.TimeoutError):
+                pass
+        if (cleanup_cancellation is not None and not pending_client_left
+                and not (request is not None and request.replaced.is_set())):
             raise cleanup_cancellation
 

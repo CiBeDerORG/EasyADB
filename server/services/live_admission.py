@@ -18,12 +18,14 @@ class LiveAdmission:
     unlock_secret: str = field(default=None, repr=False)
     adb_check_ms: int = 0
     error: str = None
+    waiting: bool = False
+    superseded: bool = False
 
 
 def prepare_live_session(device_id, *, selected_serial, profile, quality_settings,
                          experiment, screen_off, store, manager, display_lab,
                          session_manager, live_video, selected_address,
-                         is_connected, cancelled):
+                         is_connected, cancelled, request):
     if cancelled.is_set():
         return LiveAdmission()
     device = store.get(device_id)
@@ -61,6 +63,10 @@ def prepare_live_session(device_id, *, selected_serial, profile, quality_setting
                 return LiveAdmission(error=str(exc))
         if cancelled.is_set():
             return LiveAdmission()
+        # Order explicit requests before slow validation, but only publish a
+        # fully valid device request. Invalid pages cannot revoke a live owner.
+        if not session_manager.publish_request(device_id, request):
+            return LiveAdmission(superseded=not request.cancelled.is_set())
         options = {}
         if profile == "custom":
             options["quality"] = quality_settings
@@ -69,8 +75,13 @@ def prepare_live_session(device_id, *, selected_serial, profile, quality_setting
         if screen_off:
             options["screen_off"] = True
         candidate = live_video(serial, profile=profile, **options)
-        if not session_manager.reserve(device_id, candidate):
-            return LiveAdmission(error="这台设备已有实时投屏会话，请先停止原会话")
+        reserved = session_manager.reserve_latest(device_id, request, candidate)
+        if reserved == "waiting":
+            return LiveAdmission(waiting=True)
+        if reserved == "superseded":
+            return LiveAdmission(superseded=not request.cancelled.is_set())
+        if reserved == "full":
+            return LiveAdmission(error="实时投屏会话已达上限，请先停止其他设备的投屏")
         # Even a cancellation racing reserve must receive this exact owner.
         # The shielded caller drains admission and cleans it before exiting.
         return LiveAdmission(candidate, serial, secret, check_ms)
