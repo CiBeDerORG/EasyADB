@@ -337,3 +337,79 @@ def test_cancelled_adb_loss_cannot_later_clear_a_connection(runtime, monkeypatch
         assert source.manager.serial_for(device) == serial
     with held_device_lock(source.manager, device["id"]) as release:
         asyncio.run(run(release))
+
+
+def test_shutdown_cancel_then_repeated_cleanup_cancel_retains_the_exact_owner(runtime, monkeypatch):
+    source, devices, created = runtime
+    device = devices[0]
+    reserve_entered, reserve_release = threading.Event(), threading.Event()
+    stop_entered, stop_release = threading.Event(), threading.Event()
+    reserve = source.session_manager.reserve
+
+    def gated_reserve(device_id, stream):
+        accepted = reserve(device_id, stream)
+        stop = stream.stop
+        def gated_stop():
+            stop_entered.set()
+            assert stop_release.wait(3)
+            stop()
+        stream.stop = gated_stop
+        reserve_entered.set()
+        assert reserve_release.wait(3)
+        return accepted
+    monkeypatch.setattr(source.session_manager, "reserve", gated_reserve)
+
+    async def run():
+        task = asyncio.create_task(handle_live_video(Socket(selected_address(device)), device["id"], source))
+        try:
+            assert await asyncio.to_thread(reserve_entered.wait, 1)
+            # Simulate shutdown cancelling all request Tasks. The executor
+            # result must not be a second Task that can lose its return value.
+            pending = asyncio.all_tasks() - {asyncio.current_task()}
+            assert pending == {task}
+            for other in pending:
+                other.cancel()
+            await asyncio.sleep(0)
+            reserve_release.set()
+            assert await asyncio.to_thread(stop_entered.wait, 1)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            reserve_release.set()
+            stop_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert created[0].finished.is_set() and created[0].cleanup_complete
+        assert not source.live_registry.sessions
+        assert source.session_manager.snapshot(device["id"])["phase"] == "released"
+        assert source.resource_budget.snapshot()["starting"] == 0
+    asyncio.run(run())
+
+
+def test_direct_cleanup_task_cancellation_preserves_dirty_ownership(runtime, monkeypatch):
+    from server.api import live_handler
+    source, devices, created = runtime
+    device = devices[0]
+
+    async def run():
+        entered = asyncio.Event()
+        cleanup_tasks = []
+        async def pending_cleanup(**kwargs):
+            cleanup_tasks.append(asyncio.current_task())
+            entered.set()
+            await asyncio.Event().wait()
+        monkeypatch.setattr(live_handler, "cleanup_live_session", pending_cleanup)
+        task = asyncio.create_task(handle_live_video(Socket(selected_address(device)), device["id"], source))
+        await asyncio.wait_for(entered.wait(), 2)
+        cleanup_tasks[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert source.live_registry.sessions[device["id"]] is created[0]
+        assert not source.live_registry.is_cleaned(created[0])
+        state = source.session_manager.snapshot(device["id"])
+        assert state["phase"] == "dirty" and "取消" in state["reason"]
+        assert source.resource_budget.snapshot()["starting"] == 0
+    asyncio.run(run())

@@ -4,6 +4,8 @@ Exact M3 protocol and teardown are preserved; dependency aliases resolve from
 the owning application only for this explicit user-opened WebSocket session.
 """
 import asyncio
+import contextvars
+import functools
 import json
 import logging
 import queue
@@ -18,6 +20,24 @@ from ..m2_touch import InvalidTouch
 from ..m2_video_probe import VideoProbeError
 from ..services.live_admission import prepare_live_session
 from ..services.session_cleanup import cleanup_live_session
+
+
+async def _owned_result(pending, on_cancel=None):
+    """Drain an owned operation before propagating cancellation of its waiter."""
+    cancellation = None
+    while True:
+        try:
+            return await asyncio.shield(pending), cancellation
+        except asyncio.CancelledError as exc:
+            if on_cancel is not None:
+                on_cancel()
+            cancellation = exc
+            if pending.cancelled():
+                raise  # a cancelled child has no result; never busy-loop
+        except Exception:
+            if cancellation is not None:
+                raise cancellation
+            raise
 
 
 async def handle_live_video(websocket: WebSocket, device_id: str, source):
@@ -132,7 +152,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             await websocket.send_json({"type": "error", "message": "虚拟/副屏实验不能同时启用主屏物理息屏"})
             return
         admission_cancelled = threading.Event()
-        admission = asyncio.create_task(asyncio.to_thread(
+        prepare = functools.partial(
             prepare_live_session, device_id,
             selected_serial=initial.get("selected_serial"), profile=profile,
             quality_settings=quality_settings, experiment=experiment,
@@ -140,23 +160,12 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             display_lab=display_lab, session_manager=session_manager,
             live_video=LiveVideo, selected_address=selected_address,
             is_connected=is_connected, cancelled=admission_cancelled,
-        ))
-        cancellation = None
-        while True:
-            try:
-                prepared = await asyncio.shield(admission)
-                break
-            except asyncio.CancelledError as exc:
-                # to_thread cannot cancel a thread waiting for the device lock
-                # or ADB. Keep its result owned until any late reserve is known.
-                admission_cancelled.set()
-                cancellation = exc
-                if admission.cancelled():
-                    raise
-            except Exception:
-                if cancellation is not None:
-                    raise cancellation
-                raise
+        )
+        # Use an executor Future, not a separate to_thread Task: cancelling all
+        # request Tasks during shutdown must not discard a late reservation.
+        admission = asyncio.get_running_loop().run_in_executor(
+            None, contextvars.copy_context().run, prepare)
+        prepared, cancellation = await _owned_result(admission, admission_cancelled.set)
         stream = prepared.stream
         if cancellation is not None:
             raise cancellation  # finally cleans THIS unstarted reservation
@@ -591,13 +600,24 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             budget_claimed = False
         if stream:
             session_manager.cleaning(device_id, stream)
-        report = await cleanup_live_session(
+        cleanup = asyncio.create_task(cleanup_live_session(
             device_id=device_id, stream=stream, pc=pc,
             registry=live_registry, close_peer=_close_webrtc_peer,
             requested_stop=requested_stop, watchdog=watchdog,
             receiver=receiver, unlock_task=unlock_task,
             worker_launch_attempted=worker_launch_attempted,
-        )
+        ))
+        # A repeated request cancellation cannot abandon stop/join or discard
+        # their proof before SessionManager records the final resource state.
+        try:
+            report, cleanup_cancellation = await _owned_result(cleanup)
+        except asyncio.CancelledError:
+            # A shutdown may directly cancel the cleanup Task itself. With no
+            # report, retain this owner as DIRTY rather than infer success.
+            if stream:
+                session_manager.complete(device_id, stream, clean=False,
+                    reason="资源清理任务被取消，清理尚未确认")
+            raise
         if stream:
             if report.cleaned:
                 # Ended(cleanup_complete=true) only after all session-owned
@@ -627,4 +647,6 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             await asyncio.wait_for(websocket.close(), LIVE_WS_SEND_TIMEOUT)
         except (RuntimeError, OSError, asyncio.TimeoutError):
             pass
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
 
