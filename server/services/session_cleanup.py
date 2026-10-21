@@ -31,7 +31,8 @@ async def _cancel(task):
 async def cleanup_live_session(*, device_id, stream, pc, registry, close_peer,
                                requested_stop, watchdog=None, receiver=None,
                                unlock_task=None, worker_launch_attempted=False,
-                               peer_timeout=10, join_timeout=20):
+                               peer_timeout=10, join_timeout=20,
+                               on_late_worker=None):
     requested_stop.set()
     await _cancel(watchdog)
     if stream is None:
@@ -84,6 +85,14 @@ async def cleanup_live_session(*, device_id, stream, pc, registry, close_peer,
     # proofs to transition the old dirty session to RELEASED.
     if worker_error:
         stream.cleanup_complete = False
+    elif on_late_worker is not None and not stream.finished.is_set():
+        # The peer may have closed BEFORE a timed-out worker finishes. That
+        # direction needs its own notification after the browser is gone.
+        # Subscribe only after stop/join succeeded; an exception is not a
+        # pending cleanup proof. LiveVideo handles finish/subscribe atomically.
+        subscribe = getattr(stream, "when_worker_finished", None)
+        if subscribe is not None:
+            subscribe(on_late_worker)
     worker_finished = bool(stream.finished.is_set())
     worker_cleanup = bool(getattr(stream, "cleanup_complete", False))
     peer_cleanup = bool(getattr(stream, "peer_cleanup_complete", False))

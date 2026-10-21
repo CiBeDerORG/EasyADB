@@ -606,6 +606,7 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
             requested_stop=requested_stop, watchdog=watchdog,
             receiver=receiver, unlock_task=unlock_task,
             worker_launch_attempted=worker_launch_attempted,
+            on_late_worker=lambda: session_manager.late_cleanup(device_id, stream),
         ))
         # A repeated request cancellation cannot abandon stop/join or discard
         # their proof before SessionManager records the final resource state.

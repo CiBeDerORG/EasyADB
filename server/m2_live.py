@@ -3,6 +3,7 @@
 No background ADB polling, automatic device reconnection, control messages or
 recording. Every stream is owned by exactly one authenticated WebSocket.
 """
+import logging
 import os
 import queue
 import secrets
@@ -82,6 +83,8 @@ class LiveVideo:
         self.server_file = Path(server_file) if server_file is not None else SERVER_FILE
         self.stop_event = threading.Event()
         self.finished = threading.Event()  # worker terminated, not necessarily fully cleaned
+        self._finished_lock = threading.Lock()
+        self._finished_callback = None
         self.cleanup_complete = False  # only true after all owned resources are released
         self.peer_cleanup_complete = True  # false while a WebRTC peer is allocated
         self.peer_close_task = None  # retain late close beyond the browser WS lifetime
@@ -107,6 +110,33 @@ class LiveVideo:
         self._phone_packets = 0
         self._phone_last = None
         self._ready_at = None
+
+    def when_worker_finished(self, callback):
+        """Subscribe after a bounded join; never lose an already-finished edge."""
+        with self._finished_lock:
+            finished = self.finished.is_set()
+            if not finished:
+                self._finished_callback = callback
+        if finished:
+            self._notify_worker_finished(callback)
+
+    @staticmethod
+    def _notify_worker_finished(callback):
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                logging.getLogger(__name__).exception("Late worker cleanup notification failed")
+
+    def _finish_worker(self):
+        # Cleanup proof is published by _run before this terminal notification.
+        # Clear the callback before invoking it: it may enter SessionManager,
+        # and must not retain its coordinator after completion.
+        with self._finished_lock:
+            self.finished.set()
+            callback = self._finished_callback
+            self._finished_callback = None
+        self._notify_worker_finished(callback)
 
     def _phase_set(self, phase):
         with self._metric_lock:
@@ -551,7 +581,7 @@ class LiveVideo:
                     self.events.put_nowait(("end", None))
                 except queue.Full:
                     pass
-                self.finished.set()
+                self._finish_worker()
 
 
 
