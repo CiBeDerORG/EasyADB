@@ -91,6 +91,7 @@ function snapshot(node) {
     scanningGroups: new Set(), connectionBatchBusy: false,
     frontendModules: null, multiView: null, displayLabView: {open: id => calls.push(['lab', id])},
     elem, action, hasConnectedAdb: model.hasConnectedAdb,
+    connectedFirst: (a, b) => Number(model.hasConnectedAdb(b)) - Number(model.hasConnectedAdb(a)),
     deviceConnecting: id => id === 'b',
     deviceLocked: id => id === 'b' || sandbox.loading,
     switchRoute: (id, route) => calls.push(['route', id, route]),
@@ -106,7 +107,10 @@ function snapshot(node) {
     },
   };
   const context = vm.createContext(sandbox);
-  vm.runInContext(html.slice(start, end), context);
+  const legacyStart = html.indexOf('function buildLegacyDeviceGroups()');
+  const legacyEnd = html.indexOf('function select(id)', legacyStart);
+  assert(legacyStart >= 0 && legacyEnd > legacyStart);
+  vm.runInContext(html.slice(legacyStart, legacyEnd) + '\n' + html.slice(start, end), context);
   vm.runInContext('render()', context);
   const before = JSON.stringify(snapshot(elements.get('devices')));
   assert(before.includes('Pending') && before.includes('Ready'));

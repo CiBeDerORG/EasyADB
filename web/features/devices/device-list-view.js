@@ -105,10 +105,17 @@ export function renderDeviceGroups({ list, grouped, keys, state, ui, on, elem, a
           'div',
           'address-row' + (route === 'temp' ? ' has-remove' : route === 'mesh' ? ' has-edit' : ''),
         );
-        const target = action(label + '：' + ip, () => switchRoute(device.id, route), 'address-target');
+        const target = action(
+          label + '：' + ip,
+          () => switchRoute(device.id, route),
+          'address-target',
+        );
         target.disabled = isDeviceLocked(device.id);
         target.setAttribute('aria-pressed', String(chosen));
-        target.setAttribute('aria-label', '选择' + device.name + '的' + label + ' ' + ip + ':' + port);
+        target.setAttribute(
+          'aria-label',
+          '选择' + device.name + '的' + label + ' ' + ip + ':' + port,
+        );
         target.title = chosen
           ? '点击对此 IP 主动连接一次'
           : '选择此 IP 并主动连接一次（不自动回退）';
@@ -130,13 +137,12 @@ export function renderDeviceGroups({ list, grouped, keys, state, ui, on, elem, a
           row.append(del);
         }
         if (chosen && device.connect_failed) {
-          const pairButton = action(
-            '首次连接',
-            () => openFirstPair(device.id),
-            'first-pair',
-          );
+          const pairButton = action('首次连接', () => openFirstPair(device.id), 'first-pair');
           pairButton.disabled = isLoading || isDeviceConnecting(device.id);
-          pairButton.setAttribute('aria-label', '为' + device.name + '当前选择的' + label + '进行首次无线配对');
+          pairButton.setAttribute(
+            'aria-label',
+            '为' + device.name + '当前选择的' + label + '进行首次无线配对',
+          );
           row.append(pairButton);
         }
         addressRows.push(row);
@@ -154,7 +160,9 @@ export function renderDeviceGroups({ list, grouped, keys, state, ui, on, elem, a
       top.append(managementLabel, info);
       primary.append(top, addressList);
       if (isDeviceConnecting(device.id)) {
-        primary.append(elem('div', 'muted connection-pending', '此设备正在连接 ADB，其他设备可继续操作…'));
+        primary.append(
+          elem('div', 'muted connection-pending', '此设备正在连接 ADB，其他设备可继续操作…'),
+        );
       } else if (device.last_error && device.status !== 'connected') {
         primary.append(elem('div', 'muted connection-error', device.last_error));
       }

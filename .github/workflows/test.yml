@@ -28,8 +28,6 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run lint
-          npx prettier web/features/devices/device-list-view.js --write
-          git diff -- web/features/devices/device-list-view.js
           npm run format:check
           npm run test:architecture
       - name: Check modal UI and deployment scripts
