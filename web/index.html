@@ -181,7 +181,9 @@ const managementSelected=new Set(); // one selection for every batch action
 const connectingDevices=new Set(),connectSnapshots=new Map();
 let connectionBatchBusy=false,connectGeneration=0,connectProgressRevision=0,connectController=null;
 function deviceConnecting(id){return connectingDevices.has(id);}
-function deviceLocked(id){return loading||deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
+// The global management lock must not cause a running batch to skip itself.
+function deviceBusy(id){return deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
+function deviceLocked(id){return loading||deviceBusy(id);}
 function applyConnectionResult(device,result){
  const present=devices.find(d=>d.id===device.id);
  if(!present||present.selected_serial!==device.selected_serial)return false;
@@ -892,7 +894,7 @@ $('bulkDelete').addEventListener('click',async()=>{
   '\n不会清除手机上的 ADB 配对授权。确认删除？'))return;
  loading=true;render();let success=0;const failed=[];
  for(const d of candidates){
-  if(deviceLocked(d.id)){failed.push(d.name+'：设备正在连接/投屏或管理中，已跳过');continue;}
+  if(deviceBusy(d.id)){failed.push(d.name+'：设备正在连接/投屏，已跳过');continue;}
   try{
    await api('/api/devices/'+encodeURIComponent(d.id),{method:'DELETE'});
    managementSelected.delete(d.id);if(selected===d.id)selected=null;success++;
@@ -1019,7 +1021,7 @@ $('refreshAll').addEventListener('click',async()=>{
  loading=true;render();let success=0;const failed=[];
  for(const d of candidates){
   message('批量检查中 '+(success+failed.length+1)+' / '+candidates.length+'：'+d.name);
-  if(deviceLocked(d.id)){failed.push(d.name+'：正在连接或投屏，已跳过');continue;}
+  if(deviceBusy(d.id)){failed.push(d.name+'：正在连接或投屏，已跳过');continue;}
   try{
    const fresh=await(await api('/api/devices/'+encodeURIComponent(d.id)+'/refresh',{method:'POST'})).json();
    devices=devices.map(x=>x.id===d.id?fresh:x);success++;
