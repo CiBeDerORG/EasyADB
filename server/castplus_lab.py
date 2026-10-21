@@ -143,8 +143,8 @@ class CastPlusMixin:
         return result
 
     def cast_create(self, device_id, serial):
-        with self.lock:
-            if device_id in self.pending or device_id in self.cast_pending:
+        with self._device_lock(device_id):
+            if self.has_pending(device_id):
                 raise CastError("本设备已有待恢复实验，请先恢复再创建 Cast+ 屏幕")
             if not self.cast_apk.is_file():
                 raise CastError("尚未提供测试辅助 APK：请构建 castplus-helper，并放入 data/storage/castplus-lab.apk")
@@ -153,11 +153,10 @@ class CastPlusMixin:
                 raise CastError("无法安全备份原始桌面模式设置；未执行修改")
             before = self.scan(serial)["display_ids"]
             record = {"serial": serial, "previous_mode": original, "applied_mode": None}
-            self.cast_pending[device_id] = record
             try:
-                self._save_cast()  # Persist before any installation or device change.
+                # Persist before any installation or device change.
+                self._store_recovery(device_id, record, castplus=True)
             except OSError:
-                del self.cast_pending[device_id]
                 raise CastError("无法保存原始状态，未操作手机") from None
             try:
                 install = self._cast_adb(serial, "install", "-r", str(self.cast_apk), timeout=90)
@@ -173,12 +172,12 @@ class CastPlusMixin:
                 raise
 
     def cast_auto(self, device_id, serial):
-        with self.lock:
-            record = self.cast_pending.get(device_id)
+        with self._device_lock(device_id):
+            record = self._recovery_record(device_id, castplus=True)
             if record and record["serial"] != serial:
                 raise CastError("请切回已有 Cast+ 实验的原始 ADB 线路")
             if not record:
-                if device_id in self.pending:
+                if self._recovery_record(device_id) is not None:
                     raise CastError("本设备有待恢复的 Overlay 实验，请先恢复后执行 B2")
                 if not self._helper_installed(serial):
                     raise CastError("未检测到已安装的 Cast+ 辅助 APK；请先手动安装或执行 B1")
@@ -186,11 +185,10 @@ class CastPlusMixin:
                 if not SAFE_MODE.fullmatch(original):
                     raise CastError("无法安全备份当前桌面模式设置；未执行 B2")
                 record = {"serial": serial, "previous_mode": original, "applied_mode": None}
-                self.cast_pending[device_id] = record
                 try:
-                    self._save_cast()  # Own a recovery record BEFORE changing settings.
+                    # Own a recovery record BEFORE changing settings.
+                    self._store_recovery(device_id, record, castplus=True)
                 except OSError:
-                    del self.cast_pending[device_id]
                     raise CastError("无法保存 B2 原始设置；未修改手机") from None
                 self._log(device_id, "华为 B2", serial,
                           "手动安装接入；已备份原始模式 " + original)
@@ -198,12 +196,10 @@ class CastPlusMixin:
             if current not in {record["previous_mode"], record.get("applied_mode")}:
                 raise CastError("模式设置已由其他操作改变；拒绝覆盖")
             before = self.scan(serial)["display_ids"]
-            previous_applied = record.get("applied_mode")
             record["applied_mode"] = "1"
             try:
-                self._save_cast()
+                self._store_recovery(device_id, record, castplus=True)
             except OSError:
-                record["applied_mode"] = previous_applied
                 raise CastError("无法持久化 B2 恢复记录；未修改手机") from None
             self._cmd(serial, "settings", "put", "secure", "selected-proj-mode", "1")
             if self._mode(serial) != "1":
@@ -224,8 +220,8 @@ class CastPlusMixin:
             return result
 
     def cast_switch(self, device_id, serial):
-        with self.lock:
-            record = self.cast_pending.get(device_id)
+        with self._device_lock(device_id):
+            record = self._recovery_record(device_id, castplus=True)
             if record and record["serial"] != serial:
                 raise CastError("请切回已有 Cast+ 实验的原始 ADB 线路")
             # A manually started helper can already own a CastPlusDisplay
@@ -247,7 +243,7 @@ class CastPlusMixin:
             return result
 
     def cast_verify(self, device_id, serial):
-        with self.lock:
+        with self._device_lock(device_id):
             result = self.cast_scan(serial)
             services = self._cmd(serial, "dumpsys", "activity", "services", timeout=18)
             result["pc_services_observed"] = {
@@ -264,8 +260,8 @@ class CastPlusMixin:
             return result
 
     def cast_restore(self, device_id, serial):
-        with self.lock:
-            record = self.cast_pending.get(device_id)
+        with self._device_lock(device_id):
+            record = self._recovery_record(device_id, castplus=True)
             if not record:
                 raise CastError("没有待恢复的 Cast+ 实验")
             if record["serial"] != serial:
@@ -283,11 +279,9 @@ class CastPlusMixin:
                     self._cmd(serial, "settings", "put", "secure", "selected-proj-mode", original)
             if self._mode(serial) != original:
                 raise CastError("恢复校验失败；保留恢复记录")
-            del self.cast_pending[device_id]
             try:
-                self._save_cast()
+                self._store_recovery(device_id, None, castplus=True)
             except OSError:
-                self.cast_pending[device_id] = record
                 raise CastError("手机已恢复，但记录落盘失败，请检查磁盘") from None
             self._log(device_id, "华为恢复", serial, "停止专用辅助组件；恢复模式 " + original)
             return {"restored": original, "pending_castplus": None, **self.cast_scan(serial)}

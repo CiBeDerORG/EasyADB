@@ -38,6 +38,7 @@ class DisplayLab(CastPlusMixin):
         self.adb = adb
         self.path = Path(recovery_path)
         self.lock = threading.RLock()
+        self._device_locks = {}
         self.pending = {}
         self.history = []
         if self.path.exists():
@@ -53,6 +54,40 @@ class DisplayLab(CastPlusMixin):
             except (ValueError, OSError):
                 raise RuntimeError("电脑模式实验恢复记录损坏；请检查 " + str(self.path))
         self.init_castplus()
+
+    def _device_lock(self, device_id):
+        # ADB waits serialize only this device. The shared state lock must
+        # never be held across a device command or bounded observation loop.
+        with self.lock:
+            return self._device_locks.setdefault(device_id, threading.RLock())
+
+    def _recovery_record(self, device_id, *, castplus=False):
+        with self.lock:
+            records = self.cast_pending if castplus else self.pending
+            record = records.get(device_id)
+            return dict(record) if record is not None else None
+
+    def _store_recovery(self, device_id, record, *, castplus=False):
+        """Persist a complete snapshot, rolling back only this device on failure.
+
+        The caller owns its device lock. Serialize memory changes and the
+        atomic file replacement so concurrent devices cannot lose records.
+        """
+        with self.lock:
+            records = self.cast_pending if castplus else self.pending
+            original = records.get(device_id)
+            if record is None:
+                records.pop(device_id, None)
+            else:
+                records[device_id] = dict(record)
+            try:
+                self._save_cast() if castplus else self._save()
+            except OSError:
+                if original is None:
+                    records.pop(device_id, None)
+                else:
+                    records[device_id] = original
+                raise
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,15 +115,15 @@ class DisplayLab(CastPlusMixin):
                 "note": "Display ID 来自 dumpsys 的尽力解析；如有遗漏，请查看原始输出。"}
 
     def environment(self, device_id, serial):
-        with self.lock:
+        with self._device_lock(device_id):
             api = self._cmd(serial, "getprop", "ro.build.version.sdk")
             version = self._cmd(serial, "getprop", "ro.build.version.release")
             setting = self._setting(serial)
             result = self.scan(serial)
             result.update({"serial": serial, "android_version": version, "api_level": api,
                            "scrcpy_server_version": VERSION, "overlay_setting": setting,
-                           "pending_restore": self.pending.get(device_id),
-                           "pending_castplus": self.cast_pending.get(device_id),
+                           "pending_restore": self._recovery_record(device_id),
+                           "pending_castplus": self._recovery_record(device_id, castplus=True),
                            "castplus_capabilities": self.cast_capabilities(serial)})
             return result
 
@@ -98,20 +133,21 @@ class DisplayLab(CastPlusMixin):
 
     def state(self, device_id):
         with self.lock:
-            return {"pending_restore": self.pending.get(device_id),
-                    "pending_castplus": self.cast_pending.get(device_id),
+            return {"pending_restore": self._recovery_record(device_id),
+                    "pending_castplus": self._recovery_record(device_id, castplus=True),
                     "logs": [v for v in self.history if v["device_id"] == device_id][-40:]}
 
     def _log(self, device_id, action, serial, detail):
         from datetime import datetime, timezone
-        self.history.append({"at": datetime.now(timezone.utc).isoformat(),
-                             "device_id": device_id, "action": action, "serial": serial,
-                             "detail": str(detail)[:1500]})
-        self.history = self.history[-160:]
+        with self.lock:
+            self.history.append({"at": datetime.now(timezone.utc).isoformat(),
+                                 "device_id": device_id, "action": action, "serial": serial,
+                                 "detail": str(detail)[:1500]})
+            self.history = self.history[-160:]
 
     def enable_overlay(self, device_id, serial):
-        with self.lock:
-            if device_id in self.pending or device_id in self.cast_pending:
+        with self._device_lock(device_id):
+            if self.has_pending(device_id):
                 raise LabError("已有待恢复的副屏或 Cast+ 实验；请先恢复原始设置")
             previous = self._setting(serial)
             if not _ALLOWED_SETTING.fullmatch(previous):
@@ -120,12 +156,10 @@ class DisplayLab(CastPlusMixin):
                 self._log(device_id, "B1", serial, "设备原本已设置相同模拟副屏；没有覆盖")
                 return {**self.scan(serial), "pending_restore": None, "unchanged": True}
             record = {"serial": serial, "previous": previous, "applied": OVERLAY}
-            self.pending[device_id] = record
             try:
                 # Persist BEFORE writing the device to survive command timeouts/restarts.
-                self._save()
+                self._store_recovery(device_id, record)
             except OSError:
-                self.pending.pop(device_id, None)
                 raise LabError("无法保存原始副屏配置，未修改手机设置") from None
             try:
                 self._cmd(serial, "settings", "put", "global", "overlay_display_devices", OVERLAY)
@@ -139,8 +173,8 @@ class DisplayLab(CastPlusMixin):
                 raise
 
     def restore(self, device_id, serial):
-        with self.lock:
-            record = self.pending.get(device_id)
+        with self._device_lock(device_id):
+            record = self._recovery_record(device_id)
             if not record:
                 raise LabError("本设备没有待恢复的实验设置")
             if record["serial"] != serial:
@@ -156,11 +190,9 @@ class DisplayLab(CastPlusMixin):
                     self._cmd(serial, "settings", "put", "global", "overlay_display_devices", previous)
                 if self._setting(serial) != previous:
                     raise LabError("恢复后的设置校验未通过；保留恢复记录")
-            del self.pending[device_id]
             try:
-                self._save()
+                self._store_recovery(device_id, None)
             except OSError:
-                self.pending[device_id] = record
                 raise LabError("手机已恢复，但恢复记录落盘失败；请检查服务器磁盘") from None
             self._log(device_id, "恢复", serial, "已恢复为 " + previous)
             return {**self.scan(serial), "restored": previous, "pending_restore": None}
