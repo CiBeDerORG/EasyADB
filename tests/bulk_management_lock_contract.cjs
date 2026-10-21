@@ -67,7 +67,7 @@ globalThis.snapshot = () => ({
   assert.equal(confirmations.length, handlerId === 'bulkDelete' ? 1 : 0);
   if (handlerId === 'bulkDelete') {
     assert.equal(state.selected, null);
-    assert.deepEqual(state.selectedIds, ['late', 'prebusy']);
+    assert.deepEqual(Array.from(state.selectedIds), ['late', 'prebusy']);
     assert(messages.some(message => message.includes('已删除 1 台')));
     assert(messages.some(message => message.includes('其他未删除 1 台')));
   } else {
