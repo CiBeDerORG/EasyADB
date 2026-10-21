@@ -395,11 +395,15 @@
         available.length < 1 ||
         available.length > remaining ||
         available.some((d) => this.checking.has(d.id));
-      const selectedRunning = selectedDevices.filter(
-        (d) => this.cards.has(d.id) && this.cards.get(d.id).state !== 'stopping',
+      // Selected queued devices can be cancelled before a card/socket exists.
+      const queuedIds = new Set(this.launchQueue.map((item) => item.device.id));
+      const selectedStoppable = selectedDevices.filter(
+        (d) =>
+          queuedIds.has(d.id) ||
+          (this.cards.has(d.id) && this.cards.get(d.id).state !== 'stopping'),
       );
-      this.stopButton.disabled = selectedRunning.length === 0 || Boolean(this.stopBatch);
-      this.stopButton.textContent = '批量停止投屏（' + selectedRunning.length + ' 台）';
+      this.stopButton.disabled = selectedStoppable.length === 0 || Boolean(this.stopBatch);
+      this.stopButton.textContent = '批量停止投屏（' + selectedStoppable.length + ' 台）';
       this.startButton.textContent =
         (this.cards.size ? '批量追加投屏' : '批量投屏') +
         '（待新增 ' +
