@@ -55,9 +55,16 @@ parse_interval() {
     echo 'ERROR: interval must be between 1 minute and 7 days.' >&2; exit 2
   fi
 }
+deployment_branch() {
+  # Existing M3 schedules follow the same V4 target as manual updates.
+  case "$1" in
+    feat/m3-openwrt-discovery) printf '%s\n' 'refactor/v4-frontend-standards' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
 valid_branch() {
   case "$1" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance) ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance|refactor/v4-frontend-standards) ;;
     *) echo 'ERROR: unsupported scheduled branch; use an explicitly allowed EasyADB branch.' >&2; exit 2 ;;
   esac
 }
@@ -71,9 +78,10 @@ read_config() {
   case "$GIT_UID" in ''|*[!0-9]*) return 1 ;; esac
   case "$MODE" in proxy|direct) ;; *) return 1 ;; esac
   case "$BRANCH" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance) ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/foundation-v1|refactor/session-v2|refactor/v2-session-governance|refactor/v4-frontend-standards) ;;
     *) return 1 ;;
   esac
+  BRANCH="$(deployment_branch "$BRANCH")"
   [ "$INTERVAL" -ge 1 ] && [ "$INTERVAL" -le 10080 ]
 }
 git_owner() {
@@ -99,6 +107,7 @@ case "${1:-}" in
     }
     BRANCH="${EASYADB_SOURCE_BRANCH:-$(git_owner symbolic-ref --quiet --short HEAD || :)}"
     valid_branch "$BRANCH"
+    BRANCH="$(deployment_branch "$BRANCH")"
     GIT_UID="$(id -u)"
     if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
       GIT_UID="$SUDO_UID"

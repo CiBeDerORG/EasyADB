@@ -35,6 +35,14 @@ EASYADB_MAX_STARTING=3
 
 ## Deployment
 
+The current deployment target is `refactor/v4-frontend-standards`. The legacy
+`feat/m3-openwrt-discovery` updater and saved M3 schedules migrate to V4; V4
+accepts both the current checkout and an explicit `EASYADB_SOURCE_BRANCH` set
+to the V4 branch. Update an older V4 checkout with Git first if its old updater
+rejects that branch before fetching. Migration preserves `.env` and data; an
+explicit old `mse` or unimplemented `webcodecs` setting must be changed to
+`webrtc` by the operator before Docker deployment.
+
 Both Mihomo-assisted and `--no-proxy` builds in
 `scripts/build-with-mihomo.sh` launch the canonical
 `compose.webrtc.yaml`. The optional manual `compose.yaml` and

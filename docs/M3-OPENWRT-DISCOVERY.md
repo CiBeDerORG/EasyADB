@@ -1,6 +1,6 @@
 # M3 · OpenWrt 授权发现接入（EasyADB NAS 端）
 
-实现分支：feat/m3-openwrt-discovery。OpenWrt 需使用 LuCI APK v0.6.1 或以上：NAS 专用 ACL 同时包含 HTTP ubus.file.exec 方法许可及固定扫描脚本的精确执行许可。
+原实现分支：feat/m3-openwrt-discovery；当前部署目标为 `refactor/v4-frontend-standards`，M3 部署脚本及旧 M3 定时配置均迁移到 V4。OpenWrt 需使用 LuCI APK v0.6.1 或以上：NAS 专用 ACL 同时包含 HTTP ubus.file.exec 方法许可及固定扫描脚本的精确执行许可。
 
 ## 职责及连接
 
@@ -39,7 +39,7 @@
 
 ## 升级和实机验收
 
-1. 从该分支部署，无需独立凭据加密依赖；不要运行可能切回旧 M2 分支的脚本，部署前设置 \`EASYADB_SOURCE_BRANCH=feat/m3-openwrt-discovery\`。
+1. 从当前 V4 分支部署，无需独立凭据加密依赖；旧部署脚本需先更新，部署前可显式设置 \`EASYADB_SOURCE_BRANCH=refactor/v4-frontend-standards\`。
 2. 保留原有 \`./data/storage\` 数据卷；新的组发现相关表在服务启动时无损建立。配置分组的内网 IP 前缀与专用密钥。
 3. 明确点击「测试授权」，检查一次扫描 ACL；随后点击该分组「立即发现 ADB」，检查新旧端口、未匹配、端口冲突与 busy 统计。单台设备连接仍需用户主动点击。
 4. 实机验证 EasyTier 到 OpenWrt /ubus 的连通性，以及 NAS 到手机内网 IP:新端口的实际路由。**发现成功不等于 ADB 可连接。** 它也不会修复 EasyTier 子网路由、防火墙或安卓无线调试授权。
