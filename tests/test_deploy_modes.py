@@ -20,6 +20,7 @@ def setup_fake_deploy(tmp_path):
     scripts = project / "scripts"
     scripts.mkdir(parents=True)
     shutil.copyfile(SCRIPT, scripts / "build-with-mihomo.sh")
+    shutil.copyfile(ROOT / "scripts/deploy-lock.sh", scripts / "deploy-lock.sh")
     shutil.copyfile(DIRECT_COMPOSE, project / "compose.no-proxy.yaml")
     shutil.copyfile(WEBRTC_COMPOSE, project / "compose.webrtc.yaml")
     # This deliberately invalid entry must NEVER be read in direct mode.

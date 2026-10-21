@@ -40,6 +40,15 @@ case "$VIDEO_ENGINE" in
 esac
 echo 'WebRTC: Linux host networking; allow NAS ICE dynamic UDP ports over EasyTier.'
 
+. scripts/deploy-lock.sh
+if acquire_deploy_lock; then :; else
+  lock_status=$?
+  if [ "$lock_status" -eq 75 ]; then
+    echo 'ERROR: another EasyADB deployment is already running; retry after it finishes.' >&2
+  fi
+  exit "$lock_status"
+fi
+
 DEPLOY_MARKER=data/storage/.easyadb-last-deployed-tree
 deploy_git() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
@@ -50,10 +59,16 @@ deploy_git() {
 }
 git_tree() { deploy_git rev-parse 'HEAD^{tree}' 2>/dev/null || :; }
 write_deployed_tree() {
-  tree="$(git_tree)"
-  if [ -n "$tree" ]; then
+  if [ -n "$BUILD_TREE" ]; then
+    # All supported deployment entry points share the lock. If an external
+    # Git operation changed the checkout anyway, do not certify its new HEAD
+    # (or an uncertain mixed build context) as successfully deployed.
+    if [ "$(git_tree)" != "$BUILD_TREE" ]; then
+      echo 'ERROR: Git files changed during deployment; successful version marker was not advanced.' >&2
+      return 1
+    fi
     mkdir -p data/storage
-    printf '%s\n' "$tree" > "$DEPLOY_MARKER.tmp.$$"
+    printf '%s\n' "$BUILD_TREE" > "$DEPLOY_MARKER.tmp.$$"
     mv -f "$DEPLOY_MARKER.tmp.$$" "$DEPLOY_MARKER"
   fi
 }
@@ -76,11 +91,11 @@ if [ "${EASYADB_UPDATED:-0}" != 1 ]; then
   export EASYADB_UPDATED
   exec sh scripts/build-with-mihomo.sh "$@"
 fi
+BUILD_TREE="$(git_tree)"
 if [ "$IF_CHANGED" = 1 ] && [ -f "$DEPLOY_MARKER" ]; then
-  current_tree="$(git_tree)"
   deployed_tree="$(cat "$DEPLOY_MARKER")"
-  if [ -n "$current_tree" ] && [ "$current_tree" = "$deployed_tree" ]; then
-    echo "No tracked Git file changes since the last successful deployment ($current_tree); skipping Docker."
+  if [ -n "$BUILD_TREE" ] && [ "$BUILD_TREE" = "$deployed_tree" ]; then
+    echo "No tracked Git file changes since the last successful deployment ($BUILD_TREE); skipping Docker."
     exit 0
   fi
 fi

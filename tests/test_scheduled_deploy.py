@@ -1,7 +1,11 @@
 """Scheduled deployment + changed-Git-tree integration tests (no Docker daemon/cron)."""
+from contextlib import contextmanager
+import fcntl
 import os
+import select
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +24,7 @@ def setup_project(tmp_path):
     project = tmp_path / "EasyADB"
     scripts = project / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("scheduled-deploy.sh", "build-with-mihomo.sh", "update-m2.sh"):
+    for name in ("scheduled-deploy.sh", "build-with-mihomo.sh", "update-m2.sh", "deploy-lock.sh"):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
     shutil.copyfile(ROOT / ".gitignore", project / ".gitignore")
     shutil.copyfile(ROOT / "compose.webrtc.yaml", project / "compose.webrtc.yaml")
@@ -290,3 +294,230 @@ def test_scheduler_rejects_invalid_persisted_branch_before_running_builder(tmp_p
     assert rejected.returncode == 1
     assert "invalid scheduled deployment state" in rejected.stderr
     assert not (tmp_path / "docker.log").exists()
+
+
+def setup_concurrent_deploy(tmp_path):
+    """Real local Git/flock; Docker signals a paused build through inherited pipes."""
+    project, env, remote = setup_project(tmp_path)
+    scripts = project / "scripts"
+    # Exercise the real default Buildx path without discovering a real proxy.
+    (scripts / "proxy-config.sh").write_text("PROXY=http://mihomo:7890\n")
+    (scripts / "proxy-host.sh").write_text("HOST_PROXY=http://127.0.0.1:7890\nMIHOMO_IP=192.0.2.11\n")
+    shell("git", "add", "scripts", cwd=project)
+    shell("git", "commit", "-m", "fixture proxy configuration", cwd=project)
+    shell("git", "push", "origin", V4_BRANCH, cwd=project)
+    producer = tmp_path / "producer"
+    shell("git", "clone", "--branch", V4_BRANCH, str(remote), str(producer), cwd=tmp_path)
+    shell("git", "config", "user.email", "fixture@example.invalid", cwd=producer)
+    shell("git", "config", "user.name", "Fixture", cwd=producer)
+    state = tmp_path / "docker-state"
+    state.mkdir()
+    env["EASYADB_TEST_STATE"] = str(state)
+    docker = tmp_path / "bin/docker"
+    docker.write_text("#!" + sys.executable + "\n" + r'''
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+state = Path(os.environ["EASYADB_TEST_STATE"])
+role = os.environ.get("EASYADB_TEST_ROLE", "scheduled")
+args = sys.argv[1:]
+with (state / "calls.jsonl").open("a") as output:
+    output.write(json.dumps({"role": role, "args": args}) + "\n")
+if args == ["compose", "version"] or args[:2] in (["network", "inspect"], ["image", "inspect"]):
+    sys.exit(0)
+if args[:1] == ["inspect"]:
+    print("true" if "State.Running" in args[2] else "yes")
+    sys.exit(0)
+if args[:2] == ["buildx", "inspect"]:
+    sys.exit(1)
+if args[:2] in (["buildx", "version"], ["buildx", "create"]):
+    sys.exit(0)
+if args[:1] == ["build"] or args[:2] == ["buildx", "build"]:
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+    (state / ("built-" + role)).write_text(tree)
+    if os.environ.get("EASYADB_TEST_PAUSE") == "1":
+        os.write(int(os.environ["EASYADB_TEST_READY_FD"]), b"ready\n")
+        if os.read(int(os.environ["EASYADB_TEST_RELEASE_FD"]), 1) != b"1":
+            sys.exit(94)
+    if os.environ.get("EASYADB_TEST_FAIL_BUILD") == "1":
+        sys.exit(42)
+    (state / "image-tree").write_text(tree)
+    sys.exit(0)
+if args == ["compose", "-f", "compose.webrtc.yaml", "up", "-d", "--no-build"]:
+    if os.environ.get("EASYADB_TEST_FAIL_START") == "1":
+        sys.exit(43)
+    (state / "running-tree").write_text((state / "image-tree").read_text())
+    sys.exit(0)
+sys.exit(95)
+''')
+    docker.chmod(0o755)
+    return project, env, producer, state
+
+
+def publish_change(producer, value, *, replace_builder=False):
+    (producer / "README.md").write_text(value + "\n")
+    if replace_builder:
+        builder = producer / "scripts/build-with-mihomo.sh"
+        builder.write_text(builder.read_text().replace(
+            "set -eu\n", "set -eu\nprintf '%s\\n' \"$*\" >> \"$EASYADB_TEST_STATE/reentry.log\"\n", 1))
+    shell("git", "add", ".", cwd=producer)
+    shell("git", "commit", "-m", value, cwd=producer)
+    shell("git", "push", "origin", V4_BRANCH, cwd=producer)
+    return shell("git", "rev-parse", "HEAD^{tree}", cwd=producer).stdout.strip()
+
+
+@contextmanager
+def paused_deployment(project, env, script, *args):
+    # Pipe readiness is a real execution boundary, not a sleep-based guess.
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+    # The production scripts reserve FD 9; keep test signaling descriptors
+    # outside that range regardless of pytest's current capture descriptors.
+    ready_inherited = fcntl.fcntl(ready_write, fcntl.F_DUPFD_CLOEXEC, 20)
+    release_inherited = fcntl.fcntl(release_read, fcntl.F_DUPFD_CLOEXEC, 20)
+    os.close(ready_write)
+    os.close(release_read)
+    child_env = dict(env, EASYADB_TEST_PAUSE="1", EASYADB_TEST_READY_FD=str(ready_inherited),
+                     EASYADB_TEST_RELEASE_FD=str(release_inherited))
+    process = subprocess.Popen(
+        ["sh", "scripts/" + script, *args], cwd=project, env=child_env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        pass_fds=(ready_inherited, release_inherited),
+    )
+    os.close(ready_inherited)
+    os.close(release_inherited)
+
+    def resume():
+        nonlocal release_write
+        if release_write is not None:
+            try:
+                os.write(release_write, b"1")
+            except BrokenPipeError:
+                pass
+            os.close(release_write)
+            release_write = None
+
+    try:
+        readable, _, _ = select.select([ready_read], [], [], 10)
+        assert readable, "Deployment never reached the paused Docker build"
+        assert os.read(ready_read, 6) == b"ready\n", process.communicate(timeout=5)
+        yield process, resume
+    finally:
+        resume()
+        os.close(ready_read)
+        if process.poll() is None:
+            process.communicate(timeout=10)
+
+
+@pytest.mark.parametrize("direct", (False, True), ids=("mihomo", "direct"))
+def test_manual_build_excludes_cron_and_failed_new_version_is_retried(tmp_path, direct):
+    project, env, producer, docker_state = setup_concurrent_deploy(tmp_path)
+    mode = ("--no-proxy",) if direct else ()
+    assert invoke(project, env, "scheduled-deploy.sh", "start", "1m", *mode).returncode == 0
+    state = project / "data/storage"
+    marker = state / ".easyadb-last-deployed-tree"
+    last_check = state / ".easyadb-schedule-last-check"
+    last_result = state / ".easyadb-schedule-last-result"
+    tree_a = shell("git", "rev-parse", "HEAD^{tree}", cwd=project).stdout.strip()
+    marker.write_text(tree_a + "\n")
+    last_check.write_text("0\n")
+    result_before = last_result.read_text()
+    (state / "fixture.sqlite3").write_bytes(b"preserved database")
+    (project / ".env").write_text("EASYADB_VIDEO_ENGINE=webrtc\n")
+    with paused_deployment(project, dict(env, EASYADB_TEST_ROLE="manual"),
+                           "build-with-mihomo.sh", *mode) as (manual, resume):
+        assert (docker_state / "built-manual").read_text() == tree_a
+        tree_b = publish_change(producer, "version B")
+        calls_before = (docker_state / "calls.jsonl").read_text()
+        for command in ("run", "run-locked"):
+            skipped = invoke(project, env, "scheduled-deploy.sh", command)
+            assert skipped.returncode == 0, skipped.stderr
+        for override in ({}, {"EASYADB_UPDATED": "1"}):
+            rejected = invoke(project, dict(env, **override), "build-with-mihomo.sh", *mode)
+            assert rejected.returncode == 75, rejected.stdout + rejected.stderr
+            assert "already running" in rejected.stderr
+        assert (docker_state / "calls.jsonl").read_text() == calls_before
+        assert shell("git", "rev-parse", "HEAD^{tree}", cwd=project).stdout.strip() == tree_a
+        assert last_check.read_text() == "0\n" and last_result.read_text() == result_before
+        resume()
+        stdout, stderr = manual.communicate(timeout=10)
+        assert manual.returncode == 0, stdout + stderr
+    assert marker.read_text().strip() == (docker_state / "running-tree").read_text() == tree_a
+
+    # Both image build and container-start failures retain A's marker, so B
+    # remains eligible for the next due tick rather than being falsely skipped.
+    for failure, code in (("EASYADB_TEST_FAIL_BUILD", 42), ("EASYADB_TEST_FAIL_START", 43)):
+        last_check.write_text("0\n")
+        failed = invoke(project, dict(env, **{failure: "1"}), "scheduled-deploy.sh", "run")
+        assert failed.returncode == 0
+        assert f"FAILED (exit {code})" in last_result.read_text()
+        assert (docker_state / "built-scheduled").read_text() == tree_b
+        assert marker.read_text().strip() == (docker_state / "running-tree").read_text() == tree_a
+    last_check.write_text("0\n")
+    retried = invoke(project, env, "scheduled-deploy.sh", "run")
+    assert retried.returncode == 0, retried.stdout + retried.stderr
+    assert "deployment successful" in last_result.read_text()
+    assert marker.read_text().strip() == (docker_state / "running-tree").read_text() == tree_b
+    assert (state / "fixture.sqlite3").read_bytes() == b"preserved database"
+    assert (project / ".env").read_text() == "EASYADB_VIDEO_ENGINE=webrtc\n"
+    calls_before = (docker_state / "calls.jsonl").read_text()
+    last_check.write_text("0\n")
+    unchanged = invoke(project, env, "scheduled-deploy.sh", "run")
+    assert "skipping Docker" in unchanged.stdout
+    assert (docker_state / "calls.jsonl").read_text() == calls_before
+
+
+@pytest.mark.parametrize("direct", (False, True), ids=("mihomo", "direct"))
+def test_scheduler_keeps_deployment_lock_and_arguments_across_builder_self_update(tmp_path, direct):
+    project, env, producer, docker_state = setup_concurrent_deploy(tmp_path)
+    mode = ("--no-proxy",) if direct else ()
+    assert invoke(project, env, "scheduled-deploy.sh", "start", "1m", *mode).returncode == 0
+    state = project / "data/storage"
+    marker = state / ".easyadb-last-deployed-tree"
+    tree_a = shell("git", "rev-parse", "HEAD^{tree}", cwd=project).stdout.strip()
+    marker.write_text(tree_a + "\n")
+    tree_b = publish_change(producer, "updated builder B", replace_builder=True)
+    last_check = state / ".easyadb-schedule-last-check"
+    last_check.write_text("0\n")
+    with paused_deployment(project, env, "scheduled-deploy.sh", "run") as (scheduled, resume):
+        assert (docker_state / "built-scheduled").read_text() == tree_b
+        assert (docker_state / "reentry.log").read_text().splitlines() == [
+            "--if-changed --no-proxy" if direct else "--if-changed"
+        ]
+        check_before = last_check.read_text()
+        calls_before = (docker_state / "calls.jsonl").read_text()
+        rejected = invoke(project, env, "build-with-mihomo.sh", *mode)
+        assert rejected.returncode == 75
+        assert invoke(project, env, "scheduled-deploy.sh", "run").returncode == 0
+        assert last_check.read_text() == check_before
+        assert (docker_state / "calls.jsonl").read_text() == calls_before
+        assert marker.read_text().strip() == tree_a
+        resume()
+        stdout, stderr = scheduled.communicate(timeout=10)
+        assert scheduled.returncode == 0, stdout + stderr
+    assert marker.read_text().strip() == (docker_state / "running-tree").read_text() == tree_b
+
+
+def test_external_git_change_during_build_cannot_be_certified_as_deployed(tmp_path):
+    project, env, producer, docker_state = setup_concurrent_deploy(tmp_path)
+    marker = project / "data/storage/.easyadb-last-deployed-tree"
+    marker.parent.mkdir(parents=True)
+    tree_a = shell("git", "rev-parse", "HEAD^{tree}", cwd=project).stdout.strip()
+    marker.write_text(tree_a + "\n")
+    with paused_deployment(project, env, "build-with-mihomo.sh", "--no-proxy") as (manual, resume):
+        tree_b = publish_change(producer, "external Git change B")
+        # An operator running plain Git does not participate in deployment
+        # locking; the final identity check must fail closed in that case.
+        shell("git", "pull", "--ff-only", "origin", V4_BRANCH, cwd=project)
+        resume()
+        stdout, stderr = manual.communicate(timeout=10)
+        assert manual.returncode == 1, stdout + stderr
+        assert "marker was not advanced" in stderr
+    assert marker.read_text().strip() == tree_a
+    assert (docker_state / "running-tree").read_text() == tree_a
+    retried = invoke(project, env, "build-with-mihomo.sh", "--no-proxy", "--if-changed")
+    assert retried.returncode == 0, retried.stdout + retried.stderr
+    assert marker.read_text().strip() == (docker_state / "running-tree").read_text() == tree_b

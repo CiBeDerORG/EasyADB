@@ -13,7 +13,6 @@ CONFIG="$STATE_DIR/.easyadb-schedule"
 LAST_CHECK="$STATE_DIR/.easyadb-schedule-last-check"
 LAST_RESULT="$STATE_DIR/.easyadb-schedule-last-result"
 LOG="$STATE_DIR/.easyadb-schedule.log"
-LOCK="$STATE_DIR/.easyadb-schedule.lock"
 MARKER="EASYADB_SCHEDULED_DEPLOY:$ROOT"
 
 usage() {
@@ -178,12 +177,26 @@ case "${1:-}" in
     ;;
   run)
     # Cron invokes this once per minute. A nonblocking lock prevents overlap
-    # with a previous long build, while the interval gate avoids Git polling.
+    # with manual AND scheduled deployments, before consuming the interval.
     [ -f "$CONFIG" ] || exit 0
     installed || exit 0
-    flock -n "$LOCK" /bin/sh "$SELF" run-locked || :
+    . scripts/deploy-lock.sh
+    if acquire_deploy_lock; then :; else
+      lock_status=$?
+      [ "$lock_status" -ne 75 ] || exit 0
+      exit "$lock_status"
+    fi
+    /bin/sh "$SELF" run-locked || :
     ;;
   run-locked)
+    # Also guard explicit invocations of this internal entry point. The
+    # inherited descriptor keeps the lock through builder self-update/exec.
+    . scripts/deploy-lock.sh
+    if acquire_deploy_lock; then :; else
+      lock_status=$?
+      [ "$lock_status" -ne 75 ] || exit 0
+      exit "$lock_status"
+    fi
     read_config || { echo 'ERROR: invalid scheduled deployment state.' >&2; exit 1; }
     installed || exit 0
     now="$(date +%s)"
