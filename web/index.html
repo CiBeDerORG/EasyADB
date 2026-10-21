@@ -181,6 +181,7 @@ const managementSelected=new Set(); // one selection for every batch action
 const connectingDevices=new Set(),connectSnapshots=new Map();
 let connectionBatchBusy=false,connectGeneration=0,connectProgressRevision=0,connectController=null;
 let managementBatch=null; // shared across the temporary inline and module adapters
+let configurationOperation=null; // preserve pre-bootstrap device mutations across injection
 function deviceConnecting(id){return connectingDevices.has(id);}
 // The global management lock must not cause a running batch to skip itself.
 function deviceBusy(id){return deviceConnecting(id)||Boolean(multiView&&multiView.isBusyFor(id));}
@@ -279,7 +280,7 @@ function adbStatusBadge(d){
 }
 const toastHost=$('toastHost'),toastItems=new Map();
 let frontendModules=null; // populated by a one-time ES Module bootstrap; no window global
-let deviceConnectionController=null,deviceManagementController=null;
+let deviceConnectionController=null,deviceManagementController=null,deviceConfigurationController=null;
 function toastSelected(card){
  const selection=typeof window.getSelection==='function'?window.getSelection():null;
  return Boolean(selection&&!selection.isCollapsed&&
@@ -400,6 +401,27 @@ document.addEventListener('easyadb:frontend-modules-ready',event=>{
    request:api,refreshDevices:()=>load(true),confirmDelete:text=>confirm(text),
    isDeviceBusy:deviceBusy,isDeviceConnecting:deviceConnecting,
    onChange:render,notify:message
+  });
+ }
+ if(frontendModules.createDeviceConfigurationController){
+  deviceConfigurationController=frontendModules.createDeviceConfigurationController({
+   state:{
+    get devices(){return devices;},set devices(value){devices=value;},
+    get selectedDeviceId(){return selected;},set selectedDeviceId(value){selected=value;},
+    get isLoaded(){return loaded;},
+    get isLoading(){return loading;},set isLoading(value){loading=value;},
+    get generation(){return connectGeneration;},
+    get activeOperation(){return configurationOperation;},
+    set activeOperation(value){configurationOperation=value;}
+   },
+   request:api,refreshDevices:()=>load(true),
+   isDeviceBusy:deviceBusy,isDeviceConnecting:deviceConnecting,
+   confirmRemoveTemp:text=>confirm(text),onChange:render,notify:message,
+   onDeviceSaved:()=>closeDialog('deviceDialog'),
+   onDeviceError:text=>modalMessage(text),
+   onTempError:text=>{
+    if($('tempDialog').open){$('tempMessage').hidden=false;$('tempMessage').textContent=text;}
+   }
   });
  }
  if(initialText)message(initialText);
@@ -792,29 +814,85 @@ function openFirstPair(id){
  showDialog('firstPairDialog','firstPairPort');
 }
 function closeFirstPair(){if(!loading)closeDialog('firstPairDialog');}
+// Temporary pre-module ownership helpers. F will remove this legacy path once
+// all page event contracts use the injected controllers.
+function beginConfigurationOperation(){
+ const operation={generation:connectGeneration,abortController:new AbortController()};
+ configurationOperation=operation;loading=true;return operation;
+}
+function isCurrentConfigurationOperation(operation){
+ return configurationOperation===operation&&connectGeneration===operation.generation;
+}
+function finishConfigurationOperation(operation){
+ if(!isCurrentConfigurationOperation(operation))return;
+ configurationOperation=null;loading=false;render();
+}
+async function refreshConfigurationOperation(operation,failureMessage){
+ if(!isCurrentConfigurationOperation(operation))return false;
+ try{
+  const refreshed=await load(true);
+  if(!isCurrentConfigurationOperation(operation))return false;
+  if(refreshed===false){message(failureMessage+'：请检查访问密钥或服务端连接','error');return false;}
+  return true;
+ }catch(e){
+  if(isCurrentConfigurationOperation(operation))message(failureMessage+'：'+e.message,'error');
+  return false;
+ }
+}
 async function switchRoute(id,route){
- if(loading)return;
+ if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
+  return deviceConfigurationController.switchRoute(id,route);
+ if(loading||!loaded||configurationOperation)return false;
  if(deviceConnecting(id)){message('该设备仍在连接中，请完成后再切换线路。','error');return;}
  if(multiView&&multiView.isBusyFor(id)){
   message('这台设备正在投屏或启动中，请先停止此路再切换其连接地址。','error');return;
  }
- loading=true;render();
- message('正在保存当前连接地址…');
+ const current=devices.find(d=>d.id===id);
+ if(!current)return false;
+ const originalRoute=current.selected_route,originalSerial=current.selected_serial;
+ let selectedSerial=current.selected_serial,success=false;
+ const hasCurrentAddress=device=>device&&(
+  device.selected_route===originalRoute&&device.selected_serial===originalSerial||
+  device.selected_route===route&&device.selected_serial===selectedSerial);
+ const operation=beginConfigurationOperation();
  try{
-  const current=devices.find(d=>d.id===id);
-  if(!current)throw Error('设备已从列表移除');
+  render();message('正在保存当前连接地址…');
+  if(!isCurrentConfigurationOperation(operation))return false;
   if(current.selected_route!==route){
-   const result=await(await api('/api/devices/'+encodeURIComponent(id)+'/route',{
-    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route})
-   })).json();
+   const response=await api('/api/devices/'+encodeURIComponent(id)+'/route',{
+    method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({route}),
+    signal:operation.abortController.signal
+   });
+   if(!isCurrentConfigurationOperation(operation))return false;
+   const result=await response.json();
+   if(!isCurrentConfigurationOperation(operation))return false;
+   if(result?.id!==id||result.selected_route!==route||!result.selected_serial)throw Error('线路保存响应与当前设备不一致');
+   selectedSerial=result.selected_serial;
+   if(!hasCurrentAddress(devices.find(d=>d.id===id)))throw Error('设备连接地址已变更，请重新选择线路');
    devices=devices.map(d=>d.id===id?result:d);render();
   }
   // Exactly one explicit connect for the newly selected route. No fallback or retry.
-  const connected=await(await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST'})).json();
+  const target=devices.find(d=>d.id===id);
+  if(!hasCurrentAddress(target))throw Error('设备连接地址已变更，请重新选择线路');
+  if(deviceBusy(id))throw Error('设备正在连接或投屏，本次连接已跳过');
+  if(!isCurrentConfigurationOperation(operation))return false;
+  const response=await api('/api/devices/'+encodeURIComponent(id)+'/connect',{method:'POST',signal:operation.abortController.signal});
+  if(!isCurrentConfigurationOperation(operation))return false;
+  const connected=await response.json();
+  if(!isCurrentConfigurationOperation(operation))return false;
+  const present=devices.find(d=>d.id===id);
+  if(!hasCurrentAddress(present))throw Error('设备连接地址已变更，请重新选择线路');
+  if(connected?.id!==id||connected.selected_serial!==selectedSerial||connected.selected_route!==route)throw Error('连接响应与当前设备地址不一致');
   devices=devices.map(d=>d.id===id?connected:d);
   message('已切换为'+({lan:'内网 IP',temp:'临时 IP',mesh:'组网 IP'}[route]||'所选线路')+'并连接 '+connected.selected_serial,'ok');
- }catch(e){message('地址切换/连接：'+e.message,'error');}
- finally{await load(true);loading=false;render();}
+  success=true;
+ }catch(e){if(isCurrentConfigurationOperation(operation))message('地址切换/连接：'+e.message,'error');}
+ finally{
+  await refreshConfigurationOperation(operation,'地址切换/连接后列表刷新失败');
+  if(!isCurrentConfigurationOperation(operation))success=false;
+  finishConfigurationOperation(operation);
+ }
+ return success;
 }
 function openTempEditor(d){
  if(deviceLocked(d.id))return;
@@ -832,31 +910,45 @@ $('tempDialog').addEventListener('cancel',ev=>{if(loading)ev.preventDefault();})
 $('tempDialog').addEventListener('close',()=>{editingTemp=null;});
 $('tempForm').addEventListener('submit',async ev=>{
  ev.preventDefault();
- const id=editingTemp;
+ const id=editingTemp,epoch=connectGeneration;
  if(!id||loading)return;
  const ip=$('tempIp').value.trim(),port=Number($('tempSharedPort').value);
  const success=await saveTempAddress(id,ip,port);
- if(success)closeDialog('tempDialog');
+ if(success&&epoch===connectGeneration&&editingTemp===id)closeDialog('tempDialog');
 });
 async function saveTempAddress(id,ip,port){
- if(deviceLocked(id))return false;
- loading=true;render();message('正在保存临时线路…');
+ if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
+  return deviceConfigurationController.saveTempAddress(id,ip,port);
+ if(!loaded||configurationOperation||!devices.some(d=>d.id===id)||deviceLocked(id))return false;
+ const operation=beginConfigurationOperation();
  try{
+  render();message('正在保存临时线路…');
+  if(!isCurrentConfigurationOperation(operation))return false;
   await api('/api/devices/'+encodeURIComponent(id)+'/temp-address',{
-   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})
+   method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port}),
+   signal:operation.abortController.signal
   });
-  await load(true);message(ip?'临时 IP 与共用端口已保存；请选择 IP 或点击加载/刷新设备后连接':'临时 IP 已移除，共用端口保持不变','ok');
+  if(!isCurrentConfigurationOperation(operation))return false;
+  const refreshed=await refreshConfigurationOperation(operation,'临时线路已保存，但列表刷新失败');
+  if(!isCurrentConfigurationOperation(operation))return false;
+  if(refreshed)message(ip?'临时 IP 与共用端口已保存；请选择 IP 或点击加载/刷新设备后连接':'临时 IP 已移除，共用端口保持不变','ok');
   return true;
  }catch(e){
+  if(!isCurrentConfigurationOperation(operation))return false;
   message(e.message,'error');
   if($('tempDialog').open){$('tempMessage').hidden=false;$('tempMessage').textContent=e.message;}
-  await load(true);return false;
- }finally{loading=false;render();}
+  await refreshConfigurationOperation(operation,'临时线路保存失败，列表刷新也失败');return false;
+ }finally{finishConfigurationOperation(operation);}
 }
 function removeTempAddress(id){
+ if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
+  return deviceConfigurationController.removeTempAddress(id);
  const d=devices.find(x=>x.id===id);
- if(!d||deviceLocked(id))return;
- if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。'))saveTempAddress(id,null,null);
+ if(!loaded||!d||deviceLocked(id)||configurationOperation)return false;
+ const epoch=connectGeneration;
+ if(confirm('确认移除「'+d.name+'」的临时 IP？ADB 共用端口保持不变，不会执行 ADB 断开或自动连接。')&&epoch===connectGeneration)
+  return saveTempAddress(id,null,null);
+ return false;
 }
 // Each connect uses its own FastAPI threadpool worker/device lock. Only an
 // individual pending phone is unavailable; completed phones can be projected,
@@ -942,6 +1034,11 @@ $('token').addEventListener('input',()=>{
   deviceManagementController.invalidate();
  }else if(managementBatch){
   const batch=managementBatch;managementBatch=null;batch.abortController.abort();loading=false;
+ }
+ if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController){
+  deviceConfigurationController.invalidate();
+ }else if(typeof configurationOperation!=='undefined'&&configurationOperation){
+  const operation=configurationOperation;configurationOperation=null;operation.abortController.abort();loading=false;
  }
  connectingDevices.clear();connectSnapshots.clear();
  if(connectionBatchBusy)loading=false;
@@ -1102,18 +1199,30 @@ $('deviceDialog').addEventListener('click',ev=>{
  if(ev.target===$('deviceDialog')&&!loading)closeModal();
 });
 $('form').addEventListener('submit',async ev=>{
- ev.preventDefault();if(loading)return;
+ ev.preventDefault();
+ const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
+ if(typeof deviceConfigurationController!=='undefined'&&deviceConfigurationController)
+  return deviceConfigurationController.saveDevice(editing,payload);
+ if(loading||!loaded||configurationOperation)return false;
+ if(editing&&!devices.some(d=>d.id===editing)){modalMessage('设备已从列表移除');return false;}
  if(editing&&deviceLocked(editing)){
   modalMessage('该设备正处于本轮投屏或启动中，请先停止此路再修改；新建其它设备不受限制。');return;
  }
- loading=true;render();
- const payload={name:$('name').value,group_name:$('group').value,ip:$('ip').value.trim(),port:Number($('port').value)};
+ const id=editing,operation=beginConfigurationOperation();
  try{
-  const url=editing?'/api/devices/'+encodeURIComponent(editing):'/api/devices';
-  const d=await(await api(url,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+  render();if(!isCurrentConfigurationOperation(operation))return false;
+  const url=id?'/api/devices/'+encodeURIComponent(id):'/api/devices';
+  const response=await api(url,{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:operation.abortController.signal});
+  if(!isCurrentConfigurationOperation(operation))return false;
+  const d=await response.json();
+  if(!isCurrentConfigurationOperation(operation))return false;
+  if(!d?.id||(id&&d.id!==id))throw Error('设备保存响应与当前设备不一致');
+  if(id&&!devices.some(device=>device.id===id))return false;
   selected=d.id;closeDialog('deviceDialog');message('设备已保存','ok');
-  try{await load(true);}catch(e){message('设备已保存，但列表刷新失败：'+e.message,'error');}
- }catch(e){modalMessage(e.message);}finally{loading=false;render();}
+  await refreshConfigurationOperation(operation,'设备已保存，但列表刷新失败');
+  return isCurrentConfigurationOperation(operation);
+ }catch(e){if(isCurrentConfigurationOperation(operation))modalMessage(e.message);return false;}
+ finally{finishConfigurationOperation(operation);}
 });
 $('refreshAll').addEventListener('click',async()=>{
  if(typeof deviceManagementController!=='undefined'&&deviceManagementController)

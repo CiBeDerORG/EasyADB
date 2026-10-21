@@ -130,7 +130,8 @@ assert.match(page,/managementCheck\.checked=managementSelected\.has\(d\.id\)/);
 assert.match(page,/managementSelected\.clear\(\);render\(\)/,'auth change clears bulk selection');
 assert.match(page,/candidates=picked\.filter\(d=>!deviceLocked\(d\.id\)\)/,'batch skips connecting and projecting devices');
 assert.match(page,/if\(!confirm\('将从列表永久删除以下 /,'batch deletion requires confirmation');
-assert(page.includes("+'/connect',{method:'POST'}"),'batch connects via explicit existing endpoint');
+assert(page.includes("+'/connect',{method:'POST',signal:operation.abortController.signal}"),
+ 'legacy route connects via the explicit existing endpoint with its own cancellation signal');
 assert(page.includes("encodeURIComponent(d.id),{method:'DELETE',signal:batch.abortController.signal}"),
  'legacy batch deletes via the existing endpoint with its own cancellation signal');
 assert.match(page,/action\(label\+'：'\+ip,\(\)=>switchRoute\(d\.id,route\),'address-target'\)/);
