@@ -49,7 +49,7 @@ jobs:
           node tests/global_toast_contract.cjs
           node tests/inventory_drawer_contract.cjs
           grep -Fq 'sh scripts/update-m2.sh' scripts/build-with-mihomo.sh
-          grep -Fxq 'TARGET_BRANCH=feat/m2-web-control' scripts/update-m2.sh
+          grep -Fxq 'TARGET_BRANCH=refactor/v4-frontend-standards' scripts/update-m2.sh
           test ! -e scripts/update-m1.sh
       - name: Check integrated OpenWrt ACL and scanner smoke tests
         run: sh luci-avahi-web/tests/smoke.sh

@@ -1,12 +1,10 @@
 #!/bin/sh
 set -eu
 
-# Update a known EasyADB development branch before doing Docker work.
-# Keep the M2 branch as the default, but NEVER silently switch an explicitly
-# checked-out display-lab experiment back to old M2 during normal builds.
-# EASYADB_SOURCE_BRANCH is an optional, strict allowlist override.
+# Legacy M3 migration entry: all accepted source aliases now lead to V4.
+# EASYADB_SOURCE_BRANCH remains a strict allowlist, not an arbitrary Git target.
 # Keep Git under the original login user: root may not have their GitHub SSH key.
-TARGET_BRANCH=feat/m2-web-control
+TARGET_BRANCH=refactor/v4-frontend-standards
 
 git_as_owner() {
   if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
@@ -29,23 +27,14 @@ if ! git_as_owner rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # Current checkout is read as the original login user (same owner as fetch).
-# For unattended builds preserve the explicit display-lab checkout by default.
+# Accept the former supported source names, but never fetch or deploy them here.
 CURRENT="$(git_as_owner symbolic-ref --quiet --short HEAD || true)"
 SOURCE="${EASYADB_SOURCE_BRANCH:-$CURRENT}"
 case "$SOURCE" in
-  feat/display-mode-lab)
-    TARGET_BRANCH=feat/display-mode-lab ;;
-  feat/m3-openwrt-discovery)
-    TARGET_BRANCH=feat/m3-openwrt-discovery ;;
-  feat/m2-web-control|"")
-    TARGET_BRANCH=feat/m2-web-control ;;
+  feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/v4-frontend-standards|"") ;;
   *)
-    if [ -n "${EASYADB_SOURCE_BRANCH:-}" ]; then
-      echo "ERROR: unsupported EASYADB_SOURCE_BRANCH; only the M2, display-lab and m3-openwrt-discovery branches are allowed." >&2
-      exit 2
-    fi
-    # An unrelated checkout retains the original M2 default on an ordinary build.
-    TARGET_BRANCH=feat/m2-web-control ;;
+    echo 'ERROR: unsupported source branch; only the legacy M2, display-lab, M3 and V4 branches are allowed.' >&2
+    exit 2 ;;
 esac
 
 # Ignore .env, data and .cache via .gitignore. Never discard user changes.
@@ -56,7 +45,8 @@ if [ -n "$(git_as_owner status --porcelain --untracked-files=normal)" ]; then
 fi
 
 echo "Checking origin/$TARGET_BRANCH using the login user's Git credentials..."
-git_as_owner fetch origin
+# Fetch V4 even when origin.fetch is restricted to a --single-branch M3 clone.
+git_as_owner fetch origin "refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
 
 if ! git_as_owner show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
   echo "ERROR: remote branch origin/$TARGET_BRANCH does not exist." >&2
@@ -67,7 +57,9 @@ if [ "$CURRENT" != "$TARGET_BRANCH" ]; then
   if git_as_owner show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
     git_as_owner switch "$TARGET_BRANCH"
   else
-    git_as_owner switch --track -c "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+    # Restricted fetch mappings cannot set V4 upstream tracking. The explicit
+    # pull below needs no upstream and leaves the user's origin.fetch untouched.
+    git_as_owner switch --no-track -c "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
   fi
 fi
 

@@ -57,8 +57,9 @@ parse_interval() {
 }
 valid_branch() {
   case "$1" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery) ;;
-    *) echo 'ERROR: scheduled branch must be M2, display-mode-lab or M3.' >&2; exit 2 ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/v4-frontend-standards)
+      BRANCH=refactor/v4-frontend-standards ;;
+    *) echo 'ERROR: scheduled source must be legacy M2, display-mode-lab, M3 or V4.' >&2; exit 2 ;;
   esac
 }
 read_config() {
@@ -71,7 +72,9 @@ read_config() {
   case "$GIT_UID" in ''|*[!0-9]*) return 1 ;; esac
   case "$MODE" in proxy|direct) ;; *) return 1 ;; esac
   case "$BRANCH" in
-    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery) ;;
+    feat/m2-web-control|feat/display-mode-lab|feat/m3-openwrt-discovery|refactor/v4-frontend-standards)
+      # Old state is still readable; every execution uses the V4 target.
+      BRANCH=refactor/v4-frontend-standards ;;
     *) return 1 ;;
   esac
   [ "$INTERVAL" -ge 1 ] && [ "$INTERVAL" -le 10080 ]
@@ -181,6 +184,15 @@ case "${1:-}" in
     previous="$(cat "$LAST_CHECK" 2>/dev/null || echo 0)"
     case "$previous" in ''|*[!0-9]*) previous=0 ;; esac
     [ "$now" -ge $((previous + INTERVAL * 60)) ] || exit 0
+    # Persist the migration only on a due run under the existing lock. Status
+    # remains read-only. Otherwise V4 could later honor a saved M2/display alias
+    # as its original target and undo this bridge's explicit migration.
+    if [ "$(sed -n '4p' "$CONFIG")" != "$BRANCH" ]; then
+      tmp="$CONFIG.tmp.$$"
+      printf '%s\n%s\n%s\n%s\n' "$INTERVAL" "$MODE" "$GIT_UID" "$BRANCH" > "$tmp"
+      chmod 600 "$tmp"
+      mv -f "$tmp" "$CONFIG"
+    fi
     # Record the attempt, not successful deployment. A failed build leaves
     # the deployed-tree marker unchanged and is retried at the next interval.
     printf '%s\n' "$now" > "$LAST_CHECK"

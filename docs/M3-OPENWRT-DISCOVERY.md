@@ -1,6 +1,6 @@
 # M3 · OpenWrt 授权发现接入（EasyADB NAS 端）
 
-实现分支：feat/m3-openwrt-discovery。OpenWrt 需使用 LuCI APK v0.6.1 或以上：NAS 专用 ACL 同时包含 HTTP ubus.file.exec 方法许可及固定扫描脚本的精确执行许可。
+原实现分支：`feat/m3-openwrt-discovery`；当前部署目标为 `refactor/v4-frontend-standards`。M3 分支的部署脚本作为迁移入口，先更新自身再切换到 V4；OpenWrt 分组发现功能已包含在 V4 中。OpenWrt 需使用 LuCI APK v0.6.1 或以上：NAS 专用 ACL 同时包含 HTTP ubus.file.exec 方法许可及固定扫描脚本的精确执行许可。
 
 ## 职责及连接
 
@@ -39,12 +39,16 @@
 
 ## 升级和实机验收
 
-1. 从该分支部署，无需独立凭据加密依赖；不要运行可能切回旧 M2 分支的脚本，部署前设置 \`EASYADB_SOURCE_BRANCH=feat/m3-openwrt-discovery\`。
+1. 已有 M3 部署继续运行 `sudo sh scripts/build-with-mihomo.sh`（无代理模式加 `--no-proxy`），先拉取 M3 迁移入口，再在同一次调用中切换并部署 V4。尚未更新的旧脚本不识别 V4 来源，不要提前向它传入 V4 覆盖；手动切换、单分支克隆及旧脚本的处理见 [README 的迁移说明](../README.md)。进入 V4 后，需要显式覆盖时使用 `EASYADB_SOURCE_BRANCH=refactor/v4-frontend-standards`。
 2. 保留原有 \`./data/storage\` 数据卷；新的组发现相关表在服务启动时无损建立。配置分组的内网 IP 前缀与专用密钥。
 3. 明确点击「测试授权」，检查一次扫描 ACL；随后点击该分组「立即发现 ADB」，检查新旧端口、未匹配、端口冲突与 busy 统计。单台设备连接仍需用户主动点击。
 4. 实机验证 EasyTier 到 OpenWrt /ubus 的连通性，以及 NAS 到手机内网 IP:新端口的实际路由。**发现成功不等于 ADB 可连接。** 它也不会修复 EasyTier 子网路由、防火墙或安卓无线调试授权。
 
-自动化测试使用模拟 RPCD 与 ADB，不代表已经使用真实路由器账号完成 NAS 联调。
+旧 M3 定时配置继续按原间隔和构建模式执行，部署目标转为 V4；`--if-changed` 保留旧成功部署标记，只有 V4 构建和启动成功后才记录新文件树。原访问密钥、设备数据库与 ADB 授权保留。V4 默认 WebRTC，使用 Linux host 网络和 ICE 动态 UDP；若原 `.env` 显式配置 `mse` 或 `webcodecs`，需手动改为 `webrtc`。脚本不会改写 `.env`，拒绝旧引擎时可能已切到 V4，但尚未执行 Docker 部署。
+
+若定时配置另行保存为 M2 或 display-lab 来源，手动迁移后应在 V4 按原间隔和模式重新 `start`，明确保存 V4 目标；也可由已更新的 M3 定时入口在到期执行时先完成目标迁移。V4 仍保留对这些其他历史来源的显式选择，不能将其等同于自动兼容的旧 M3 配置。具体命令与边界见 [README 的定时部署说明](../README.md)。
+
+自动化测试使用模拟 RPCD、ADB 和部署工具，不代表已经使用真实路由器账号完成 NAS 联调，也不代表迁移后的 WebRTC 网络已实机验收。
 
 ## v0.6.1 专用 ACL 与 NAS RPCD 错误处理
 

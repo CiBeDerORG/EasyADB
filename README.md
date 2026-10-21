@@ -1,10 +1,26 @@
+# EasyADB · M3 部署迁移到 V4
+
+**当前部署目标为 `refactor/v4-frontend-standards`。** `feat/m3-openwrt-discovery` 保留为旧部署的迁移入口；OpenWrt 分组发现已包含在 V4 中。V4 使用 WebRTC，已移除 FFmpeg + MSE。当前代码进度与运行要求见 [V4 任务清单](https://github.com/CiBeDerORG/EasyADB/blob/refactor/v4-frontend-standards/docs/V4-TASKS.md) 和 [V4 的 WebRTC 部署说明](https://github.com/CiBeDerORG/EasyADB/blob/refactor/v4-frontend-standards/docs/M2-WEBRTC.md)。本文件后面的 M2 功能记录保留历史背景，不代表 V4 仍使用旧视频链路。
+
+## M3 到 V4 的更新入口
+
+已有 M3 部署继续运行原命令 `sudo sh scripts/build-with-mihomo.sh`，无代理模式继续加 `--no-proxy`。旧 M3 脚本先拉取 M3 的迁移提交，再重新加载迁移入口；迁移入口会处理旧脚本传来的 `EASYADB_UPDATED=1`，继续切换到独立的 V4 分支并执行 `pull --ff-only`，最后重新执行 V4 构建脚本。同一次调用保留原有参数，不会先构建旧 M3，也不会把两个分支的历史合并。
+
+上述首次自动迁移以当前来源为 M3 为前提。若曾设置 `EASYADB_SOURCE_BRANCH` 指向 M2 或 display-lab，请先取消该覆盖，或让旧脚本继续以 M3 为来源以取得迁移入口；尚未更新的旧脚本不识别 V4 来源。也可以按下方 Git 步骤直接切换到 V4。M3 的新版迁移入口只接受原来支持的来源名称及 V4，并统一转到 V4；未知分支与 M4 会被拒绝。迁移后若需要显式覆盖来源，使用 `EASYADB_SOURCE_BRANCH=refactor/v4-frontend-standards`。
+
+Git 操作仍使用原登录用户。脚本遇到未提交修改、未跟踪文件或 V4 分支不能快进时停止，不强制重置本地历史；已有 `.env`、设备数据库、ADB 授权和缓存保留。目标分支通过显式 refspec 获取，新建本地 V4 使用 `--no-track`，也适用于只克隆 M3 的 `--single-branch` 仓库，不改写原来的 `origin.fetch`。
+
+迁移前请核对已有 `.env`：V4 默认 `webrtc`，只实现 WebRTC，运行时使用 Linux host 网络和 ICE 动态 UDP。若仍显式配置 `EASYADB_VIDEO_ENGINE=mse` 或 `webcodecs`，需要用户手动改为 `webrtc`；迁移脚本不改写配置。此时迁移可能已切到 V4，但 V4 构建脚本会在任何 Docker 操作前报错，现有容器尚未重新部署，已有成功部署标记也不会前移。不要用新模板覆盖原有 Token、绑定地址或其他配置。
+
 ## EasyADB 定时更新部署（FNOS / Linux）
 
-沿用原有部署脚本，不创建第二套 Docker 构建链路。**首次启用前，建议先手动成功部署当前检出的分支一次**，以保证本地 Git 文件树就是当前运行版本。定时任务通过原 Git 登录用户安全执行 `fetch` 与 `pull --ff-only`，只比较已跟踪文件的 Git tree SHA；无文件变化（即使有空提交）则跳过整个 Docker 构建和 Compose 更新。仅在构建和启动成功后记录新版本，失败则保留旧标记供下轮重试。不会覆盖未提交修改、改写 `.env`、删除 `data/`、自动切换到别的实验分支，或执行 `down -v`。
+沿用原有部署脚本。**首次启用前，建议先完成迁移并手动成功部署 V4 一次**，以保证本地 Git 文件树就是当前运行版本。定时任务通过原 Git 登录用户安全执行 `fetch` 与 `pull --ff-only`，只比较已跟踪文件的 Git tree SHA；无文件变化（即使有空提交）则跳过整个 Docker 构建和 Compose 更新。仅在构建和启动成功后记录新版本，失败则保留旧标记供下轮重试。旧 M3 定时配置会以 V4 为目标；迁移保持原间隔、构建模式、Git 用户和项目的 cron 条目。不会覆盖未提交修改、改写 `.env`、删除设备数据或执行 `down -v`。
+
+自动兼容的是保存来源为 `feat/m3-openwrt-discovery` 的旧配置。若另有保存为 M2 或 display-lab 的定时配置，手动迁移后应在 V4 按原间隔和构建模式重新执行 `start`，并显式使用 `EASYADB_SOURCE_BRANCH=refactor/v4-frontend-standards`，以保存 V4 目标；也可先由已更新的 M3 定时入口完成一个到期轮次，它会将这些合法旧别名保存为 V4。仅查看 `status` 不会改写配置。V4 本身仍尊重显式的 M2/display-lab 选择，不能假定这类配置在手动迁移后自动永久转向 V4。
 
 ```sh
 cd /vol3/1000/software/EasyADB
-# 当前分支为 feat/m3-openwrt-discovery 时，先完成一次现有手动部署：
+# 当前为 M3 时，这次调用会先迁移到 V4，再执行 V4 的手动部署：
 sudo sh scripts/build-with-mihomo.sh
 # 如果使用原来的无代理部署模式，请改为：
 # sudo sh scripts/build-with-mihomo.sh --no-proxy
@@ -19,7 +35,7 @@ sudo sh scripts/scheduled-deploy.sh logs    # 最近 60 行日志
 sudo sh scripts/scheduled-deploy.sh stop    # 关闭定时任务，不中断正在进行的构建
 ```
 
-同一方式使用 `sudo` 管理启停和状态，否则会访问不同用户的 crontab。需要系统提供并启动 `cron/crond`、`crontab`、`flock`，并确保 Docker 和登录用户的 Git/SSH 权限可用。创建的定时任务在重启后由 cron 继续执行；按设定间隔到期才拉取 Git，同一时刻至多执行一轮。首次启用会将当前 Git 文件树作为基线，**不会立即重建**；使用 `start` 修改频率会重新开始计时。
+同一方式使用 `sudo` 管理启停和状态，否则会访问不同用户的 crontab。需要系统提供并启动 `cron/crond`、`crontab`、`flock`，并确保 Docker 和登录用户的 Git/SSH 权限可用。创建的定时任务在重启后由 cron 继续执行；按设定间隔到期才拉取 Git，同一时刻至多执行一轮。`start` **不会立即重建**；使用 `start` 修改频率会重新开始计时。首次到期检查若尚无部署标记，会保存更新前的 Git 文件树作为比较基线；迁移入口不会覆盖旧脚本已经保存的标记，V4 文件树变化仍会触发构建。
 
 调度文件、受限日志与成功部署标记存放于已忽略的 `data/storage/.easyadb-*`。定时部署不会后台操作或重连任何手机；仅在远端 Git 文件内容发生变化时才重建已有 EasyADB 服务。原手动 `build-with-mihomo.sh` 不带 `--if-changed` 时仍然每次构建；`--if-changed` 是定时任务调用的增量模式。
 
@@ -29,28 +45,30 @@ sudo sh scripts/scheduled-deploy.sh stop    # 关闭定时任务，不中断正�
 
 在设备分组设置中可选择性配置 `http://<OpenWrt-EasyTier-IP>/ubus`、专用 `easyadb` 用户名与 LuCI 中生成的一次性密钥。只有配置的分组会展示「立即发现 ADB」。NAS 通过 RPCD 登录并执行 OpenWrt 端已有的固定扫描命令，不增加独立接口/Hook 或后台轮询；结果精确匹配**当前组内网 IP**，仅更新相应设备的公共 ADB 端口，不覆盖组网/内网 IP 和原有临时地址，也不自动连接或投屏。活跃连接或投屏中的设备本轮跳过更新，避免影响当前会话。
 
-OpenWrt 生成的专用密钥直接保存在现有 NAS SQLite 分组配置中，不再生成额外密钥文件，也不需要额外的加密依赖或权限检查；管理 API 不回传专用密码。如果曾经成功保存过旧版加密凭据，首次升级后需在分组设置重新粘贴一次专用密钥，旧文件不会被自动删除。接口只接受私有 IPv4 的 HTTP(S) /ubus；推荐在 EasyTier 内网经 HTTPS 访问。**部署此分支须显式设置 `EASYADB_SOURCE_BRANCH=feat/m3-openwrt-discovery`**，避免原有更新脚本默认切回旧 M2 分支。
+OpenWrt 生成的专用密钥直接保存在现有 NAS SQLite 分组配置中，不再生成额外密钥文件，也不需要额外的加密依赖或权限检查；管理 API 不回传专用密码。如果曾经成功保存过旧版加密凭据，首次升级后需在分组设置重新粘贴一次专用密钥，旧文件不会被自动删除。接口只接受私有 IPv4 的 HTTP(S) /ubus；推荐在 EasyTier 内网经 HTTPS 访问。此功能已包含在 V4 中，当前部署按上方 M3 到 V4 的迁移说明执行。
 
 详细接口、迁移、安全边界及实机验收步骤：[docs/M3-OPENWRT-DISCOVERY.md](docs/M3-OPENWRT-DISCOVERY.md)。自动测试不等于已用真实路由器账号完成联调。
 
-# EasyADB · M2 Web 实时控制（开发中）
+## M2 Web 实时控制历史记录
+
+以下记录描述 M2 当时的功能与验收状态；其中 FFmpeg、MSE 和旧并发上限不适用于当前 V4。部署步骤以下方 V4 指令为准。
 
 **M2 在已完成的 M1 上继续开发；M2-00-D 的 PJZ110 真机视频编码链路已经通过。M2-00-E HTTP + NAS IP 的 MSE 实时视频首版已获 PJZ110 基本观看验证，仍需长期稳定性/不同网络条件验收。** 原多设备管理、手动选择组网/内网 IP、首次配对和手动连接规则不变（仅移除截图前端入口，后台截图 API 仍保留）。scrcpy-server 固定官方 v5.0.1，基础档最大边 1600 / 8 Mbps / 30 FPS，原生档不限制尺寸 / 16 Mbps / 30 FPS。在设备投屏工作区勾选任意 1～4 台已连接设备并点击「开始同屏」后，服务端按设备独立将 H.264 通过 FFmpeg 仅转封装（不重新编码）为分片 MP4，经同源 WebSocket 送至各自浏览器 MediaSource 播放；各画面可分别停止，或点击「停止全部同屏」、关闭页面结束本轮会话，不后台重连，不尝试其他 IP。M2-01-A 的正式会话已获 FNOS 验收；M2-02-A 单指触控代码已实现、真机验收暂缓；M2-03-A 已加入需手动开启的远程控制（单指触控、专用输入框 ASCII 文本、返回/主页/最近任务/回车/退格），仍待 CI 与 FNOS 真机验收。不支持中文输入法、全局键盘捕获、声音及录屏。M2-04-A 已加入统一停止和清理确认：停止时取消仍按住的手指，且只有控制/视频/本轮 ADB 资源清理成功，才会发出 `cleanup_complete=true` 并释放设备会话槽；代码待 CI/FNOS 验收。M2-04-B 另增加对当前 WebSocket 的诊断回执存活检测（45 秒宽限）、网络写入超时和网页 pagehide/offline 停止处理；只服务于用户已手动开启的投屏，不会后台探测或自动重连，待 CI/FNOS 验收。M2-04-C 补充当前 scrcpy 媒体/控制链路异常后的单次 ADB 状态确认；仅在明确掉线时清除当前选中地址的连接缓存，网页只刷新现有设备状态，不会自动连接或切换 IP，待 CI/FNOS 验收。当前产品只支持一个正在使用的网页客户端；不开发多浏览器并发/接管，M2-04-D/E/F/G 均按用户要求跳过，不再开发。M2-05-A 增加实时画面省流档（960 / 3 Mbps / 24 FPS）和白名单自定义分辨率上限、目标码率、最高帧率，保留原基础/原生档且默认不变；设置只在新一轮手动投屏时生效，原限时视频实验不变。代码待 CI/FNOS 验收。M2-05 后续已加入浏览器侧实测渲染 FPS、掉帧、缓冲、流量、本地 FFmpeg/ADB Shell 进程 CPU/RSS，以及最近八轮内存画质对照与只读降档提示；真实手机到屏幕的端到端延迟尚需同步时间戳或外部实测。M2-06 已在**同一个网页**加入手动勾选任意 1～4 台设备的同屏网格：仅启动所选设备，不要求全选或至少两台，每台独立画质（省流/基础/原生/自定义）、预检/视频实验、运行日志、MSE/流量/资源诊断、WS/MSE/Session/控制与状态，支持单路停止、全停；服务端最多保留四个不同设备会话槽。原“设备截图”整块区域及隐藏的旧单设备投屏脚本已彻底移除，首页进一步改为顶部访问配置 + 全宽横向独占行设备管理（独立画质嵌入每台设备行、启停按钮集中在设备管理页头）+ 下方全宽大尺寸实时画面；设备列表的手动连接、地址切换、编辑、分组和首次配对保留，原截图 API 不再提供首页入口。不开发多浏览器接管。针对同屏明显卡顿和第二路远控按钮不可用，已准备集中修复：控制通道就绪后不再等待第二路视频 playing；失败解除按钮等待状态；同屏独立默认省流（960 / 3 Mbps / 24 FPS）、等待前一路完成视频初始化后依次启动，并为多路 MSE 合并已排队的完整分片以减少追加开销。保留单设备默认画质与手动连接规则。两模块仍待本轮集中 CI 和 FNOS 双机、四机实测，不能保证所有 NAS/网络条件下的流畅度。澎湃 OS 3 兼容排查：可投屏但不能远控时，先按 scrcpy 官方 FAQ 在手机开发者选项启用独立的「USB 调试（安全设置）」并重启，再用导航“主页”和单指触摸分别验证；网页已增加本轮 Android 拒绝 `INJECT_EVENTS` 的安全分类提示（不回传原始日志）。每台设备可单独启用默认关闭的「低延迟播放实验」，只对浏览器已缓存画面短暂使用 1.15 倍速追近实时前沿，不修改 ColorOS 默认播放路径，也不声称能解决手机编码端的全部延迟。追加同屏已改为按设备隔离：A/B 投屏中可继续新增设备、创建新分组并手动连接 C，勾选 C 后设备管理页头显示「追加投屏」，只启动新勾选的 C，不中断已有视频、远控和画质；同时最多四路，同一设备不会重复创建会话。为避免串号，已运行/待清理的设备自身不能中途修改连接地址、重新连接、编辑或删除；包含运行中设备的现有分组也暂不能修改或删除。设备管理的每台设备行现有独立「实时画面」状态和开启／关闭按钮：无需预先勾选其它设备，可直接开启本台；停止只操作本台，停止中等待服务端清理，支持取消尚未启动的排队项，仍保留页头批量启停以及最多四路限制。静止画面恢复偶发卡顿按此前约定暂缓，本项不改视频编码及 MSE 播放机制。设备管理里暂时隐藏「能力预检 / 视频实验·基础 / 视频实验·原生 / 检测记录」的前端显示，但不删除原 API 或实时画面卡内诊断；每台设备的画质改为独立设置分辨率上限（960/1280/1600/不限制）、目标码率（2/3/4/8/12/16/18/20 Mbps）、最高帧率（15/24/30/45/55/60 FPS），默认 960/3 Mbps/24 FPS，只有该设备下一次明确开启投屏时生效，运行中不允许热切换。设备管理还支持与投屏勾选分开的管理全选、批量连接（按已选线路逐台尝试）和带二次确认的批量删除，投屏中/待清理的设备会跳过、不干扰已有画面；组网/内网 IP 改为直接点击地址选择线路，选中项以底色标识，仍需手动点「连接」；标题现用「**设备名称**　（型号）　蓝色 Android 版本标签」的可换行横向排列：名称主标题、型号中性灰字、Android 版本蓝色胶囊；缺失的字段直接省略，下方不再重复安卓版本。设备行右上角状态指示同时显示 ADB 状态和地址：实际连通显示绿色「ADB 已连接 · active_serial」，明确连接失败显示红色「ADB 连接失败 · selected_serial」，检查中黄色、尚未连接中性灰；不再在标题下重复展示成功地址。各设备「低延迟播放实验」现在默认勾选，可逐台关闭，仅对新会话生效。详情见 [M2 开发记录](docs/M2.md)。
 
 ## FNOS / Linux Docker 启动
 
-初次安装可用 `cp .env.example .env` 创建配置并填写随机 `EASYADB_TOKEN`、绑定 IP 和 Mihomo 认证代理；**已部署用户切勿覆盖现有 `.env`**。首次从 M1 / MVP 升级到 M2 时，需要先以原 Git 登录用户（不要对 git 使用 sudo）手动切到 M2，防止旧 M1 自动更新脚本再次切回 M1：
+初次安装应先切换到 V4，再用 V4 的 `cp .env.example .env` 创建配置并填写随机 `EASYADB_TOKEN`、绑定 IP 和 Mihomo 认证代理；**已部署用户切勿覆盖现有 `.env`**。从 M1 / MVP 等旧分支手动迁移时，由原 Git 登录用户（不要对 git 使用 sudo）先检查工作区，再获取并切换 V4。存在本地修改或任一步失败时先停止处理，不要仍在旧分支上直接 `pull` V4：
 
 ```sh
 cd /vol3/1000/software/EasyADB
-git fetch origin
-git switch --track origin/feat/m2-web-control
-# 如果本地已存在分支，改用 git switch feat/m2-web-control
-git pull --ff-only origin feat/m2-web-control
+git status --short
+git fetch origin refs/heads/refactor/v4-frontend-standards:refs/remotes/origin/refactor/v4-frontend-standards
+git switch refactor/v4-frontend-standards 2>/dev/null || git switch --no-track -c refactor/v4-frontend-standards origin/refactor/v4-frontend-standards
+git pull --ff-only origin refactor/v4-frontend-standards
 sudo sh scripts/build-with-mihomo.sh
 ```
 
-首次切换后仅需反复执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份执行 `git fetch origin`、切换至 `feat/m2-web-control`、`git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 覆盖部署。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，原样保留。
+首次切换后继续执行 `sudo sh scripts/build-with-mihomo.sh`。它会在 Docker 构建前自动以原登录用户身份获取 V4、执行 `git pull --ff-only`，然后**重新加载刚更新的脚本**执行 Mihomo Buildx 构建及 Compose 更新。若检测到本地 Git 修改、未跟踪文件或分支无法快进，则停止且不覆盖文件；`.env`、`data/`、`.cache/` 属于忽略项，设备数据和配置保留。已经检出旧版 V4、但脚本拒绝 V4 来源时，同样先按上述 Git 步骤取得新版脚本。
 
 ### 两种部署模式（默认 Mihomo；可显式关闭）
 
@@ -66,22 +84,26 @@ sudo sh scripts/build-with-mihomo.sh
 sudo sh scripts/build-with-mihomo.sh --no-proxy
 ```
 
-`--no-proxy` 路径不读取 `EASYADB_BUILD_PROXY`，不检查 `mihomo` 或 `proxy-net`，不初始化专用 BuildKit 构建器，不设置代理构建参数及临时 `mihomo` 主机名；使用 Docker 默认构建链路和独立的 `compose.no-proxy.yaml`（只加入普通 Compose 网络）。此选项**不强行绕过 OpenWrt、Docker daemon 或系统本来已有的代理/透明转发**，也不自动创建外网连接；需保证 Docker 可以访问 Docker Hub、Debian、Google Android 平台工具和 PyPI。无代理模式无需提前创建 `proxy-net`。
+`--no-proxy` 路径不读取 `EASYADB_BUILD_PROXY`，不检查 `mihomo` 或 `proxy-net`，不初始化专用 BuildKit 构建器，不设置代理构建参数及临时 `mihomo` 主机名；使用 Docker 默认构建链路。两种构建模式都通过 V4 的 `compose.webrtc.yaml` 运行 EasyADB，使用 host 网络。此选项**不强行绕过 OpenWrt、Docker daemon 或系统本来已有的代理/透明转发**，也不自动创建外网连接；需保证 Docker 可以访问 Docker Hub、Debian、Google Android 平台工具和 PyPI。无代理模式无需提前创建 `proxy-net`。
 
 两个模式使用同一 Compose 项目目录、镜像名 `easyadb:local`、`EASYADB_BIND_IP/EASYADB_PORT`、`EASYADB_TOKEN`、设备数据库 `./data/storage` 和 ADB 授权 `./data/adb`。构建成功后覆盖更新既有服务，不执行 `down -v`，也不会删除先前的 Mihomo 或 Buildx。需要恢复代理模式时再次运行不带参数的原命令即可。
 
-**从尚未支持该参数的旧版脚本首次切换至无代理模式时**，先在当前 M1 项目目录（原 Git 登录用户身份，**不要加 sudo**）手动切换至 M2 并获取新脚本，**不能在仍位于 M1 分支时直接 pull M2**：
+**从尚未支持该参数的旧版脚本首次切换至无代理模式时**，先在原项目目录由原 Git 登录用户（**不要加 sudo**）手动切换至 V4 并获取新脚本，**不能在仍位于其他分支时直接 pull V4**：
 
 ```sh
 cd /vol3/1000/software/EasyADB
 git status --short
-git fetch origin
-git switch feat/m2-web-control 2>/dev/null || git switch --track origin/feat/m2-web-control
-git pull --ff-only origin feat/m2-web-control
+git fetch origin refs/heads/refactor/v4-frontend-standards:refs/remotes/origin/refactor/v4-frontend-standards
+git switch refactor/v4-frontend-standards 2>/dev/null || git switch --no-track -c refactor/v4-frontend-standards origin/refactor/v4-frontend-standards
+git pull --ff-only origin refactor/v4-frontend-standards
 sudo sh scripts/build-with-mihomo.sh --no-proxy
 ```
 
 之后每次直接执行带 `--no-proxy` 的命令即可；自动 Git 更新后会透传这一参数，不会重新落回 Mihomo 模式。无效参数和 `--help` 均在 Git/Docker 操作前处理。
+
+### M2 页面使用历史记录
+
+以下步骤保留 M2 当时的界面与播放机制；当前 V4 的界面以部署后的页面为准，不再安装 FFmpeg 或使用 MSE。
 
 继承的 M1 页面按分组折叠展示（未分组单独展示）；「＋ 添加分组」或分组「设置」可填写可选内网 IP 前缀，设备添加弹窗只需填写组网 IP、端口等。设备卡片在每个可用 IP 后有切换按钮；选中地址保存到数据库，并且只有点击「连接」才会发起该地址的 ADB 连接。修改分组前缀会动态更新派生内网 IP，若移除前缀则自动恢复选择组网 IP（但不进行连接）。
 
@@ -97,7 +119,7 @@ sudo sh scripts/build-with-mihomo.sh --no-proxy
 
 ## 通过现有 Mihomo 加速构建（proxy-net，含首次 BuildKit 引导）
 
-**M2 分支首次检出后，每次只需一个命令（自动拉取最新 M2）：**
+**完成 M3 到 V4 的迁移后，每次只需一个命令（自动拉取当前 V4）：**
 
 ```sh
 sudo sh scripts/build-with-mihomo.sh
@@ -105,7 +127,7 @@ sudo sh scripts/build-with-mihomo.sh
 
 脚本检查现有 `proxy-net` 与 `mihomo`，并在首次缺少 `moby/buildkit:buildx-stable-1` 时自动调用 `scripts/bootstrap-buildkit-via-mihomo.sh`。后者使用官方 `crane` 从 Docker Registry 经 Mihomo 下载镜像 tar 包，再用 `docker load` 本地导入；**不会修改 FNOS 的 daemon.json、重启 Docker，也不依赖已失效的 docker.ketches.cn 镜像加速源**。官方 crane 发布包会与同一发行版的 `checksums.txt` 核对 SHA-256 后使用（默认 v0.22.1）。<https://github.com/google/go-containerregistry/tree/main/cmd/crane>
 
-**两个代理地址的区别：** FNOS 宿主机不在 `proxy-net` 的 Docker DNS 中，所以只在一次性 bootstrap helper 中临时读取 Mihomo 的 *桥接 IP*，供宿主机 curl/crane 直接代理下载。EasyADB 与 BuildKit 构建器真正运行后，都加入 `proxy-net`，**始终使用 `http://mihomo:7890` 这个容器名**，不会把临时 IP 保存到配置。
+**构建代理与运行时网络的区别：** FNOS 宿主机不在 `proxy-net` 的 Docker DNS 中，所以辅助脚本读取 Mihomo 的临时桥接 IP，供宿主机下载和 Buildx 请求使用。专用 BuildKit 构建器加入 `proxy-net`，构建步骤使用 `http://mihomo:7890`；V4 的 EasyADB 运行时使用 host 网络，不加入 `proxy-net`。临时 IP 不写入 `.env`。
 
 `.env` 中填写 Mihomo 代理 URL（主脚本和首次下载 BuildKit 的辅助脚本会自动读取，使用 `sudo sh` 也不需要手动 `export`）：
 
@@ -128,7 +150,7 @@ sudo sh scripts/bootstrap-buildkit-via-mihomo.sh
 sudo docker image inspect moby/buildkit:buildx-stable-1
 ```
 
-随后主脚本使用专属 `docker-container` Buildx 构建器 `easyadb-proxy`，以 `--driver-opt network=proxy-net` 加入既有网络；构建器自身的 HTTP/HTTPS 代理及 Dockerfile 中的 apt/curl/pip 下载代理均为 `http://mihomo:7890`。构建时使用 `--load`，最后通过 `docker compose up -d --no-build` 启动服务；不更改其他项目默认构建器。如果之前失败留下一个没有容器的同名 EasyADB 构建器，主脚本会仅清理这个项目专用的残留构建器。
+随后 V4 主脚本使用专属 `docker-container` Buildx 构建器 `easyadb-proxy`，以 `--driver-opt network=proxy-net` 加入既有网络；构建器自身的 HTTP/HTTPS 代理及 Dockerfile 中的 apt/curl/pip 下载代理均为 `http://mihomo:7890`。构建时使用 `--load`，最后通过 `docker compose -f compose.webrtc.yaml up -d --no-build` 启动服务；不更改其他项目默认构建器。如果之前失败留下一个没有容器的同名 EasyADB 构建器，主脚本会仅清理这个项目专用的残留构建器。
 
 **注意：** `build.network: proxy-net` 不能代替这套做法；它控制 Dockerfile 中 RUN 的网络模式，不等同于构建器容器所在的自定义 Docker 网络。正常启动请使用主脚本，而不是裸跑 `docker compose up --build`。
 
@@ -144,10 +166,10 @@ EASYADB_BUILD_PROXY=http://用户名:URL编码后的密码@mihomo:7890
 
 例如密码为 `abc@mihomo`，应当写成 `abc%40mihomo`（`@` 必须为 `%40`；如包含 `#` 写为 `%23`）。**用户名与密码中的其他 URL 保留字符也需编码。** 脚本不对 `.env` 执行 shell source/eval；它只读取 `EASYADB_BUILD_PROXY` 字段，不会主动打印该 URL。
 
-更新代码后在项目目录执行：
+已完成迁移、当前检出 V4 时，在项目目录执行：
 
 ```sh
-git pull --ff-only origin feat/m2-web-control
+git pull --ff-only origin refactor/v4-frontend-standards
 sudo sh scripts/build-with-mihomo.sh
 ```
 
@@ -173,10 +195,10 @@ Docker Hub 的匿名令牌请求可能由宿主机的 Buildx CLI 发起，不完
 
 如果错误日志中出现 `Driver Options: ... env.HTTPS_PROXY=...`，说明旧版 `buildx inspect --bootstrap` 曾将代理密码直接打印到终端。请更换 Mihomo 的代理密码，再修改项目本地 `.env`；新主脚本不再输出该 inspect 内容，若项目专属构建器仍保存旧密码，会自动重新创建它。**不要粘贴完整 `docker buildx inspect easyadb-proxy` 或 `docker inspect buildx_buildkit_easyadb-proxy0` 输出，它们可能包含代理凭据。**
 
-更新并重新运行：
+已完成迁移、当前检出 V4 时，更新并重新运行：
 
 ```sh
-git pull --ff-only origin feat/m2-web-control
+git pull --ff-only origin refactor/v4-frontend-standards
 sudo sh scripts/build-with-mihomo.sh
 ```
 
