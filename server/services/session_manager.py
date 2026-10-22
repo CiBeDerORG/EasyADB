@@ -101,14 +101,6 @@ class SessionManager:
         with self._lock:
             return self._request_is_latest(registry, device_id, ticket)
 
-    def has_active_request(self, device_id):
-        """Return whether a browser still owns an explicit live request."""
-        registry = self._registry_provider()
-        with self._lock:
-            scope = self._request_scopes.get(registry)
-            ticket = scope.latest.get(device_id) if scope is not None else None
-            return self._request_is_latest(registry, device_id, ticket)
-
     def reserve_latest(self, device_id, ticket, candidate):
         registry = self._registry_provider()
         with self._lock:

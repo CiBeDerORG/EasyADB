@@ -202,7 +202,6 @@ def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None 
             discovery_client=discovery_client, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
             discovery_guard=_discovery_guard, discovery_locks=_discovery_locks,
-            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
@@ -248,7 +247,6 @@ def update_device(device_id: str, payload: DeviceInput):
         return update_device_record(
             device_id, lambda: clean_input(payload), store=store, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
-            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
@@ -279,7 +277,6 @@ def set_device_temp_address(device_id: str, payload: TempAddressInput):
         return set_temporary_record(
             device_id, payload.ip, payload.port, address, store=store, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
-            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
@@ -289,7 +286,6 @@ def select_device_route(device_id: str, payload: RouteInput):
         return select_route_record(
             device_id, payload.route, store=store, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
-            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None

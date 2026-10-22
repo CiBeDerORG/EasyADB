@@ -1,4 +1,4 @@
-"""Live ownership guards for persisted device mutations."""
+"""Port refreshes keep the logical device owner while stopping the old live stream."""
 import threading
 
 import pytest
@@ -29,6 +29,23 @@ class ControlledSession:
     def stop(self):
         self.stop_calls += 1
 
+    def join(self, timeout=None):
+        pass
+
+
+def reserve(sessions, device_id, session_id="live-old"):
+    worker = ControlledSession(session_id)
+    assert sessions.reserve(device_id, worker)
+    assert sessions.starting(device_id, worker)
+    assert sessions.running(device_id, worker)
+    return worker
+
+
+def device_payload(device, **changes):
+    value = {key: device[key] for key in ("name", "group_name", "ip", "port")}
+    value.update(changes)
+    return value
+
 
 def setup_device(tmp_path):
     store = DeviceStore(str(tmp_path / "devices.sqlite3"))
@@ -43,28 +60,13 @@ def setup_device(tmp_path):
     return store, manager, registry, sessions, device
 
 
-def reserve(sessions, device_id, session_id="live-old"):
-    worker = ControlledSession(session_id)
-    assert sessions.reserve(device_id, worker)
-    assert sessions.starting(device_id, worker)
-    assert sessions.running(device_id, worker)
-    return worker
-
-
-def payload(device, **changes):
-    value = {key: device[key] for key in ("name", "group_name", "ip", "port")}
-    value.update(changes)
-    return value
-
-
-def test_orphan_cleanup_does_not_masquerade_as_active_projection_for_port_edit(tmp_path):
+def test_port_only_edit_stops_old_live_but_keeps_its_slot_until_cleanup(tmp_path):
     store, manager, registry, sessions, device = setup_device(tmp_path)
     worker = reserve(sessions, device["id"])
-    assert not sessions.has_active_request(device["id"])
 
     updated = update_device_record(
-        device["id"], lambda: payload(device, port=6000), store=store, manager=manager,
-        display_lab=DummyLab(), live_registry=registry, session_manager=sessions,
+        device["id"], lambda: device_payload(device, port=6000),
+        store=store, manager=manager, display_lab=DummyLab(), live_registry=registry,
     )
 
     assert updated["port"] == 6000
@@ -73,34 +75,18 @@ def test_orphan_cleanup_does_not_masquerade_as_active_projection_for_port_edit(t
     assert registry.sessions[device["id"]] is worker
     assert not sessions.reserve(device["id"], ControlledSession("replacement"))
 
-
-def test_active_page_blocks_port_edit_while_orphan_still_blocks_device_delete(tmp_path):
-    store, manager, registry, sessions, device = setup_device(tmp_path)
-    ticket = sessions.begin_request(device["id"], on_replaced=lambda: None, on_changed=lambda: None)
-    assert sessions.publish_request(device["id"], ticket)
-    worker = ControlledSession("live-owned")
-    assert sessions.reserve_latest(device["id"], ticket, worker) == "reserved"
-    assert sessions.starting(device["id"], worker)
-    assert sessions.running(device["id"], worker)
-    assert sessions.has_active_request(device["id"])
-
-    with pytest.raises(DomainError, match="其他页面投屏") as error:
+    # Anything beyond a pure shared-port change keeps the original fail-closed guard.
+    with pytest.raises(DomainError) as error:
         update_device_record(
-            device["id"], lambda: payload(device, port=6000), store=store, manager=manager,
-            display_lab=DummyLab(), live_registry=registry, session_manager=sessions,
+            device["id"], lambda: device_payload(store.get(device["id"]), name="Renamed"),
+            store=store, manager=manager, display_lab=DummyLab(), live_registry=registry,
         )
     assert error.value.status_code == 409
-    assert store.get(device["id"])["port"] == 5555
-
-    sessions.finish_request(device["id"], ticket)
-    assert not sessions.has_active_request(device["id"])
-    with pytest.raises(DomainError) as delete_error:
+    with pytest.raises(DomainError):
         delete_device_record(
-            device["id"], store=store, manager=manager, display_lab=DummyLab(),
-            live_registry=registry,
+            device["id"], store=store, manager=manager,
+            display_lab=DummyLab(), live_registry=registry,
         )
-    assert delete_error.value.status_code == 409
-    assert registry.sessions[device["id"]] is worker
 
 
 class DiscoveryClient:
@@ -109,8 +95,7 @@ class DiscoveryClient:
 
     def scan(self, _url, _username, _password):
         return {
-            "status": "ok",
-            "scanned_at": 1792400000,
+            "status": "ok", "scanned_at": 1792400000,
             "devices": [{
                 "instance": "adb-test", "iface": "br-lan",
                 "address": "192.168.10.206", "port": self.port,
@@ -135,50 +120,28 @@ def setup_discovery(tmp_path):
     return store, manager, registry, sessions, device
 
 
-def scan_port(store, manager, registry, sessions, port=6000):
+def scan_port(store, manager, registry, port=6000):
     return run_group_scan(
         "Home", persist=True, test_config=None, store=store,
         discovery_client=DiscoveryClient(port), manager=manager,
         display_lab=DummyLab(), live_registry=registry,
         discovery_guard=threading.RLock(), discovery_locks={},
-        session_manager=sessions,
     )
 
 
-def test_discovery_updates_connected_adb_port_without_auto_connecting(tmp_path):
+def test_discovery_updates_port_even_when_adb_and_live_are_still_on_old_serial(tmp_path):
     store, manager, registry, sessions, device = setup_discovery(tmp_path)
-    result = scan_port(store, manager, registry, sessions)
+    worker = reserve(sessions, device["id"])
+
+    result = scan_port(store, manager, registry)
 
     assert result["updated"] == [{
         "id": device["id"], "ip": "192.168.10.206", "old_port": 5555, "port": 6000,
     }]
     assert result["busy"] == []
     assert store.get(device["id"])["port"] == 6000
-    assert manager.snapshot(store.get(device["id"]))["status"] == "idle"
     assert device["id"] not in manager.states
-
-
-def test_discovery_allows_orphan_cleanup_but_blocks_an_active_live_page(tmp_path):
-    store, manager, registry, sessions, device = setup_discovery(tmp_path)
-    orphan = reserve(sessions, device["id"], "orphan")
-    result = scan_port(store, manager, registry, sessions)
-    assert result["updated"][0]["port"] == 6000
-    assert orphan.stop_calls == 1
-    assert registry.sessions[device["id"]] is orphan
+    assert manager.snapshot(store.get(device["id"]))["status"] == "idle"
+    assert worker.stop_calls == 1
+    assert registry.sessions[device["id"]] is worker
     assert not sessions.reserve(device["id"], ControlledSession("replacement"))
-
-    # A fresh fixture with a real current request must stay blocked.
-    active_path = tmp_path / "active"
-    active_path.mkdir()
-    store, manager, registry, sessions, device = setup_discovery(active_path)
-    ticket = sessions.begin_request(device["id"], on_replaced=lambda: None, on_changed=lambda: None)
-    assert sessions.publish_request(device["id"], ticket)
-    owned = ControlledSession("owned")
-    assert sessions.reserve_latest(device["id"], ticket, owned) == "reserved"
-    assert sessions.starting(device["id"], owned)
-    assert sessions.running(device["id"], owned)
-    result = scan_port(store, manager, registry, sessions)
-    assert result["updated"] == []
-    assert result["busy"] == [{"id": device["id"], "ip": "192.168.10.206"}]
-    assert store.get(device["id"])["port"] == 5555
-    assert owned.stop_calls == 0

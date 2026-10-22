@@ -36,14 +36,13 @@ def set_unlock_record(device_id, password, *, store, manager):
 
 
 def set_temporary_record(device_id, ip_value, port_value, validate_address, *,
-                         store, manager, display_lab, live_registry, session_manager=None):
+                         store, manager, display_lab, live_registry):
     with device_lock(manager, device_id):
         if display_lab.has_pending(device_id):
             raise DomainError(409, "请先恢复该设备的副屏实验，再修改线路")
         original = _require(store, device_id)
         require_clean_sessions(
-            live_registry, (device_id,), "该设备正在被其他页面投屏，请先停止实时画面后再修改临时地址",
-            session_manager=session_manager, allow_orphan_cleanup=True,
+            live_registry, (device_id,), "该设备正在投屏或清理，请结束后修改临时地址",
         )
         if ip_value is None:
             if port_value is not None:
@@ -62,13 +61,11 @@ def set_temporary_record(device_id, ip_value, port_value, validate_address, *,
         if result is None:
             raise DomainError(404, "找不到该设备")
         if selected_address(original) != selected_address(result):
-            live_registry.stop_for(device_id)
             manager.clear(device_id)
         return manager.snapshot(result)
 
 
-def select_route_record(device_id, route, *, store, manager, display_lab, live_registry,
-                        session_manager=None):
+def select_route_record(device_id, route, *, store, manager, display_lab, live_registry):
     with device_lock(manager, device_id):
         if display_lab.has_pending(device_id):
             raise DomainError(409, "请先恢复该设备的副屏实验，再切换线路")
@@ -77,8 +74,7 @@ def select_route_record(device_id, route, *, store, manager, display_lab, live_r
         _require(store, device_id)
         require_clean_sessions(
             live_registry, (device_id,),
-            "该设备正在被其他页面投屏，请先停止实时画面后再切换线路",
-            session_manager=session_manager, allow_orphan_cleanup=True,
+            "该设备正在投屏或清理，请结束并确认清理后再切换线路",
         )
         try:
             result = store.select_route(device_id, route)

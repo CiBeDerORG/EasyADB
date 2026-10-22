@@ -25,29 +25,18 @@ def device_locks(manager, device_ids):
         yield
 
 
-def require_clean_sessions(live_registry, device_ids, detail, *,
-                           session_manager=None, allow_orphan_cleanup=False):
-    """Reject unsafe mutations while a browser still owns live resources.
+def require_clean_sessions(live_registry, device_ids, detail):
+    """Reject record mutations until every target's resources are verified clean.
 
-    Callers hold target device locks through the DB write. A page may already
-    be gone while its exact old session remains DIRTY/cleaning; same-device
-    mutations may allow that orphaned cleanup without freeing its registry
-    slot. Deletion remains strict so a new device ID cannot bypass old owner.
+    Callers must hold all target device locks through the subsequent mutation,
+    so a new live reservation cannot slip between this check and the DB write.
+    Checking proof does not stop, release or otherwise mutate any session.
     """
-    for device_id in device_ids:
-        active_request = bool(
-            allow_orphan_cleanup
-            and session_manager is not None
-            and session_manager.has_active_request(device_id)
-        )
-        with live_registry.lock:
+    with live_registry.lock:
+        for device_id in device_ids:
             session = live_registry.sessions.get(device_id)
-            unclean = session is not None and not live_registry.is_cleaned(session)
-        if not unclean:
-            continue
-        if allow_orphan_cleanup and session_manager is not None and not active_request:
-            continue
-        raise DomainError(409, detail)
+            if session is not None and not live_registry.is_cleaned(session):
+                raise DomainError(409, detail)
 
 
 # Group membership operations acquire this guard before any device RLocks.

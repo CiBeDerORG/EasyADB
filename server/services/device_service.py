@@ -16,8 +16,7 @@ def create_device_record(data, *, store, manager):
         return manager.snapshot(record)
 
 
-def update_device_record(device_id, clean_data, *, store, manager, display_lab, live_registry,
-                         session_manager=None):
+def update_device_record(device_id, clean_data, *, store, manager, display_lab, live_registry):
     with membership_lock():
         with device_lock(manager, device_id):
             if display_lab.has_pending(device_id):
@@ -26,11 +25,15 @@ def update_device_record(device_id, clean_data, *, store, manager, display_lab, 
             if original is None:
                 raise DomainError(404, "找不到该设备")
             data = clean_data()
-            require_clean_sessions(
-                live_registry, (device_id,),
-                "该设备正在被其他页面投屏，请先停止实时画面后再修改设备",
-                session_manager=session_manager, allow_orphan_cleanup=True,
+            port_only_change = (
+                data["port"] != original["port"]
+                and all(data[key] == original[key] for key in ("name", "group_name", "ip"))
             )
+            if not port_only_change:
+                require_clean_sessions(
+                    live_registry, (device_id,),
+                    "该设备正在投屏或清理，请结束并确认清理后再修改设备",
+                )
             try:
                 updated = store.update(device_id, data)
             except sqlite3.IntegrityError:
