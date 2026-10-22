@@ -171,7 +171,6 @@ def update_group(group_name: str, payload: GroupInput):
             group_name, lambda: clean_group(payload), store=store, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
             discovery_guard=_discovery_guard, discovery_locks=_discovery_locks,
-            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
@@ -229,7 +228,7 @@ def delete_group(group_name: str):
         return delete_group_record(
             group_name, store=store, manager=manager, display_lab=display_lab,
             live_registry=live_registry, discovery_guard=_discovery_guard,
-            discovery_locks=_discovery_locks, session_manager=session_manager,
+            discovery_locks=_discovery_locks,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None

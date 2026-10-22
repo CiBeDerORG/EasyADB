@@ -21,7 +21,7 @@ def create_group_record(name, prefix, *, store):
 
 
 def update_group_record(group_name, clean_data, *, store, manager, display_lab,
-                        live_registry, discovery_guard, discovery_locks, session_manager=None):
+                        live_registry, discovery_guard, discovery_locks):
     try:
         with group_operation(discovery_guard, discovery_locks, group_name):
             with membership_lock():
@@ -32,8 +32,7 @@ def update_group_record(group_name, clean_data, *, store, manager, display_lab,
                         raise DomainError(409, "分组中存在待恢复的副屏实验，请先恢复设备后再修改分组")
                     require_clean_sessions(
                         live_registry, members,
-                        "分组中存在被其他页面投屏的设备，请先停止实时画面后再修改分组",
-                        session_manager=session_manager, allow_orphan_cleanup=True,
+                        "分组中存在正在投屏或清理的设备，请结束并确认清理后再修改分组",
                     )
                     try:
                         result = store.update_group(group_name, name, prefix)
@@ -52,7 +51,7 @@ def update_group_record(group_name, clean_data, *, store, manager, display_lab,
 
 
 def delete_group_record(group_name, *, store, manager, display_lab,
-                        live_registry, discovery_guard, discovery_locks, session_manager=None):
+                        live_registry, discovery_guard, discovery_locks):
     try:
         with group_operation(discovery_guard, discovery_locks, group_name):
             with membership_lock():
@@ -62,8 +61,7 @@ def delete_group_record(group_name, *, store, manager, display_lab,
                         raise DomainError(409, "分组中存在待恢复的副屏实验，请先恢复设备后再删除分组")
                     require_clean_sessions(
                         live_registry, members,
-                        "分组中存在被其他页面投屏的设备，请先停止实时画面后再删除分组",
-                        session_manager=session_manager, allow_orphan_cleanup=True,
+                        "分组中存在正在投屏或清理的设备，请结束并确认清理后再删除分组",
                     )
                     result = store.delete_group(group_name)
                     if result is None:

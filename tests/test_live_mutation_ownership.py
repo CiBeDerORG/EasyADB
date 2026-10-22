@@ -168,7 +168,9 @@ def test_discovery_allows_orphan_cleanup_but_blocks_an_active_live_page(tmp_path
     assert not sessions.reserve(device["id"], ControlledSession("replacement"))
 
     # A fresh fixture with a real current request must stay blocked.
-    store, manager, registry, sessions, device = setup_discovery(tmp_path / "active")
+    active_path = tmp_path / "active"
+    active_path.mkdir()
+    store, manager, registry, sessions, device = setup_discovery(active_path)
     ticket = sessions.begin_request(device["id"], on_replaced=lambda: None, on_changed=lambda: None)
     assert sessions.publish_request(device["id"], ticket)
     owned = ControlledSession("owned")
