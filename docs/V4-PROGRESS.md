@@ -1,12 +1,12 @@
 # EasyADB V4 改造进度
 
-## 最新状态（2026-10-21）
+## 最新状态（2026-10-22）
 
-- 分支：`refactor/v4-frontend-standards`。本轮横竖屏切换退出修复 **1/1 完成并推送（代码与自动化验收）**：正常尺寸变化继续使用原会话、媒体轨道和控制器，更新编码段、画面比例及触控尺寸。详细证据见文末「横竖屏切换导致投屏退出修复」。此前最新页面接管、浮窗收窄及已确认 BUG 修复继续保留。
-- 统一验收：[CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557) **success**，代码 SHA `fd58a1be46105929072891bbe8bc50adf73cfa82`；**448 passed, 1 warning**，全部适用 Node/UI、规范、Shell/OpenWrt 步骤通过。
-- 当前执行规则：**每项完成立即独立 commit + push；简单改动不运行自动化测试、不触发 GitHub Actions，提交使用 `[skip ci]`。** 简单改动只人工核对变更内容和 Git 状态；复杂或有行为影响的改动执行对应回归，整批代码完成后统一一次 CI。此规则覆盖下方历史记录中的旧执行约定。
-- 最新规则补充：已将“简单改动不触发测试与 GitHub Actions”同步到三份 V4 文档。本次仅调整规则文档，按用户规则未运行测试/CI；上方 448 项通过属于此前旋转修复的验收，不是本次重新执行的结果。
-- 未连接真机或取得 logcat，不能确认或排除 Android App 进程本身崩溃；真实浏览器及设备旋转效果、兼容性未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
+- 分支：`refactor/v4-frontend-standards`。本轮按用户明确规则完成“访问密钥重输时清理全部历史投屏”及“普通 ADB 已连接设备允许发现端口更新”。
+- 最终验收：[CI #39704923122](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704923122) **success**，验收 SHA `dcde09abc2376a33d146d295209829cb647d849b`，**453 passed, 1 warning**；V4 前端规范、Node/UI、部署脚本及 OpenWrt 检查全部通过。V2 分支专用步骤按条件 skipped。
+- 中间 [CI #39704713407](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704713407) 的 Python 453 项通过，但 Prettier 因 `m2-multi.js` 一处格式失败；`e58f59a` 修正后重新全量验收成功。
+- 用户澄清前的“纯端口修改绕过未清理 live 会话”方案已撤回。最终行为恢复设备修改的严格清理保护，端口可修改的前提是 token reset/正常停止已经完成旧投屏清理。
+- 真实 Android、FNOS/NAS、OpenWrt/EasyTier 环境未执行；实机清理耗时与异常情况仍未知。当前任务清单见 [V4-TASKS.md](V4-TASKS.md)。
 
 ## 历史记录
 
@@ -192,3 +192,31 @@
 - Python 编译、全量 pytest、npm ci、lint/format、4 个架构/模块入口、21 个 Node/UI 入口、JS/Shell 与部署契约、OpenWrt smoke 全部适用步骤通过。V2 分支专用 release 步骤按条件 skipped，全量 pytest 保留 V2 回归；旧门禁、工作流与依赖未删除或修改。
 - 验收后更新三份 V4 文档并以 `[skip ci]` 推送；文档 HEAD 未另跑 CI，发布时核对与验收 SHA 仅有文档差异、本地远端内容一致且工作区干净。
 - **当前结果：本轮 1/1 项已确认代码问题修复、推送、自动化验收及文档交接完成。** 未执行真实浏览器、Android、NAS/FNOS、Docker 或路由器部署；没有真机日志，Android App 进程是否崩溃及是否仍复现未知。真实编解码测试不替代设备验收。汇报后停止。
+
+
+## 访问密钥重输全局清理与发现端口修复（2026-10-22）
+
+### 用户最终规则
+
+- 用户明确要求：**只要重新输入/修改访问密钥，就把之前建立的投屏连接全部清理掉。** 因此本轮最终方案不允许通过放宽设备修改保护来绕过旧 live owner。
+- 页面 token `input` 仍立即执行本地失效：递增 generation、取消旧设备请求、关闭当前页 MultiView。token `change` 会主动发起全局 live reset；若用户直接点击“加载设备”，加载流程也必须先等待同一 generation 的 reset 完成。
+- reset 未成功时，不读取设备列表、不启动 ADB 连接；用户会看到“此前实时画面清理未完成”错误。相同 generation 的 change/load 共享同一 reset Promise，不重复请求。
+
+### 服务端清理语义
+
+- 新增认证接口 `POST /api/m2/live/reset`。SessionManager 为 request scope 增加 reset sequence barrier：reset 前已经 begin、但尚未 publish 的慢校验请求在之后也不能复活；已经 publish 的请求统一标记 `token_reset`、设置旧 stream stop_event，并在各自事件循环执行既有清理流程。
+- `services/live_reset.py` 对 LiveRegistry 当前全部 session 发 stop，并最多等待 35 秒；只在 `finished + cleanup_complete + peer_cleanup_complete` 三项证明满足后通过现有 SessionManager/Registry 释放。不能证明清理的 session 继续 fail-closed 保留槽位并返回 409，不强制 pop、不伪报成功。
+- 旧页面若仍在线会收到 `replaced(reason=token_reset)`，文案明确为访问密钥重输导致旧画面清理，不再误写为“其他页面接管”。
+
+### ADB 端口更新边界
+
+- “立即发现 ADB”不再因为设备当前普通 ADB 状态为 connected 就跳过。发现的新共享端口写入后，清除 EasyADB 对旧 serial 的连接缓存；不会自动执行新的 `adb connect`。
+- 真实未清理 live session 和副屏恢复状态仍是 busy，发现不会在这些状态下改端口。设备编辑、删除、临时地址和线路切换恢复并保持原 `require_clean_sessions()` 严格保护。
+- 用户澄清前的中间实现曾允许“纯端口修改”绕过未清理 session；该实现导致旧 fail-closed 回归不符合预期，随后明确撤销。最终分支不包含该绕过。
+
+### 验收
+
+- 首轮最终语义 CI [#39704713407](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704713407)：Python **453 passed, 1 warning**；V4 前端规范步骤因 `m2-multi.js` Prettier 失败，未记为成功。
+- 格式修正 [e58f59a](https://github.com/CiBeDerORG/EasyADB/commit/e58f59af20b958c9ddba11e73c6d40ddeb32f43d) 后，验收提交 `dcde09abc2376a33d146d295209829cb647d849b` 对应 [CI #39704923122](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704923122) **success**：**453 passed, 1 warning in 52.75s**，前端规范、Node/UI、Shell/部署和 OpenWrt 检查全部通过。
+- 自动化覆盖：reset 撤销已 publish 请求、阻断 reset 前未 publish 的迟到请求、reset 后新请求正常；全部 session 清理证明满足才释放；超时保留未清理槽位；页面 token change 与 load 共用 reset 且 reset 失败不继续设备工作；普通 ADB connected 可发现新端口而真实 live busy 仍跳过。
+- 未执行真实设备或真实 NAS 部署，不能据此声称 35 秒等待在所有设备环境下一定足够。

@@ -4,17 +4,17 @@
 
 ## Agent 接续摘要
 
-更新时间：2026-10-21。本轮从干净的 `6e6f96be7a5cece6963e3ba02be88686a5e1a331` 接续，核对了三份文档、远端分支与工作区，仅处理用户反馈的横竖屏切换退出问题。
+更新时间：2026-10-22。本轮处理用户明确的访问密钥重输语义：**重新输入/修改访问密钥后，必须清理此前全部实时投屏会话，再允许重新加载和连接设备**；同时保留「立即发现 ADB」对普通 ADB 已连接设备更新端口的能力。
 
 | 项目 | 当前交接状态 |
 | --- | --- |
 | 仓库与分支 | `CiBeDerORG/EasyADB` / `refactor/v4-frontend-standards` |
-| 原有进度 | V4-01～V4-05、M3 部署入口迁移、记录修改保护、此前 9 项 BUG 修复、最新页面接管及浮窗收窄已完成；本轮保留既有成果 |
-| 本轮实现 | **1/1 完成（代码与自动化验收）**：正常横竖屏切换在原会话内继续投屏，更新画面比例与触控尺寸 |
-| 代码提交 | [21454e6](https://github.com/CiBeDerORG/EasyADB/commit/21454e62ef36aa5008c580f53be1e9debb4e7c6b)；本项定向验收及交叉复核后立即 push，使用 `[skip ci]` |
-| 统一 CI | `fd58a1be46105929072891bbe8bc50adf73cfa82` 仅触发验收，与修复提交代码树相同；[CI #39608125557](https://github.com/CiBeDerORG/EasyADB/actions/runs/39608125557) **success：448 项 Python，通过全部适用门禁** |
-| 文档交接 | 实际 CI 结果已记录；三份文档以 `[skip ci]` 发布，与验收提交仅有文档差异，文档 HEAD 未另跑 CI |
-| 未验证 | 未连接真机或取得 logcat，不能确认或排除 Android App 进程本身崩溃；真实浏览器、Android、FNOS/NAS/Docker、OpenWrt/EasyTier 部署及实机旋转表现仍待验证 |
+| 本轮实现 | **2/2 完成**：密钥重输全局清理历史投屏；立即发现允许普通 ADB 已连接设备更新端口，但真实未清理 live 会话仍阻止端口改写 |
+| 最终代码提交 | [5bc0afe](https://github.com/CiBeDerORG/EasyADB/commit/5bc0afe84268886afac8d0e366509ee6f79c823c)；格式修正 [e58f59a](https://github.com/CiBeDerORG/EasyADB/commit/e58f59af20b958c9ddba11e73c6d40ddeb32f43d)；验收提交 `dcde09a` 与格式修正代码树一致 |
+| 最终 CI | [CI #39704923122](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704923122) **success：453 passed, 1 warning**；前端规范、Node/UI、部署脚本、OpenWrt 检查均通过 |
+| 中间失败 | [CI #39704713407](https://github.com/CiBeDerORG/EasyADB/actions/runs/39704713407) 的 Python **453 passed**，仅因 `m2-multi.js` Prettier 失败；修正格式后重新完整验收成功。更早的“端口绕过清理”尝试已按用户澄清撤回，不是最终行为 |
+| 未验证 | 未连接真实 Android/FNOS/OpenWrt 环境；服务端 35 秒清理等待在真实设备上的耗时与异常率未知 |
+
 
 以上 SHA 是交接快照，不是要求回退到固定版本。后续继续前读取远端最新 HEAD 与工作区，保留已有改动，不覆盖他人提交、不重复完成项。
 
@@ -27,6 +27,15 @@
 - 既有 REST/WS 字段继续兼容；本轮新增同会话 `resize` 通知，保留此前的接管通知与等待语义。保留数据库结构、SessionManager 的唯一清理权威、DIRTY 保护、20 路逻辑上限和 WebRTC-only。按故障需要调整内部实现，不以回避改动替代修复。
 - 遵循 [前端命名与架构规范](V4-FRONTEND-STANDARDS.md)，测试执行生产路径，禁止删除断言、放宽保护或修改生产常量来制造通过。
 - 本轮授权是代码修复、测试、提交与推送；不执行真实设备、Docker、cron 或 NAS 部署，不合并其他开发分支。V3 继续暂缓。
+
+## 本轮 BUG 清单（2026-10-22）
+
+| 用户反馈 / 明确规则 | 状态 | 最终实现 |
+| --- | --- | --- |
+| 重新输入访问密钥后，之前的投屏连接必须全部清理 | [x] | token 输入先立即关闭当前页本地画面；token 提交/下一次加载设备时调用认证接口 `POST /api/m2/live/reset`，服务端撤销全部旧页面 live request、停止 registry 中全部旧流，并等待现有 worker/ADB-scrcpy/peer 清理证明。清理未完成返回 409，页面不继续加载/连接设备。reset sequence 阻止重输密钥前已开始但尚在慢校验的旧请求迟到启动。 |
+| 只连接 ADB 时，“立即发现 ADB”也应能更新端口 | [x] | 正式发现不再把普通 `status=connected` 当作 busy；发现到新共享端口后写入数据库并清除 EasyADB 的旧 ADB 状态缓存，仍不自动 `adb connect`。副屏实验或真实未清理 live 会话继续标记 busy，不在投屏中静默改端口。 |
+
+**最终保护边界：**设备编辑、删除、临时线路和线路切换仍沿用原 `require_clean_sessions()` 严格保护。此前中间版本曾尝试“纯端口修改绕过 DIRTY”，经用户澄清后已经撤回；最终代码不保留该绕过。
 
 ## 本轮 BUG 清单（2026-10-21）
 
