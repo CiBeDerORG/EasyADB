@@ -1100,7 +1100,9 @@
             const tokenReset = m.reason === 'token_reset';
             const message =
               m.message ||
-              (tokenReset ? '访问密钥已重新输入，本页旧实时画面已被清理' : '该设备的实时画面已由其他页面接管');
+              (tokenReset
+                ? '访问密钥已重新输入，本页旧实时画面已被清理'
+                : '该设备的实时画面已由其他页面接管');
             const wasPendingStop = Boolean(this.stopBatch?.pending.has(card.id));
             card.reconnectRequested = false;
             mark(message);
