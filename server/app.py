@@ -203,6 +203,7 @@ def _group_scan(group_name, *, persist, test_config: GroupDiscoveryInput | None 
             discovery_client=discovery_client, manager=manager,
             display_lab=display_lab, live_registry=live_registry,
             discovery_guard=_discovery_guard, discovery_locks=_discovery_locks,
+            session_manager=session_manager,
         )
     except DomainError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None

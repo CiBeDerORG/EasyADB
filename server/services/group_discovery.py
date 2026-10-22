@@ -11,7 +11,8 @@ from .operations import membership_lock, device_locks
 
 
 def run_group_scan(group_name, *, persist, test_config, store, discovery_client,
-                   manager, display_lab, live_registry, discovery_guard, discovery_locks):
+                   manager, display_lab, live_registry, discovery_guard, discovery_locks,
+                   session_manager=None):
     with discovery_guard:
         mutex = discovery_locks.setdefault(group_name, threading.Lock())
     if not mutex.acquire(blocking=False):
@@ -48,25 +49,43 @@ def run_group_scan(group_name, *, persist, test_config, store, discovery_client,
             # Explicit test of BOTH login and scan ACL. Does not change device
             # ports or save a new NAS discovery result; prefix is not required.
             return {"authorized": True, "found": len(scan_result["devices"])}
-        # Lock devices in stable order. Never override an active ADB or live
-        # screen session: next explicit scan can update it when idle.
+        # Lock devices in stable order. A plain ADB connection is not a live
+        # screen owner: discovery may update its shared port, then the cached
+        # ADB state is cleared so the user can explicitly connect the new
+        # serial. Only an active browser live request or display experiment is
+        # protected. With no SessionManager injection, retain the older strict
+        # registry check for compatibility with direct service callers.
         with membership_lock():
             group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
                                    key=lambda d: d["id"])
             with device_locks(manager, (device["id"] for device in group_devices)):
                 blocked = set()
                 for device in group_devices:
-                    if manager.snapshot(device)["status"] == "connected" or display_lab.has_pending(device["id"]):
-                        blocked.add(device["id"])
+                    device_id = device["id"]
+                    if display_lab.has_pending(device_id):
+                        blocked.add(device_id)
                         continue
-                    with live_registry.lock:
-                        live = live_registry.sessions.get(device["id"])
-                        if live is not None and not live_registry.is_cleaned(live):
-                            blocked.add(device["id"])
+                    if session_manager is not None:
+                        if session_manager.has_active_request(device_id):
+                            blocked.add(device_id)
+                    else:
+                        with live_registry.lock:
+                            live = live_registry.sessions.get(device_id)
+                            if live is not None and not live_registry.is_cleaned(live):
+                                blocked.add(device_id)
                 try:
-                    return store.apply_group_discovery(group_name, scan_result, blocked)
+                    result = store.apply_group_discovery(group_name, scan_result, blocked)
                 except ValueError as exc:
                     raise DomainError(409, str(exc)) from None
+                for updated in result["updated"]:
+                    device_id = updated["id"]
+                    # Do not disconnect ADB behind the user's back. The DB now
+                    # points at a different serial, so forget only EasyADB's
+                    # cached connection and reinforce stop on any orphaned old
+                    # live worker. Its registry slot remains until verified clean.
+                    live_registry.stop_for(device_id)
+                    manager.clear(device_id)
+                return result
     finally:
         mutex.release()
 
