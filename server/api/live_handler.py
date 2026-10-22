@@ -163,7 +163,15 @@ async def handle_live_video(websocket: WebSocket, device_id: str, source):
         admission_changed = asyncio.Event()
 
         async def send_replaced():
-            message = {"type": "replaced", "message": "该设备的实时画面已由其他页面接管"}
+            token_reset = request.replacement_reason == "token_reset"
+            message = {
+                "type": "replaced",
+                "reason": "token_reset" if token_reset else "takeover",
+                "message": (
+                    "访问密钥已重新输入，本页旧实时画面已被清理"
+                    if token_reset else "该设备的实时画面已由其他页面接管"
+                ),
+            }
             if request.stream is not None:
                 message["session_id"] = request.stream.session_id
             try:

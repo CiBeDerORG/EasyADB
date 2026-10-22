@@ -81,6 +81,54 @@ const pageDevices = () => makeDevices(2).map((device, index) => ({...device,
   port: 5555, selected_route: 'mesh',
 }));
 
+async function checkTokenLiveResetBeforeLoad() {
+  const events = [], reset = deferred();
+  const devices = pageDevices();
+  const f = await createPageFixture({devices, groups: [], request: async (path, options, entry) => {
+    events.push(entry.method + ' ' + path);
+    if (path === '/api/m2/live/reset') return reset.promise;
+    if (path === '/api/devices') return {json: async () => devices};
+    if (path === '/api/groups') return {json: async () => []};
+    if (path.endsWith('/connect')) return {json: async () => ({...devices[0], status: 'connected', active_serial: devices[0].selected_serial})};
+    assert.fail('unexpected request ' + path);
+  }});
+  try {
+    f.get('token').value = 'new-token';
+    await f.get('token').fire('input');
+    assert.equal(f.live.closeCount, 1, 'typing a new token immediately closes this page live cards');
+    assert.equal(f.state.needsLiveReset, true);
+    const committed = f.get('token').fire('change');
+    await until(() => events.includes('POST /api/m2/live/reset'));
+    const load = f.get('load').fire('click');
+    await tick();
+    assert.equal(events.filter(value => value === 'POST /api/m2/live/reset').length, 1,
+      'change and load share one reset request for the same token generation');
+    assert.equal(events.some(value => value === 'GET /api/devices'), false,
+      'device loading waits until previous live cleanup is confirmed');
+    reset.resolve({json: async () => ({cleared: 2, remaining: 0})});
+    await committed;
+    await load;
+    assert.equal(f.state.needsLiveReset, false);
+    assert(events.indexOf('POST /api/m2/live/reset') < events.indexOf('GET /api/devices'));
+  } finally { f.dispose(); }
+
+  const failedEvents = [];
+  const failed = await createPageFixture({devices, groups: [], request: async (path, options, entry) => {
+    failedEvents.push(entry.method + ' ' + path);
+    if (path === '/api/m2/live/reset') throw Error('旧资源未清理');
+    assert.fail('failed reset must prevent device work: ' + path);
+  }});
+  try {
+    failed.get('token').value = 'new-token';
+    await failed.get('token').fire('input');
+    await failed.get('load').fire('click');
+    assert.deepEqual(failedEvents, ['POST /api/m2/live/reset']);
+    assert.equal(failed.state.isLoaded, false);
+    assert.equal(failed.state.isBatchBusy, false);
+    assert(failed.messages.some(message => message.text.includes('清理未完成')));
+  } finally { failed.dispose(); }
+}
+
 async function checkPageDeletedRowsStayDeleted() {
   for (const stage of ['response', 'json']) for (const finalRefreshFails of [false, true]) {
     let rows = pageDevices(), reads = 0;
@@ -386,6 +434,7 @@ async function checkPageConcurrentDiscoveryReads() {
     assert.equal(page.live.closeCount, 1, 'existing live cleanup callback remains intact');
     page.dispose();
   }
+  await checkTokenLiveResetBeforeLoad();
   await checkPageDeletedRowsStayDeleted();
   await checkPageConcurrentDiscoveryReads();
   console.log('Device connection controller: concurrency, generation/read isolation, shared state and page integration: OK');

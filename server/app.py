@@ -54,6 +54,7 @@ from .api import lab_handlers, screenshots, legacy_handlers
 from .services.live_coordination import confirm_adb_loss, close_webrtc_peer
 from .services.session_manager import SessionManager
 from .services.resource_budget import ScopedResourceBudget
+from .services.live_reset import reset_live_sessions as reset_live_sessions_record
 from .services.operations import device_lock, device_locks, membership_lock, group_operation, GroupBusy
 
 # Module-level aliases remain during incremental migration: existing tests and
@@ -377,6 +378,15 @@ def m2_video_engine():
     # Public capability metadata contains no token, serial, network or device data.
     return {"engine": VIDEO_ENGINE, "implemented": VIDEO_ENGINE == "webrtc",
             "max_starting": resource_budget.snapshot()["max_starting"]}
+
+
+def reset_live_sessions():
+    try:
+        return reset_live_sessions_record(
+            session_manager=session_manager, live_registry=live_registry,
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 
 async def _close_webrtc_peer(pc, stream, device_id, registry):

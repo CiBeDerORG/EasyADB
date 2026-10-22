@@ -80,12 +80,13 @@ class SessionManager:
             scope = ticket.scope
             if scope.latest.get(device_id) is ticket:
                 return True
-            if ticket.sequence <= scope.high_water.get(device_id, 0):
+            if ticket.sequence <= max(scope.high_water.get(device_id, 0), scope.reset_sequence):
                 return False
             previous = scope.latest.get(device_id)
             scope.high_water[device_id] = ticket.sequence
             scope.latest[device_id] = ticket
             if previous is not None:
+                previous.replacement_reason = "takeover"
                 previous.replaced.set()
                 # Revoke commands before scheduling the old handler's cleanup.
                 # No stop/join/socket operation runs in this critical section.
@@ -95,6 +96,32 @@ class SessionManager:
                 callback = previous.on_replaced
         self._notify_request(device_id, callback)
         return True
+
+    def revoke_all_requests(self, reason="token_reset"):
+        """Invalidate every request created before this explicit reset.
+
+        The global sequence barrier also rejects requests still in slow
+        validation and not yet published. Callbacks run outside the lock so
+        their owning event loops can enter normal, verified cleanup.
+        """
+        registry = self._registry_provider()
+        callbacks = []
+        with self._lock:
+            scope = self._requests_for(registry)
+            scope.reset_sequence = scope.next_sequence
+            for device_id, ticket in list(scope.latest.items()):
+                if not self._owns_request(device_id, ticket):
+                    continue
+                ticket.replacement_reason = reason
+                ticket.replaced.set()
+                stop_event = getattr(ticket.stream, "stop_event", None)
+                if stop_event is not None:
+                    stop_event.set()
+                callbacks.append((device_id, ticket.on_replaced))
+            scope.latest.clear()
+        for device_id, callback in callbacks:
+            self._notify_request(device_id, callback)
+        return len(callbacks)
 
     def is_latest_request(self, device_id, ticket):
         registry = self._registry_provider()

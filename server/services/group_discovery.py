@@ -48,29 +48,30 @@ def run_group_scan(group_name, *, persist, test_config, store, discovery_client,
             # Explicit test of BOTH login and scan ACL. Does not change device
             # ports or save a new NAS discovery result; prefix is not required.
             return {"authorized": True, "found": len(scan_result["devices"])}
-        # Lock devices in stable order. Discovery changes only the shared ADB
-        # port on the same logical device ID. A plain ADB connection or live
-        # screen therefore must not freeze the refresh: after the DB update we
-        # stop that device's old stream and clear EasyADB's cached serial. The
-        # old LiveRegistry owner remains until verified cleanup, so a second
-        # live session still cannot start early. Display experiments remain
-        # blocked because they own explicit restore state tied to the route.
+        # A plain ADB connection must not freeze discovery: the new port can be
+        # persisted, then EasyADB forgets the old cached serial and waits for a
+        # new explicit connect. A real/unclean live session still blocks the
+        # port change until token reset or normal live cleanup completes.
         with membership_lock():
             group_devices = sorted((d for d in store.list() if d["group_name"] == group_name),
                                    key=lambda d: d["id"])
             with device_locks(manager, (device["id"] for device in group_devices)):
-                blocked = {
-                    device["id"] for device in group_devices
-                    if display_lab.has_pending(device["id"])
-                }
+                blocked = set()
+                for device in group_devices:
+                    device_id = device["id"]
+                    if display_lab.has_pending(device_id):
+                        blocked.add(device_id)
+                        continue
+                    with live_registry.lock:
+                        live = live_registry.sessions.get(device_id)
+                        if live is not None and not live_registry.is_cleaned(live):
+                            blocked.add(device_id)
                 try:
                     result = store.apply_group_discovery(group_name, scan_result, blocked)
                 except ValueError as exc:
                     raise DomainError(409, str(exc)) from None
                 for updated in result["updated"]:
-                    device_id = updated["id"]
-                    live_registry.stop_for(device_id)
-                    manager.clear(device_id)
+                    manager.clear(updated["id"])
                 return result
     finally:
         mutex.release()

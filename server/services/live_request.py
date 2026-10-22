@@ -8,6 +8,7 @@ from typing import Callable
 class LiveRequestScope:
     owner: object = field(repr=False)
     next_sequence: int = 0
+    reset_sequence: int = 0
     high_water: dict = field(default_factory=dict)
     latest: dict = field(default_factory=dict)
 
@@ -21,4 +22,5 @@ class LiveRequest:
     on_changed: Callable[[], None] | None = field(repr=False)
     replaced: Event = field(default_factory=Event, init=False, repr=False)
     cancelled: Event = field(default_factory=Event, init=False, repr=False)
+    replacement_reason: str = field(default="takeover", init=False)
     stream: object = field(default=None, init=False, repr=False)

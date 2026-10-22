@@ -1097,11 +1097,17 @@
           }
           if (m.type === 'replaced') {
             if (!card.sessionController.acceptsMessage(ws, m)) return;
-            const message = m.message || '该设备的实时画面已由其他页面接管';
+            const tokenReset = m.reason === 'token_reset';
+            const message =
+              m.message ||
+              (tokenReset ? '访问密钥已重新输入，本页旧实时画面已被清理' : '该设备的实时画面已由其他页面接管');
             const wasPendingStop = Boolean(this.stopBatch?.pending.has(card.id));
             card.reconnectRequested = false;
             mark(message);
-            this.end(card, false, { sendStop: false, lastStatus: '已由其他页面接管' });
+            this.end(card, false, {
+              sendStop: false,
+              lastStatus: tokenReset ? '访问密钥已更新 · 旧画面已清理' : '已由其他页面接管',
+            });
             if (!wasPendingStop) this.status(card.name + '：' + message);
             return;
           }

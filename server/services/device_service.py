@@ -25,15 +25,10 @@ def update_device_record(device_id, clean_data, *, store, manager, display_lab, 
             if original is None:
                 raise DomainError(404, "找不到该设备")
             data = clean_data()
-            port_only_change = (
-                data["port"] != original["port"]
-                and all(data[key] == original[key] for key in ("name", "group_name", "ip"))
+            require_clean_sessions(
+                live_registry, (device_id,),
+                "该设备正在投屏或清理，请结束并确认清理后再修改设备",
             )
-            if not port_only_change:
-                require_clean_sessions(
-                    live_registry, (device_id,),
-                    "该设备正在投屏或清理，请结束并确认清理后再修改设备",
-                )
             try:
                 updated = store.update(device_id, data)
             except sqlite3.IntegrityError:

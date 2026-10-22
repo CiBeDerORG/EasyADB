@@ -80,6 +80,8 @@ export function createPageController({
     scanningGroupNames: new Set(),
     scanOperations: new Map(),
     groupOpen: new Map(),
+    needsLiveReset: false,
+    liveResetOperation: null,
   };
   const api = createApiClient({ getToken, request });
   const dom = createDomHelpers({ documentRef });
@@ -204,15 +206,48 @@ export function createPageController({
       }),
   });
 
+  async function resetPreviousLiveSessions() {
+    if (!state.needsLiveReset) return true;
+    if (!getToken()) {
+      notify('请先输入访问密钥', 'error');
+      return false;
+    }
+    const generation = state.generation;
+    const existing = state.liveResetOperation;
+    if (existing?.generation === generation) return existing.promise;
+    const operation = { generation, promise: null };
+    state.liveResetOperation = operation;
+    operation.promise = (async () => {
+      try {
+        notify('访问密钥已更新，正在清理此前全部实时画面…');
+        await api('/api/m2/live/reset', { method: 'POST' });
+        if (state.generation !== generation || state.liveResetOperation !== operation) return false;
+        state.needsLiveReset = false;
+        notify('此前实时画面已全部清理，可以重新加载设备', 'ok');
+        return true;
+      } catch (error) {
+        if (state.generation === generation && state.liveResetOperation === operation) {
+          notify('此前实时画面清理未完成：' + error.message, 'error');
+        }
+        return false;
+      } finally {
+        if (state.liveResetOperation === operation) state.liveResetOperation = null;
+      }
+    })();
+    return operation.promise;
+  }
+
   async function loadAndConnect() {
     if (state.isLoading || state.isBatchBusy) return;
     const generation = state.generation;
     state.isBatchBusy = true;
     state.isLoading = true;
     render();
+    let resetReady = false;
     let loaded = false;
     try {
-      loaded = await loadDevices(true);
+      resetReady = await resetPreviousLiveSessions();
+      if (generation === state.generation && resetReady) loaded = await loadDevices(true);
     } finally {
       if (generation === state.generation) {
         state.isLoading = false;
@@ -220,6 +255,11 @@ export function createPageController({
       }
     }
     if (generation !== state.generation) return;
+    if (!resetReady) {
+      state.isBatchBusy = false;
+      render();
+      return;
+    }
     if (!loaded) {
       state.isBatchBusy = false;
       render();
@@ -262,6 +302,7 @@ export function createPageController({
 
   function invalidate() {
     state.generation++;
+    state.needsLiveReset = true;
     state.abortController?.abort();
     state.abortController = null;
     controllers.management.invalidate();
@@ -345,6 +386,7 @@ export function createPageController({
   controllers.groupDialogs.bindEvents();
   getElement('load').addEventListener('click', loadAndConnect);
   getElement('token').addEventListener('input', invalidate);
+  getElement('token').addEventListener('change', () => resetPreviousLiveSessions());
   getElement('bulkSelectAll').addEventListener('change', () =>
     controllers.management.selectAll(getElement('bulkSelectAll').checked),
   );
@@ -361,6 +403,7 @@ export function createPageController({
     loadDevices,
     loadAndConnect,
     connectSelected,
+    resetPreviousLiveSessions,
     invalidate,
     multiView,
     inventoryDrawer,

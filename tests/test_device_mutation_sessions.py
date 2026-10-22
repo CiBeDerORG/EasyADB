@@ -186,26 +186,13 @@ def harness(monkeypatch, tmp_path):
 def test_busy_lifecycle_rejects_all_record_mutations_without_side_effects(harness, phase):
     worker = reserve(harness, phase=phase)
     before = full_snapshot(harness)
-    for name, operation in mutation_cases(harness).items():
-        if name == "port":
-            continue
+    for operation in mutation_cases(harness).values():
         response = request(harness, operation)
         assert response.status_code == 409, (phase, operation[0], response.text)
         assert "清理" in response.json()["detail"]
         assert full_snapshot(harness) == before, (phase, operation[0])
     assert harness.registry.sessions[harness.target_id] is worker
     assert worker.stop_calls == 0
-
-
-@pytest.mark.parametrize("phase", ["starting", "running", "cleaning", "dirty"])
-def test_port_only_change_stops_exact_owner_without_releasing_unclean_slot(harness, phase):
-    worker = reserve(harness, phase=phase)
-    response = request(harness, mutation_cases(harness)["port"])
-    assert response.status_code == 200, (phase, response.text)
-    assert harness.store.get(harness.target_id)["port"] == 6000
-    assert harness.registry.sessions[harness.target_id] is worker
-    assert worker.stop_calls == 1
-    assert not harness.sessions.reserve(harness.target_id, ControlledSession("replacement"))
 
 
 @pytest.mark.parametrize("unconfirmed", ["finished", "cleanup_complete", "peer_cleanup_complete"])
