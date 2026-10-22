@@ -16,7 +16,8 @@ def create_device_record(data, *, store, manager):
         return manager.snapshot(record)
 
 
-def update_device_record(device_id, clean_data, *, store, manager, display_lab, live_registry):
+def update_device_record(device_id, clean_data, *, store, manager, display_lab, live_registry,
+                         session_manager=None):
     with membership_lock():
         with device_lock(manager, device_id):
             if display_lab.has_pending(device_id):
@@ -27,7 +28,8 @@ def update_device_record(device_id, clean_data, *, store, manager, display_lab, 
             data = clean_data()
             require_clean_sessions(
                 live_registry, (device_id,),
-                "该设备正在投屏或清理，请结束并确认清理后再修改设备",
+                "该设备正在被其他页面投屏，请先停止实时画面后再修改设备",
+                session_manager=session_manager, allow_orphan_cleanup=True,
             )
             try:
                 updated = store.update(device_id, data)
